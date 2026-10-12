@@ -1,0 +1,706 @@
+MUSICIAN FORGE
+An accessible digital audio workstation for Windows, version 0.9.4
+
+Musician Forge records what you play on the laptop keyboard into tracks of
+realistic instruments, and records your voice or any instrument through a
+microphone into audio tracks. It handles tempo changes, time signature changes
+and key changes, and it can export WAV or M4A audio, or standard MIDI files
+that other music programs can open.
+It imports audio files (WAV, MP3, M4A and more) and MIDI files too.
+Every control is a standard Windows control, so NVDA, JAWS and Narrator read
+it, and Musician Forge announces what happens (play, stop, record, octave and so
+on) through whichever screen reader is running.
+
+Musician Forge was made with AI-assisted engineering: designed and tested by
+Russell Hinderman, and written by Claude, an AI model made by Anthropic. The
+Credits say more.
+
+This is a test version (a beta). If you are testing it, Guide for Testers.txt
+in this folder says what to try and how to send back what you found.
+
+
+GETTING STARTED
+
+Tip: wired headphones work best with Musician Forge, as with any music program on
+a computer. Bluetooth headphones add a delay you can hear when you play.
+Plug headphones in or out at any time: when Windows switches between the speakers
+and the headphones, Musician Forge's sound follows within a second and says
+where it went (while recording, it waits until you stop). This is when Audio
+settings say Windows default; an output chosen there by name stays chosen.
+
+1. Run "Install or Update Musician Forge" once (and again any time you want to
+   repair or update it). It sets up everything and finishes with a self check.
+   (Remove Musician Forge takes it off again; see Removing Musician Forge.)
+2. Run "Start Musician Forge" to open the program. It opens on the start screen:
+   New project, Browse projects, and the Recent projects list. Enter (or a
+   double-click) on a recent project opens it. Browse projects lists your recent
+   projects first, then every other project in Musician Forge Songs, newest
+   first. Delete removes a project from the recent list (the file itself is
+   kept).
+3. Press F1 inside a project for the full list of keyboard shortcuts.
+4. Control+W (or the Close project button) closes the project, asks to save
+   any changes, and goes back to the start screen.
+
+The name: this program was called Melody Forge until 8 October 2026. The first time you run
+"Install or Update Musician Forge" after the change, it renames your old folders (Documents\Melody
+Forge Songs and %LOCALAPPDATA%\MelodyForge) to the new names, with all your projects, recordings and
+settings inside, and says so. Project files still end in .mforge.
+
+
+THE PROJECT WINDOW
+
+Tab moves through these areas. Every control can be reached with Tab, and most
+also have a shortcut key. F6 jumps to the next area and Shift+F6 to the previous
+one, going round in a circle: Tracks, Regions, the Musical keyboard, the keyboard
+controls, each button group and Status (areas that are hidden or empty are skipped).
+Each jump says where you are and what is there, for example "Track group, 11
+buttons, 3 check boxes".
+- Tracks (Control+1): your instrument tracks and audio tracks. Up and Down
+  arrow choose the track you play and record on; it ends with "selected".
+- Regions (Control+5): the selected track's regions. Each one says where it
+  starts, where it ends and how long it is in bars; the one you are on ends
+  with "selected". (In selection mode, "selected" means marked with Space.)
+- Musical keyboard (Control+2): play notes with the letter keys.
+- Show keyboard controls (Control+4 goes straight there): reveals Layout,
+  Scale, Octave, Velocity and the Arpeggiator settings.
+- Button groups: Transport (Go to start, Rewind, Play, Stop, Record, Forward,
+  Previous section, Next section, Metronome, All sections), Track (New track,
+  New audio track, New rhythm player, Instrument, Track settings, Effects,
+  Automation, Write automation, Mute, Solo, Event list, Move up, Move down,
+  Delete track), Edit (Undo, Redo, Select, Cut, Copy, Paste, Duplicate, Delete,
+  Quantize, Go to bar), Region (Open region, Move region, Split, Join, Mute
+  region, Rename region, Region settings, Reforge, New rhythm player region), Song (Tempo changes, Time
+  signature changes, Key changes, Sections, Chord track), File (Save, Import
+  file, Export audio, Export MIDI, Close project), Settings (Audio settings,
+  Measure the recording delay, Preferences) and Menus (a button for each menu:
+  File, Edit, Region, Track, Transport, Song, Keyboard, Options and Help; each
+  opens that menu, with the same items and shortcuts as the menu bar). Your
+  screen reader says the group name as you Tab into it. The menu bar itself
+  opens with Alt, as in any Windows program.
+- Status (Control+3): a summary you can read line by line with the arrow keys.
+
+
+SONG SECTIONS
+
+A new project is one 8-bar section, and you can add as many sections as you like
+(Song menu, or the Sections button). Space plays and loops the section you are
+in; turn on All sections to play the whole song. Rewind and Forward move one bar
+and tell you when you reach the start or end of a section. Enter (Go to start)
+goes to the start of the section you are in, and rewinding stops there; with All
+sections on, both go back through the whole song.
+
+Each section has settings: a name (empty means it is called by its number), a
+length in bars, and an Automatic switch. With Automatic off, recording loops
+back to the start of the section and every pass adds notes, which you hear on
+the next pass. With Automatic on, the section grows when you record past its
+end, for long takes of 24, 48 bars or more.
+
+In the Sections list you can go to, add, duplicate, move or delete sections;
+their notes and tempo, time signature and key changes move with them. Duplicate
+copies a section to the end of the song: with sections 1, 2 and 3, duplicating
+any of them makes section 4.
+
+The status bar also shows the playhead position. NVDA reads it with NVDA+End.
+
+
+PLAYING THE MUSICAL KEYBOARD
+
+Piano layout:
+  A S D F G H J K L ; '   white keys, starting at C
+  W E   T Y U   O P       black keys
+  Z and X                 octave down and up
+  C and V                 velocity (how hard you play) down and up
+  B                       switch layout: piano, scale, chord strips
+
+Note names count middle C as C3 (MIDI note 60), as many music programs do.
+The A key starts on middle C.
+
+Scale layout: the home row plays the notes of the song's key, starting on the
+key's root note, and the top row keeps going upward. When the song changes
+key, the scale layout changes with it.
+
+In the keyboard controls you can choose another scale (blues, Dorian and so
+on). It starts on the root note of the song's key.
+
+Chord strips: A S D F G H J and K play eight chords, the
+seven chords of the song's key and then a borrowed one (B flat in C major,
+E major in A minor). Each chord has its root note in the bass. Number keys 1
+to 8 play just the bass note of each chord. The chords follow key changes.
+Control+J tells you which chord is on each key.
+
+Your own chord strips: Control+Shift+J (or the Customize chord strips button in
+the keyboard controls, or Keyboard menu, Customize chord strips) lists the eight
+strips, for example "A: C major". Enter changes the one you are on: its root
+note, its chord type (major, minor, seven, major seven, suspended, diminished,
+power chord and more) and, if you like, a different bass note; the Chord box
+says its notes. Space plays it. Your chords are saved with the project and stay
+as they are when the key changes; Use the key's chords goes back to the song
+key's own. Every change is one undo step (Control+Z works in the window too).
+
+Arpeggiator (Control+Shift+P, or the keyboard controls): hold notes or a chord
+and it plays them one at a time, in time with the song: up, down, up and down,
+down and up, as played, or random, from quarter notes to 32nd notes, across 1 to
+4 octaves. While recording, every note it plays is recorded.
+
+Drum kits use the drum layout automatically: A is the kick, S the snare, D the
+closed hi-hat, F the open hi-hat, and so on. Shift+F1 lists every layout and
+drum key.
+
+Not every kit has every drum sound: the Forge House and Forge Trap kits have no
+splash or china cymbal, for example. A sound the chosen kit does not have plays
+on the nearest one it has: a splash or china on the crash, a second ride or the
+ride bell on the ride, a missing tom on the next tom. So a fill never ends in
+silence, whichever kit a drummer plays. The notes themselves stay as they were.
+
+Musician Forge's own sounds: Forge Dubstep Kit (in Drum Kits) and Forge 808 Sub
+(in Bass) were made from scratch for Musician Forge. The dubstep kit was rebuilt in
+0.9.2: a deeper, punchier kick that gets out of the bass's way, a bigger, heavier
+snare with a clap and a room behind it, and grit on the kick, snare, claps and hats.
+Its U, O, Y and I keys play an impact, a riser, a reverse cymbal and a shaker.
+
+Tip for NVDA: if NVDA says each letter as you play, press NVDA+2 until it says
+"only in edit controls". The keyboard area is not an edit control, so NVDA
+stays quiet there and still echoes your typing in text boxes.
+
+
+RECORDING
+
+1. Choose a track in the Tracks list.
+2. Move the playhead where you want to start (Enter goes to the start of the
+   section, or of the song with All sections on).
+3. Press R. After a one bar count-in, play. Nothing is spoken, so you can hear
+   the metronome.
+4. Press R or Space to stop.
+Recordings add to what is already on the track. Control+Z undoes a whole take,
+including every loop pass. Options, Preferences can turn announcements back on.
+Press R while the song is playing to start recording immediately.
+Control+K turns the metronome on or off. Control+Shift+C changes the count-in.
+
+
+RECORDING SOUND: AUDIO TRACKS
+
+1. Control+U (or the New audio track button) adds an audio track.
+2. Use wired headphones, so the metronome and the other tracks stay out of the
+   recording. Wired, not Bluetooth: Bluetooth headphones delay the sound by a
+   fifth of a second or more, which makes playing in time very hard. The
+   laptop's built-in microphone works fine.
+3. Press R. After the count-in, sing or play. Press R or Space to stop.
+Recording in a looping section works like recording notes: each pass becomes a
+take, and the newest take plays. Recording over part of an older recording
+replaces just that part (the older one plays again where the new one ends).
+If a recording is silent, very quiet or too loud, Musician Forge tells you.
+If you keep recording past the end of a looping section, the complete pass
+keeps playing and the short bit after the loop came round is kept as a take of
+its own (Musician Forge says so); no take is ever deleted by itself.
+
+Options, Audio settings: choose the microphone, and press Test the microphone.
+It listens for 3 seconds and tells you in words whether the level is good, too
+quiet or too loud, whether Windows is blocking the microphone, and whether
+Windows seems to be removing background sound (and how to turn that off).
+Raw microphone sound (on unless you turn it off) asks Windows for the
+microphone's sound without its noise reduction and other processing, which can
+eat held notes and the sound of the room; some devices keep their own
+processing anyway.
+Track settings on an audio track: record in stereo, and hear yourself while
+recording (only with headphones, or the speakers will howl).
+
+Hearing yourself through a computer always takes a moment, because the sound
+goes in, through the program and out again. Low-latency hearing yourself, in
+Options, Audio settings (Windows 10 and later, off unless you turn it on), takes
+a shorter way: you hear the microphone itself with the track's volume and pan,
+but without its effects (they are heard once recorded). Check low-latency
+support says what your sound card allows. If Windows cannot give the shorter
+way, Musician Forge says why and you hear yourself as before. For no delay at
+all, use a USB microphone or audio interface with its own headphone socket
+(direct monitoring), and wired headphones.
+
+Control+L on an audio track lists its recordings. Each one says where it starts,
+where it ends and how long it is, in bars and beats and in seconds. Enter changes
+where it starts, which take plays and its gain; Space plays from it; Alt+I
+imports an audio file; Delete removes it.
+
+
+IMPORTING AUDIO AND MIDI FILES
+
+Control+Shift+I (or the Import file button in the File group, or File, Import)
+opens Windows' Open window, which lists audio and MIDI files together first,
+then each kind.
+- Audio files: WAV, MP3, M4A, MP4 and AAC, FLAC, Ogg Vorbis, Opus, AIFF, Apple
+  Lossless (CAF) and Windows Media Audio. The file goes onto the selected audio
+  track at the playhead (or onto a new audio track named after the file).
+  Musician Forge keeps its own copy in the project's Recordings folder, so your
+  original file is never changed, and says the file's length, sample rate and
+  whether it is mono or stereo. A long file shows how far it has got (Escape
+  cancels). A file that cannot be read says why in words, and nothing is added.
+- MIDI files (type 0 and type 1): each MIDI track with notes becomes a new track
+  with its own instrument; channel 10 becomes drums. Volume and pan come along,
+  and changes to them become automation. A window first says what the file holds
+  and asks whether to use its tempo changes, time signatures, keys and markers
+  (markers become sections); that is on for a project with nothing in it yet,
+  because they replace the project's own. Afterwards Musician Forge says how many
+  tracks and notes it made. Control+Z takes the whole import back in one step.
+  The same rules work in reverse: a Distortion Guitar comes in as the distorted
+  guitar pack, a drum kit's number chooses the matching kit, a track called
+  "Chord track" becomes the chord track again, and empty time another program
+  left after the last note does not become empty bars. A MIDI file Musician
+  Forge made comes back with exactly the instruments and chords it had.
+
+
+EFFECTS
+
+Every track has its own effects (Control+F, or the Effects button in the Track
+group). The track's sound goes through them from top to bottom, then through
+its volume and pan:
+- EQ: cut the lowest rumble, turn the bass, middle and treble up or down,
+  and cut the highest frequencies.
+- Compressor: evens out the volume, so a part sounds steadier and fuller.
+- Distortion: warm overdrive, crunch, fuzz, or a gritty bit crusher. Good for
+  guitars, bass and dubstep growls.
+- Delay: echoes in time with the song (a quarter note, a dotted eighth and so
+  on) or every so many milliseconds, with ping-pong between left and right.
+- Reverb: the sound of a space, from a vocal booth to a cathedral.
+- Pitch correction (audio tracks only): pulls a recorded voice or instrument
+  onto the notes of the song's key, at the speed you choose (0 snaps at once
+  for a robotic sound; larger is more natural). It follows key changes. It is
+  worked out for each recording, so you hear it on playback, not while you
+  record. It works best on one voice or instrument at a time. Only what really
+  needs moving is processed: breaths, noisy stretches and notes already in tune
+  play exactly as recorded, which keeps the sound clear.
+
+In the Effects list: Alt+A adds an effect (choose the effect and the preset it
+starts from), Enter opens its settings, Space turns it on or off, Control+Up and
+Control+Down move it, Delete removes it.
+
+Every effect starts from a preset, and every setting can be changed. In an
+effect's settings, Tab moves through Preset, Effect on, and each setting:
+number boxes (Up and Down arrow change them and say the new value, Page Up and
+Page Down by ten steps, or type a number), sliders for percentages, lists and
+check boxes. Changes are heard straight away; the "Play or stop the song" button
+lets you listen without leaving the window. OK keeps the changes, Cancel puts back
+what was there, and Control+Z undoes any change. Exports include the effects.
+
+
+AUTOMATION
+
+A track's volume, pan and effect settings can change over time: a fade-out, a
+guitar that moves from left to right, more reverb in the chorus. Open a track's
+automation with Control+Shift+U (or the Automation button in the Track group).
+- Each thing that changes has a lane: Volume, Pan, or one setting of one of the
+  track's effects (for example "Reverb 1: Mix"). Alt+A adds a lane, Space turns
+  one on or off, Delete removes it, Enter lists its points.
+- A point says where (bar and beat), the value, and whether it glides to the
+  next point (a smooth change) or holds its value until the next point (a jump).
+  In the points list: Alt+A adds a point at the playhead, Enter edits one,
+  Delete removes one, Space plays from it, Clear bars removes points in bars you
+  choose. Each point is read out, for example "Bar 5, beat 1: volume 80, glides
+  to volume 40 by bar 9, beat 1".
+- Once a lane has points it sets that value for the whole song: before its first
+  point it uses the first point's value, after its last point the last point's
+  value. Turn the lane off and the track's own setting is used again.
+
+Write automation records lanes as you go. Turn it on with Control+Shift+W (or the
+Write automation check box in the Track group), play the song, and change a
+track's volume ([ and ]), pan (Shift+[ and Shift+]), Track settings, or an
+effect's settings: each change is written at the moment you hear it. Playing over
+the same place again replaces what you cross. A whole play-through undoes with
+one Control+Z. Written values hold until the next change, exactly as you heard
+them. In an effect's settings window, moves made while writing go into the
+automation and stay there even if you press Cancel (Control+Z takes them back).
+While the song is stopped, changes go to the track's own settings as usual; if
+a lane is on for that setting, Musician Forge reminds you that the lane is what
+you hear.
+
+Exports include automation. MIDI files get volume and pan changes as controller
+messages, so other music programs show them as automation too.
+
+
+MEASURING THE RECORDING DELAY
+
+Musician Forge already lines recordings up with the beat using the delays the
+sound card reports. Those are never quite exact, so Audio settings has
+"Measure the recording delay". The Measure the recording delay button in the
+Settings group (or Control+Shift+D) opens Audio settings on it; the Audio
+settings button (or Control+Shift+O) opens the whole window:
+1. Take headphones off, turn the speakers up, and keep the room quiet.
+2. Press Measure the recording delay. Musician Forge plays eight short clicks
+   through the speakers and listens with the microphone (about five seconds).
+3. It says how late (or early) the recordings arrive, and sets the
+   Microphone timing adjustment to remove it. Press OK to keep it.
+If the clicks were not heard clearly, it says so and changes nothing.
+The adjustment is remembered for each pair of output and microphone: choose
+another pair and Musician Forge uses what was measured for it, or says it has
+not been measured yet. A Bluetooth device is pointed out, because it adds a
+fifth of a second or more.
+The musical keyboard has its own timing adjustment in the same window.
+
+
+THE CHORD TRACK
+
+The chord track holds the song's chords: each chord change lasts until the next
+one. Rhythm players play these chords. Open it with Control+Shift+H (or the
+Chord track button in the Song group). In the list, Alt+A adds a chord change
+(where it starts, its root note, its type such as minor or seven, and a
+different bass note if you like), Enter edits one and Delete removes one.
+- Fill from a progression puts a common progression into the bars you choose,
+  built from the song's key in each bar (it follows key changes): for example
+  one, five, six, four, which in C major is C, G, A minor, F.
+- Work out from a track listens to a track's notes, for example chord strips you
+  played, and writes the chords it hears, once a bar, twice a bar or each beat.
+- Clear bars removes the chord changes in the bars you choose.
+Where the chord track is empty, rhythm players play the key's own chord. The
+Status (Control+3) says the chord at the playhead.
+
+
+RHYTHM PLAYERS
+
+A rhythm player plays a part for you in a region: Anvil plays drums, Bellows
+bass, Ember keys, Spark synth and Hammer guitar. Each has styles, for example
+Anvil: dubstep, house, trap, rock, hard rock, metal, jazz, funk, pop, hand
+percussion, and shakers and tambourine.
+1. Control+Shift+R (or the New rhythm player button in the Track group): choose
+   the player, its style, where it goes (a new track, or the selected track) and
+   how long it plays (the section the playhead is in, the whole song, or bars
+   you choose).
+2. The new region is in the Regions list, which says its variation ("variation
+   2 of 6"). Enter on it opens the player's editor: Style; Variation (each style
+   has its own grooves or parts, at least four, each described in words;
+   Previous variation, Alt+V, and Next variation, Alt+X, step through them);
+   Patch (the instrument or kit it plays; any one can be chosen); Intensity
+   (how hard it plays, never how many notes: at 20 or below the drummer's snare
+   goes to the rim, from 70 the hi-hat opens; the drums are softer than they
+   were before 10 October 2026, so 100 is about as loud as 40 used to be);
+   Complexity (how busy it is); Fill amount (0: no fills; 100: a fill in every
+   bar; in between, the ends of phrases come first); Fill complexity (how big a
+   fill is, from a short pickup to a whole bar for the drummer, or half a bar
+   for the others; a simple pad has no fills, so both are dimmed); Swing and
+   Swing feel (eighth or sixteenth notes); Follow: the
+   chord track, another track, or nothing; the track to follow; Follow amount;
+   Hit sensitivity (for a recording); and the Kit pieces (for bass, keys, synth
+   and guitar, the part). The drummer's Closed hi-hat can play its rhythm on
+   the hi-hat, the ride, the ride bell or the crash; the Ride can sound as the
+   ride, the ride bell or the second ride.
+   Every change is heard at once and is one undo step, and Control+Z and
+   Control+Y work inside the editor.
+   Several regions at once: in selection mode (Shift+F8), select rhythm player
+   regions with Space, then press Enter (Open region) on one of them. The
+   editor says how many it edits together, and every change, Reforge
+   included, goes to all of them as one undo step. Each keeps its own style;
+   a change one of them cannot take (a variation its style lacks) leaves it.
+   Regions made before 10 October 2026, 3 PM keep playing exactly as they did
+   (the louder drums, fills only at phrase ends, the fill shapes of then) until
+   you change something in that region, Reforge included; from then on it
+   plays by today's rules. New regions always do.
+3. Reforge (Control+R in the editor; R or Control+R on the region in the Regions
+   list, where R on any other region still records) plays a new performance of
+   the same variation: new fills and small details, with the groove and every
+   setting kept. Each performance also has its own habits: how the hi-hat and
+   the other players accent the beat, a kick before a beat now and then, many
+   shapes of fill (tom runs up or down, flams, snare and kick together, rolls).
+   When the next drummer region on the track is at least 20 Intensity louder
+   (50 going to 100, say), the hi-hat builds over the last two bars before it:
+   harder and harder, closed, then half open, then wide open into the crash.
+   Ordinary fills don't build, nor does a hi-hat that is off or moved to a
+   cymbal, and at Intensity 100 there are no builds, since
+   there is nothing to build to. It says "New performance of variation 2 of 6", and Control+Z
+   goes back to the one before. The same settings always play exactly the same
+   notes, so a reopened project sounds the same. Projects from before 0.9.2
+   open on variation 1, the groove they played before. (Since 0.9.4 Intensity
+   only changes how hard a player plays, so older songs' players keep their
+   grooves with slightly different details and loudness.)
+4. Kit pieces: Anvil's kit is ten pieces (kick, snare, clap or rim, closed
+   hi-hat, open hi-hat, toms, crash cymbals, ride, congas and bongos, and shaker,
+   tambourine, cowbell and claves). Space turns a piece on or off; Enter (or the
+   Piece settings button, Alt+I) opens its settings: Pattern (the variation's
+   own, another variation's, none, or a common one), Complexity and Loudness
+   for that piece alone, both sliders from 0 to 100 (50 is as the style plays
+   it; Complexity higher adds notes, the in-between eighths first, then some
+   sixteenths, never more than a drummer could play, and lower leaves notes out
+   down to the beats; Loudness 100 is the loudest, 0 silent; the part of the
+   other players has both too), and its own extras: half or double time (kick
+   and snare), ghost notes, their loudness (a slider, dimmed with no ghost
+   notes) and a rim click (snare), how open the hi-hat is and opening it
+   on the offbeats, the toms in fills or not, when a crash comes (where the
+   region starts and after fills, at each section, every 2, 4 or 8 bars, on the
+   followed track's strongest hits, or never) and which cymbal, and the ride's
+   bell on the beats. Choices a kit does not have are not offered (the Forge
+   kits have no congas, for example). Bellows, Ember, Spark and Hammer have one
+   piece, the part: its pattern (any variation of any of its styles), following
+   the chord track or the key's own chord, an octave up or down, short, normal or
+   long notes, the root only, and passing notes into each chord change.
+5. Step pattern (Alt+S in a piece's settings): the piece's steps, one per line,
+   for one to four bars, for example "Bar 1, step 3, the and of one: on, kick,
+   loudness 90". Until you change a step it shows what the piece plays in the
+   region's first bars, so changing one step changes only that step. Space turns
+   a step on or off (and on again brings back what was there), Left and Right
+   choose its sound, Page Up and Page Down its loudness; each of these keys has
+   a button under the list too (Turn the step on or off, Previous sound, Next
+   sound, Louder, Softer), for the step the list is on. Copy, Paste and Clear
+   work on the whole pattern (Control+C and Control+V too). A drum step can hold
+   several sounds (a conga and a bongo together); a part's steps start as "as
+   the style plays it", which plays the style's own notes on that step, and can
+   be set to the chord, the root, the third, the fifth or the octave (and a
+   power chord or a strum for Hammer). Changing a step makes the piece
+   hand-made: its pattern repeats through the region; Reforge keeps it; crashes
+   where the region starts and after fills, and kicks on chord changes or on the
+   followed track, still come by themselves, and a fill still takes over the
+   snare, claps and toms at the end of a phrase (set Fills to 0 to hear only
+   your steps). Back to the pattern lets the style play it again.
+6. Changing the variation resets hand-made steps, so Musician Forge first warns
+   you in words ("Changing to variation 3 resets your hand-made steps on Kick
+   and Snare. Change the variation?"), with Change and Cancel (Escape cancels).
+   Control+Z brings back the old variation and the steps together.
+7. Follow: a drummer can follow a guitar or piano track, and its kicks land on
+   that part's strongest hits; the other players lock their rhythm to it. A
+   recorded audio track can be followed too: Musician Forge finds the hits in the
+   recording (clear, separate hits work best; raise the sensitivity to find
+   quieter ones).
+8. Turn into notes makes the performance into ordinary notes you can edit.
+9. New rhythm player region: adding a section adds no region to a player's
+   track. Move the playhead into the new section, choose the player's track, and
+   press P in the Regions list (or the New rhythm player region button in
+   the Region group, or the Region menu). It fills the empty part of that section
+   with a new region of the same player and style, starting from the style's own
+   settings and its first variation (not the settings of the region before).
+   Then change anything you like in its editor (Enter).
+10. The drummer plays like a drummer with two hands: in the styles a real
+   drummer plays (rock, hard rock, metal, jazz, funk and pop), no more than two
+   hand sounds start together, and a crash takes the place of the hi-hat or
+   ride on that beat. Steps you set by hand are always kept. The electronic
+   styles (dubstep, house, trap) play like drum machines and can stack sounds.
+11. In a kit piece's settings, the Pattern list says only which pattern it is
+   ("Variation 3's", "None in the groove", "Eighth notes"); what it plays is in
+   This piece now, at the top of the window. Changing a pattern or the
+   variation, Follow or the track to follow says only that, not the whole
+   summary, and Reforge says only "New performance of variation 2 of 6".
+12. Every time signature: the players feel each bar in its own beats (three in
+   3/4, two big beats in 6/8, four in 12/8, 2+2+3 eighths in 7/8, five in 5/4)
+   and play their groove beat by beat, so a rock drummer in 3/4 plays the kick on
+   one and the snare on two and three, and in 6/8 the snare on the second big
+   beat. Tempo changes are followed too. In 4/4 they play exactly as before.
+13. Eighth swing, from a Swing of 30 up, plays sixteenths in threes, the way a
+   swing or shuffle player does: one, the middle of the triplet, and the swung
+   "and"; fills roll in even triplets. Sixteenth swing is unchanged.
+A song made only of rhythm players can be exported (before 0.9.2 Export said
+there was nothing to export).
+Hammer plays two distorted electric guitar packs by FreePats. They are large
+(about 830 megabytes once unpacked), so they download during the install, or by
+themselves the next time Musician Forge starts with the internet. Until then a
+stand-in guitar plays, and the packs are marked "not downloaded yet" in the
+instrument lists. A pack takes most of a second to get ready the first time a
+track uses it; if that happens while the song plays, the stand-in plays until
+you stop, so playback never stutters. Both packs can also be played by hand on the musical keyboard:
+choose them with Change instrument, in the Guitar family.
+
+
+TRIMMING AND LOOPING REGIONS
+
+Alt+Enter on a region in the Regions list (or the Region settings button) sets
+where it starts and ends, and how many times it plays in a row, or "Loop until
+the next region" (until the next region on the track, or the end of the song).
+Trimming a region of notes removes the notes outside it (Control+Z brings them
+back); a rhythm player fills whatever length it has. Trimming a recording only
+changes which part of it plays, so it can be lengthened again later.
+
+Nudging, in the Regions list, one key at a time:
+- Alt+Left and Alt+Right move the region (or the selected regions) earlier or
+  later by the nudge step: 1 bar, a quarter note, an eighth note or a
+  sixteenth note. N changes the step (Shift+N goes back); Musician Forge
+  remembers it.
+- Left bracket and right bracket move the region's start earlier or later.
+- Shift+left bracket and Shift+right bracket (or Alt+Shift+Left and
+  Alt+Shift+Right) move its end. To make a rhythm player's region longer, move
+  its end later: the player fills the new bars.
+- A region never moves over another one; Musician Forge says what is in the way.
+  Each key says where the region now starts or ends and how long it is, and
+  presses of the same key in a row undo together with Control+Z. The Region
+  menu has the same commands.
+
+
+REGIONS AND SELECTION
+
+A region is a stretch of a track: recording makes one that covers exactly what
+you recorded (the looping section, or from the bar where you started to the bar
+after you stopped, across sections when All sections is on). On audio tracks,
+each recording is a region. The Regions list (Control+5) reads each one, for
+example "1. Piano region, Section 1: starts at bar 1, ends at bar 9, 8 bars
+long, 24 notes".
+
+In the Regions list: Enter opens a region's notes (or a recording's settings, or
+a rhythm player's editor), Alt+Enter its trim and loop settings,
+Control+X, C, V and D cut, copy, paste and duplicate, Delete deletes, S splits at
+the playhead, J joins, M mutes, F2 renames. Paste puts regions at the playhead and
+replaces whatever was there. The same keys cut, copy, paste and duplicate whole
+tracks in the Tracks list.
+
+Selection: Shift+F8 (or the Select check box) turns selection on, and Musician Forge
+tells you how it works. Space then selects or unselects the track or region you
+are on; Cut, Copy, Paste, Duplicate, Delete, Mute and Solo work on everything you
+selected. Shift+F8 again turns selection off.
+
+
+TEMPO, TIME SIGNATURE AND KEY CHANGES
+
+The Song menu has three lists: tempo changes (Control+Shift+T), time signature
+changes (Control+Shift+M) and key changes (Control+Shift+K). In each list,
+Alt+A adds a change, Enter edits one and Delete removes one. Changes stay on
+the bar where you put them.
+A time signature change keeps every section's number of bars: an 8-bar section
+changed from 4/4 to 3/4 is still 8 bars, and everything in it stays in its bar,
+on the same beat. Rhythm player regions keep their bars too and play in the new
+time signature. When bars get shorter, a note on a beat they no longer have
+(beat 4 going to 3/4) is left out, Musician Forge says how many, and Control+Z
+brings them back.
+
+
+EDITING NOTES
+
+Control+L opens the event list: every note on the selected track, one per
+line. Each note plays as you arrow to it. Enter edits a note, Alt+A adds one,
+Delete removes the selected notes, Control+Up and Control+Down move notes by a
+semitone (add Shift for an octave). Space selects or unselects the note you
+are on, so you can pick several; Control+A selects them all and P plays them.
+Delete, moving and quantizing then work on the selected notes. Every one of
+these keys has a button under the list too (Select or unselect, Select all,
+Play, Up a semitone, Down a semitone, Up an octave, Down an octave), so Tab
+reaches them all.
+
+Control+Q quantizes. Choose the region you are on, the selected track or all
+tracks.
+
+
+SAVING AND EXPORTING
+
+Every project has its own folder, so projects and their files never get mixed up:
+
+  Documents\Musician Forge Songs
+      My Song
+          My Song.mforge     the project
+          Recordings         sound recorded or imported into it
+          Exports            WAV, M4A and MIDI files made from it
+
+Save project as asks for the project's name; Musician Forge makes its folder in
+Musician Forge Songs (Choose another folder puts it somewhere else). Open project
+(Control+O; Browse projects on the start screen) lists your recent projects first, then every other project in Musician Forge
+Songs, newest first, and Browse opens one from anywhere. A project opens where you
+were when you saved it: the same place in the same section, on the same track
+(Musician Forge says where). Each save keeps the previous version as a .bak file. If Musician
+Forge closes unexpectedly, it offers to recover your work next time.
+
+Control+E exports audio. Choose the format: WAV is full quality (48 kHz 24-bit
+unless you choose otherwise); M4A is about a tenth of the size, good for sharing
+and for your iPhone or iPad (AAC at 192 kbps, made by the encoder built into
+Windows). The check box "Let the sound ring out after the end" is on unless you
+turn it off:
+the export keeps going until held notes and reverb have faded to silence (up to
+10 seconds). Turn it off for loops, so the file ends exactly at the end of the song.
+If the sound reached full volume somewhere, Musician Forge says there may be
+distortion in certain parts of the song, and that reducing track volumes will
+help. (The master volume in Preferences changes only what you hear, not exports.)
+
+EXPORTING TRACKS ON THEIR OWN: with WAV chosen, "What to export" offers three
+choices:
+- The whole song, mixed into one file (as before).
+- Every track you can hear, each as its own WAV file (muted tracks are left out).
+- Only the tracks you choose, each as its own WAV file: in "Tracks to export",
+  press Space on each track you want (Musician Forge says "Vocals selected"),
+  or Control+A for all of them; the buttons under the list, "Select or
+  unselect the track" and "Select all tracks", do the same. A muted track can
+  be chosen too.
+One track makes one WAV file, named like "My Song - Vocals.wav"; several make
+one zip file, named like "My Song tracks.zip". Every file starts at the start
+of the song and has the same length, so they line up when you put them side by
+side in another program. Tracks on their own are not available with M4A. When
+the export is done, Musician Forge says so, and what it made.
+
+Control+Shift+E exports the whole song as one MIDI file, every track in it, so
+you can change each one in the other program. Rhythm players go in as the notes
+they play. The file carries the song's tempo changes, time signatures, key
+signatures and a marker for each section, as standard MIDI events, so other
+music programs set their tempo, meter and key from them. Each track says what
+kind of instrument it is in General MIDI's terms, so other programs pick a
+matching sound: the distorted guitar packs are a Distortion Guitar, acoustic
+drum kits the Standard kit, electronic kits the Electronic or 808 kit. On drum
+tracks, the splash and china cymbals are written as the crash, and the second
+ride as the ride, because other programs' kits often have no sound for them.
+Some programs take the tempo, time signatures and markers only when the MIDI
+file is opened as a new project, not when it is imported into a project that
+is already open.
+The chord track comes along as a track of its own, called "Chord track": each
+chord held as notes, with its name (Am, F, C/E). It is silent, like Musician
+Forge's own chord track; turn its volume up in the other program to hear it.
+No note plays after the music ends. A MIDI file has no regions, only one stream
+of notes for each track, so other programs make one region per track, from the
+start of the song to its last note; the section markers show where to split it
+there if you want shorter regions. Recordings on audio tracks cannot go into a
+MIDI file. When the export is done, Musician Forge says so and what is in it,
+for example "Export finished. My Song.mid in the Exports folder of My Song: 4
+tracks and the chord track."
+
+Exports go into the project's Exports folder (Musician Forge Songs, Exports for
+a project that has not been saved yet). After every save or export, Musician
+Forge says where it went, for example "Saved My Song in Musician Forge Songs" or
+"Exported My Song.wav in the Exports folder of My Song".
+
+Recordings in a project you never save are deleted when you choose not to save
+it. Recordings in a saved project stay in its Recordings folder.
+
+
+IF SOMETHING GOES WRONG
+
+- No sound: Options, Audio settings. WASAPI is the quickest driver.
+- What you play sounds late: use wired headphones or the laptop speakers, not
+  Bluetooth. For even less delay, choose a buffer size of 128 samples in
+  Options, Audio settings (256 is the safe default).
+- You hear yourself late while recording: try Low-latency hearing yourself in
+  Options, Audio settings (see Recording sound), with wired headphones.
+- Recordings from the microphone land a little late or early: Options, Audio
+  settings, Measure the recording delay. Notes from the musical keyboard: the
+  Musical keyboard timing adjustment in the same window.
+- The microphone records silence: Options, Audio settings, Test the microphone.
+  It says when Windows privacy settings are blocking it.
+- Recordings lose their background sound or held notes: keep Raw microphone
+  sound on in Options, Audio settings, and turn Windows' Audio enhancements off
+  for the microphone (Settings, System, Sound, the microphone, Audio enhancements).
+- The guitar packs say "not downloaded yet": Musician Forge downloads them by
+  itself when it starts with the internet available, and says when each is
+  ready.
+- Anything else: the logs folder has musicianforge.log with the details.
+  Guide for Testers.txt says how to send it to Russell.
+
+
+WHERE THINGS ARE
+
+Program: this folder.
+Instrument engine, sounds and Python environment: %LOCALAPPDATA%\MusicianForge
+(outside OneDrive, so they never sync).
+
+
+REMOVING MUSICIAN FORGE
+
+Close Musician Forge, then run "Remove Musician Forge" in this folder. It asks
+first, then removes what Install or Update Musician Forge put on the computer:
+Musician Forge's Python environment, instrument engine and sounds, in
+%LOCALAPPDATA%\MusicianForge. It also asks whether to keep your settings (audio
+settings, measured delays and recent projects) for a reinstall.
+Your projects are never removed: everything in Documents, Musician Forge Songs,
+stays, with each project's recordings and exports. If you install Musician Forge
+again, they open as before (project files still end in .mforge).
+Two things are removed with it: recordings in a project that was never saved,
+and the crash-recovery copy of unsaved work (Remove Musician Forge warns you
+when there is one, so you can recover and save it first).
+Afterwards you can delete this Musician Forge folder too.
+
+
+CREDITS
+
+See Credits.md in this folder. In short: the FluidSynth instrument engine
+(GNU LGPL 2.1), the GeneralUser GS SoundFont by S. Christian Collins, the two
+FSBS distorted electric guitar packs by FreePats (public domain), wxPython,
+numpy, sounddevice and PortAudio. Changelog.md lists what changed in each version.
+
+
+LICENSE
+
+Musician Forge is free: free to download, use, change and share, under the MIT
+License (the LICENSE file in this folder). The sounds and libraries it uses keep
+their own licenses, listed in Credits.md.

@@ -1,0 +1,233 @@
+MUSICIAN FORGE TESTER'S GUIDE
+For people trying Musician Forge 0.9.4 before its first release
+
+Thank you for testing. Musician Forge is a music program for Windows made to work
+fully with screen readers (NVDA, JAWS and Narrator). This test version needs
+Python from python.org (see "Before you start"); the 1.0 release will have a
+normal installer and will not. This guide says how to install it, what to try in
+about an hour and a half, and how to send back what you found. Nothing here
+changes your Windows settings.
+
+
+WHICH COPY TO DOWNLOAD
+
+On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy
+(the main branch) has everything you need: the program, Install or Update
+Musician Forge, Start Musician Forge, the Read Me and this guide. You do not
+need the development branch: it adds the automated tests and the tools the
+people building Musician Forge use.
+
+
+BEFORE YOU START: PYTHON
+
+- Install Python 3.10 or newer, 64-bit, from python.org (Downloads, Windows).
+  In the installer's first screen, tick "Add python.exe to PATH", then choose
+  Install Now.
+- The Microsoft Store's Python does not work: it quietly moves the files
+  Musician Forge makes into a private folder. If it is the only Python on the
+  computer, the installer says so and stops; install the python.org one as
+  above (both can stay installed).
+
+
+WHAT YOU NEED
+
+- A Windows 10 or 11 computer (64-bit).
+- Python, as above.
+- About 2 GB of free disk space: most of it is the instrument sounds.
+- The internet for the install: it downloads about 500 megabytes (the
+  instrument engine, the main sounds, and two electric guitar packs).
+- Wired headphones are best. Bluetooth headphones add a delay you can hear.
+
+
+INSTALLING
+
+1. Unzip the Musician Forge folder wherever you like, for example in Documents.
+2. Open the folder in File Explorer, select "Install or Update Musician Forge"
+   and press Enter (or double-click it). If Windows asks whether to run it,
+   choose Run (or More info, then Run anyway).
+3. A console window reads out each step, "Step 1 of 7" to "Step 7 of 7". It
+   ends with a self check that plays a test note silently and says whether
+   everything works. Press any key to close the window.
+4. The two guitar packs (steps 5 and 6) are the biggest downloads and take a
+   few minutes. If they are very slow, let them run; or close the window and
+   run Install or Update again later, which picks up where it stopped. Without
+   them Musician Forge still works: a stand-in guitar plays, and the packs
+   download by themselves the next time Musician Forge starts with the
+   internet, saying when each is ready.
+5. Run "Start Musician Forge" the same way. It opens on the start screen:
+   choose New project.
+6. Press F1 at any time for every keyboard shortcut.
+
+To update to a newer test version, put its files in the same folder and run
+"Install or Update Musician Forge" again. Your projects are kept (they are in
+Documents, Musician Forge Songs).
+
+
+WHAT TO TRY (ABOUT AN HOUR AND A HALF)
+
+Take each part in order, and note anything that is unclear, silent, slow,
+or not read out by your screen reader. "Expected" says what should happen.
+
+1. Getting around (5 minutes)
+   - Tab through the project window: Tracks, Regions, the Musical keyboard,
+     Show keyboard controls, the button groups, Status.
+     Expected: every control has a clear name; the button groups say their name.
+   - F6 and Shift+F6 jump from area to area and round again.
+     Expected: each jump says where you are ("Track group, 11 buttons").
+   - Control+1, Control+5, Control+2 and Control+3 jump to Tracks, Regions,
+     Musical keyboard and Status.
+   - Arrow through the Tracks list. Expected: the track you are on ends with
+     ", selected", read once.
+
+2. Playing and recording notes (10 minutes)
+   - Control+2, then play the letter keys: A S D F G H J K are white keys.
+   - Press R to record a few bars with the count-in, then R to stop.
+     Expected: a new region in the Regions list; Space plays it back.
+   - Press B to try the scale and chord strip layouts.
+
+3. Effects (10 minutes)
+   - Control+F on a track. Alt+A adds an effect: try Reverb, Hall.
+   - Enter opens its settings. Play the song with the Play or stop button and
+     move the Mix slider. Expected: you hear the change at once.
+
+4. Rhythm players (20 minutes)
+   - Control+Shift+H: Fill from a progression (for example one, five, six,
+     four) over bars 1 to 8.
+   - Control+Shift+R: add Anvil (drums), style Rock. Then add Bellows (bass)
+     and Hammer (guitar).
+   - In the Regions list, Enter on a player region opens its editor.
+     - Variation: try a few. Expected: each is a different groove, said in
+       words; the Regions list says "variation 3 of 6".
+     - Control+R: Reforge. Expected: "New performance of variation 3 of 6";
+       the fills and small details change, the groove stays.
+     - Kit pieces: Space on Crash cymbals turns them off; Enter opens a piece's
+       settings (try When a crash comes, every 4 bars).
+     - In the Snare's settings, Step pattern (Alt+S): arrow through the steps,
+       Space turns one on or off, Page Up makes it louder. Expected: you hear
+       only that change.
+     - Then change the variation. Expected: a warning that your hand-made
+       steps will reset, with Change and Cancel; Control+Z brings them back.
+   - Try Follow: set the drummer to follow the bass track.
+   - Add Anvil with the style Dubstep and listen to the Forge Dubstep Kit.
+
+5. Trimming and looping (5 minutes)
+   - In the Regions list, Alt+Enter on a region: make it play 4 times.
+     Expected: the region's line says "loops 4 times, to bar ...".
+
+6. Automation (10 minutes)
+   - Control+Shift+U on a track. Alt+A adds a lane: choose Volume. Alt+A in
+     the points list adds a point: add one at bar 1 with 100 and one at bar 5
+     with 20. Play from bar 1. Expected: a smooth fade.
+   - Control+Shift+W turns on Write automation. Play the song and press the
+     right bracket and left bracket keys in the Tracks list (volume up and
+     down). Stop. Expected: the Volume lane now has points where you pressed.
+     Control+Z undoes the whole pass.
+
+7. Importing, saving and exporting (10 minutes)
+   - Control+Shift+I (or the Import file button in the File group) imports an
+     audio file (MP3, M4A, WAV and more) or a MIDI file. Expected: it says
+     what it made and where; a long file shows its progress, and Escape
+     cancels.
+   - Control+S saves the project. Control+E exports a WAV or M4A file;
+     Control+Shift+E exports MIDI. Expected: Musician Forge says where each
+     file went.
+   - In the Regions list (Control+5), Alt+Right and Alt+Left nudge a region;
+     right bracket and left bracket move its start; Shift+right bracket makes
+     it longer, Shift+left bracket shorter; N changes the step. On a rhythm
+     player region, make it longer and play it. Expected: each key says where
+     the region starts or ends, the player fills the new length, and
+     Control+Z undoes.
+   - Change something, then Control+W (Close project) and choose Yes. Open
+     the project again. Expected: your change is there.
+   - Add a section (Song group, Sections), move into it, then press Enter and
+     comma a few times. Expected: you stay in that section ("Start of
+     Section 2"). Turn on All sections and press Enter: the start of the song.
+   - Control+I (Instrument): the drum kits are only in Drum Kits.
+   - Control+Shift+J: change a chord strip (Enter), then press B until the
+     chord strips layout and play that key. Expected: your chord.
+   - On the start screen, press Enter on a recent project. Expected: it says
+     "Opening" and the project opens.
+   - Move into section 2 or later and save, close the project and open it
+     again. Expected: it says that section and bar, and you are there.
+   - With a rhythm player on a track, add a section, move into it, and press
+     P in the Regions list. Expected: a player region of the same player
+     and style fills the section, starting from that style's own settings.
+   - On a rock drummer, listen to a crash: the hi-hat stops for that beat.
+   - Change a section's time signature to 3/4, then 6/8 (Control+Shift+M), and
+     play a drummer and a bass there. Expected: they play in that meter.
+   - Set a drummer's Swing feel to Eighth notes with Swing at 60 and Fills up.
+     Expected: the fills roll smoothly in triplets.
+   - Tab to the Menus group and open a few menus with their buttons. Expected:
+     the same items as the menu bar (Alt), and each one works.
+   - If your computer has a headphone jack: play a song and plug headphones
+     in, then take them out. Expected: within a second the sound moves to
+     where Windows plays, and Musician Forge says "Sound now on" and its name.
+
+8. The microphone, if you have one (optional, 15 minutes)
+   - The Audio settings button in the Settings group (Tab or F6 gets there;
+     Control+Shift+O too): choose the microphone and Test it.
+   - The Measure the recording delay button in the Settings group (or
+     Control+Shift+D): headphones off, speakers up, a quiet room.
+   - Control+U adds an audio track; R records from the microphone. Expected:
+     no pop as the microphone starts.
+   - With headphones on, open Track settings on the audio track and tick
+     "Hear the microphone while recording". Then in Options, Audio settings,
+     press "Check low-latency support". If it says your sound card allows it,
+     tick "Low-latency hearing yourself" and record a few notes. Expected:
+     less delay than before; say what you hear.
+
+
+9. Removing and reinstalling (optional, last, 10 minutes)
+   - Close Musician Forge and run Remove Musician Forge. Answer Y, then Y to
+     keep your settings. Expected: it says Musician Forge is removed and your
+     projects are still in Documents, Musician Forge Songs.
+   - Run Install or Update Musician Forge again, then Start Musician Forge and
+     open one of your projects. Expected: it opens and plays as before.
+
+
+SENDING BACK WHAT YOU FOUND
+
+1. Close Musician Forge, so its log is complete.
+2. Open the "logs" folder in the Musician Forge folder.
+3. Attach these files to an email (or put them in a zip file first):
+   - musicianforge.log: what happened while you used Musician Forge.
+   - install_log.txt and selfcheck_log.txt, if installing had a problem.
+4. Send it to Russell at russellhinderman425@gmail.com, with your notes: what
+   you tried, what you expected, what happened, which screen reader you use
+   (and its version), and which version of Windows.
+
+The logs hold no recordings and no songs, only what Musician Forge did, the
+names of your sound devices, and the folders it used.
+
+
+KNOWN LIMITS IN 0.9.4
+
+- Musician Forge needs Python until the 1.0 installer.
+- The guitar packs play from B1 to D6 (key 35 to 86): drop D, drop C and
+  B standard work; lower notes are silent.
+- Rhythm players following a recording work best with clear, separate hits
+  (picked or strummed guitar, piano, drums); slow pads and legato lines have
+  few clear starts.
+- In the Step pattern, a step can hold several sounds, but Left and Right
+  keep only one of them (Control+Z brings the others back).
+- Low-latency hearing yourself needs Windows 10 or later and a sound driver
+  that offers it; Musician Forge says when it does not.
+- Hearing yourself through a computer always takes a moment. For none at all,
+  use direct monitoring on a USB microphone or audio interface.
+- Bluetooth headphones add a delay you can hear when playing live.
+
+NEW TO TRY: In a region's event list (Control+L), press Space on two notes, then Control+Up.
+Both should move. Control+Q should offer the region you are on, the selected track or all tracks.
+
+NEW TO TRY: Export audio (Control+E) with WAV, What to export "Only the tracks you choose": press Space on one
+track and export it; then choose two and check the zip has one file each. Export MIDI (Control+Shift+E) and
+import the file into another program: check the instruments (guitar, drums), the tempo, time signature and key,
+and that the Chord track is there and silent.
+Then: give a rock drummer the Forge Trap Kit and set its crash cymbals to the splash: the splash should play
+on the crash, not go silent.
+Then: in a drummer's region, set Fill amount to 100 (a fill every bar) and Fill complexity high and low; open the
+ride's settings and move its Complexity slider to 100 and to 0; Reforge a few times and listen to the fills change.
+Then: make two drummer regions one after the other on the same track, the first at Intensity 50 and the second at
+100. The last two bars of the first should build on the hi-hat: closed, then half open, then wide open into the
+second region. Set the first to 100 too: the build should go away.
+Then: select two drummer regions (Shift+F8, Space on each), press Enter, move Intensity: both should change.

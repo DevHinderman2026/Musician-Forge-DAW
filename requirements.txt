@@ -1,0 +1,8 @@
+# Python packages Musician Forge needs (installed by "Install or Update Musician Forge").
+# Versions are pinned so every install behaves the same. All have Python 3.14 builds.
+wxPython==4.3.1
+numpy==2.5.3
+sounddevice==0.5.6
+accessible_output2==0.17
+pywin32==312
+comtypes==1.4.17

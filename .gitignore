@@ -1,0 +1,7 @@
+# Generated files Musician Forge's version history should not track
+logs/
+__pycache__/
+*.pyc
+_sync.zip
+*.tmp
+_wip/
