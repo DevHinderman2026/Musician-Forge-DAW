@@ -7,8 +7,11 @@ hearing yourself nor the take starts with a click. Pieces keep their length, so 
 
 import numpy as np
 
-QUIET_SECONDS = 0.06         # the microphone's first 60 ms: silent
-FADE_SECONDS = 0.015         # then 15 ms to full level
+# Russell, 21 Oct 2026: "there is still a slight popping ... increase that slightly ... it's barely noticeable" (with
+# audio recording). From 60 ms silent and a 15 ms straight fade to 80 ms and a 25 ms rounded (raised-cosine) fade,
+# which starts and ends without a corner, so it adds no click of its own.
+QUIET_SECONDS = 0.08         # the microphone's first 80 ms: silent
+FADE_SECONDS = 0.025         # then 25 ms to full level
 
 
 class StartFade:
@@ -29,6 +32,7 @@ class StartFade:
             self.done += frames
             return data
         positions = np.arange(self.done, self.done + frames, dtype=np.float32)
-        gain = np.clip((positions - self.quiet + 0.5) / self.fade, 0.0, 1.0)[:, None]
+        ramp = np.clip((positions - self.quiet + 0.5) / self.fade, 0.0, 1.0)
+        gain = (0.5 - 0.5 * np.cos(np.pi * ramp))[:, None]          # rounded at both ends
         self.done += frames
         return (data * gain).astype(np.float32, copy=False)

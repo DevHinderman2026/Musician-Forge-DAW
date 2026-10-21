@@ -602,9 +602,20 @@ Windows). The check box "Let the sound ring out after the end" is on unless you
 turn it off:
 the export keeps going until held notes and reverb have faded to silence (up to
 10 seconds). Turn it off for loops, so the file ends exactly at the end of the song.
-If the sound reached full volume somewhere, Musician Forge says there may be
-distortion in certain parts of the song, and that reducing track volumes will
-help. (The master volume in Preferences changes only what you hear, not exports.)
+"Fade out at the end of the song" fades the song out over its last seconds
+(the slider: 5 to 30 seconds, 10 to start), ending exactly where the song ends,
+so the ring-out check box is dimmed while it is on. Tracks exported on their own
+all get the same fade, so they still line up. You hear the fade in the exported
+file, not while playing in Musician Forge.
+If the sound goes past full volume somewhere, the export says where and by how
+much, for example: "It distorts at bars 33 to 36 (Section 3): up to about 3 dB
+too loud there. The loudest track there is Drums. Turning it down about 3 dB
+(Drums from volume 80 to 67) should fix it." To find the loudest tracks, the
+export plays each track on its own up to the last place it distorts, so an
+export that distorts takes longer. Tracks exported on their own name each track
+whose file distorts, with the same details. Export again to check.
+While it works, the export says how far it has got every 10 percent.
+(The master volume in Preferences changes only what you hear, not exports.)
 
 EXPORTING TRACKS ON THEIR OWN: with WAV chosen, "What to export" offers three
 choices:

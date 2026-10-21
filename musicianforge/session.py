@@ -18,8 +18,8 @@ from contextlib import contextmanager
 
 import numpy as np
 
-from . import (arpeggiator, arrange, audioimport, audiotracks, effects, latency, m4a, meterchange, midifile, packs,
-               pitchfix,
+from . import (arpeggiator, arrange, audioimport, audiotracks, effects, exportcheck, latency, m4a, meterchange,
+               midifile, packs, pitchfix,
                projects, regions, theory, wavfile)
 from . import chords as chords_module
 from . import keyboard_map as km
@@ -2988,7 +2988,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return words
 
     def export_tracks(self, path, sample_rate=48000, bits=24, progress=None, cancelled=None, tail=True,
-                      track_ids=None):
+                      track_ids=None, fade_seconds=0.0):
         """Tracks on their own, as WAV files (Russell, 10 Oct 2026): track_ids, or every track you can hear.
         A .wav path with one track is that one file (the vocals alone, say); otherwise the files go into one zip
         file. Every file has the same length, from the start of the song, so they line up side by side in another
@@ -3006,9 +3006,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("No track has anything to export yet")
         if len(tracks) == 1 and path.lower().endswith(".wav"):
             result = self.export_audio(path, "wav", sample_rate, bits, progress, cancelled, tail,
-                                       only_track=tracks[0].id)
+                                       only_track=tracks[0].id, fade_seconds=fade_seconds)
             result["files"] = 0 if result["cancelled"] else 1
             result["tracks"] = [tracks[0].name]
+            result["distorted"] = [(tracks[0], result["clips"])] if result["clips"] else []
             return result
         if not path.lower().endswith(".zip"):
             path += ".zip"
@@ -3016,6 +3017,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         made = []
         peak = 0.0
         seconds = 0.0
+        distorted = []                   # [(track, its file's clip windows)] (21 Oct 2026)
         try:
             for number, track in enumerate(tracks):
                 def part(fraction, number=number):
@@ -3023,12 +3025,14 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                         progress((number + fraction) / float(len(tracks)))
                 name = "{:02d} {}.wav".format(number + 1, projects.safe_name(track.name) or "Track")
                 result = self.export_audio(os.path.join(folder, name), "wav", sample_rate, bits, part, cancelled,
-                                           tail, only_track=track.id)
+                                           tail, only_track=track.id, fade_seconds=fade_seconds)
                 if result["cancelled"]:
                     log.info("Track export cancelled: %s", path)
                     return {"path": path, "cancelled": True, "seconds": 0.0, "peak": peak, "files": 0,
-                            "tracks": []}
+                            "tracks": [], "distorted": []}
                 peak = max(peak, result["peak"])
+                if result["clips"]:
+                    distorted.append((track, result["clips"]))
                 seconds = max(seconds, result["seconds"])
                 made.append(result["path"])
             tmp = path + ".tmp"
@@ -3048,10 +3052,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             shutil.rmtree(folder, ignore_errors=True)
         log.info("Exported tracks: %s (%d WAV files, %.1f seconds)", path, len(made), seconds)
         return {"path": path, "cancelled": False, "seconds": seconds, "peak": peak, "files": len(made),
-                "tracks": [t.name for t in tracks]}
+                "tracks": [t.name for t in tracks], "distorted": distorted, "fade": fade_seconds}
 
-    @staticmethod
-    def describe_track_export(result):
+    def describe_track_export(self, result):
         """What to say when tracks have gone out on their own: the file, where, what is in it, how long."""
         minutes, seconds = divmod(int(round(result["seconds"])), 60)
         length = "{} minute{} {} second{}".format(minutes, "" if minutes == 1 else "s", seconds,
@@ -3062,11 +3065,26 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         else:
             message = "Export finished. {}: {} WAV files, one for each track, {} long.".format(
                 where, result["files"], length)
-        if result["peak"] >= 0.999:
+        message += self._fade_words(result)
+        if result.get("distorted"):
+            # where, how much, and which (Russell, 21 Oct 2026: specific, so you know where to listen)
+            message += exportcheck.tracks_words(result["distorted"], self.song)
+        elif result["peak"] >= exportcheck.CLIP_LEVEL:
             message += DISTORTION_WORDS.format("track" if result["files"] == 1 else "tracks")
         return message
 
-    def estimate_wav_bytes(self, sample_rate, bits, tail=True):
+    def _fade_words(self, result):
+        """Said after an export with a fade-out that covers the whole song (it is shorter than the fade)."""
+        fade = result.get("fade") or 0
+        if fade and self._song_seconds() <= fade:
+            return " The song is {:.0f} seconds long, so the fade-out covers all of it.".format(self._song_seconds())
+        return ""
+
+    def _song_seconds(self):
+        end = max(self.song.end_tick(), self.song.song_end_tick())
+        return self.song.timeline.tick_to_seconds(end)
+
+    def estimate_wav_bytes(self, sample_rate, bits, tail=True):  # (a fade-out: pass tail False, it has none)
         """About how big a WAV export will be (a ring-out usually lasts a second or two)."""
         return wav_size_bytes(int(self._export_seconds(tail) * sample_rate), 2, bits)
 
@@ -3083,13 +3101,21 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return self.export_audio(path, "wav", sample_rate, bits, progress, cancelled, tail)
 
     def export_audio(self, path, fmt="wav", sample_rate=48000, bits=24, progress=None, cancelled=None, tail=True,
-                     only_track=None):
+                     only_track=None, fade_seconds=0.0, stage=None):
         """Render the song to a WAV or M4A file. Safe to run on a background thread.
 
         tail: True lets the sound ring out after the end until it has faded to silence
         (up to 10 seconds); False ends the file exactly at the end of the song.
-        Returns a dict with the path, seconds, peak and whether it was cancelled.
+        fade_seconds: a fade-out over the song's last seconds, ending at its end (then there is no ring-out).
+        stage(words): told when the work moves on to finding which tracks are loud where it distorts.
+        Returns a dict with the path, seconds, peak, whether it was cancelled, "clips" (where it distorts:
+        [(start seconds, end seconds, loudest)]) and "loud_tracks" ([(track, level there)], loudest first, for a
+        song that distorts; measured after the file is written, track by track).
         """
+        if fade_seconds:
+            low, high = exportcheck.FADE_SECONDS_RANGE
+            fade_seconds = max(low, min(high, float(fade_seconds)))
+            tail = False
         if not self.song.has_content():
             raise ValueError("The song has nothing to export yet")
         fmt = "m4a" if fmt == "m4a" else "wav"
@@ -3114,11 +3140,18 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise
         peak = 0.0
         stopped = False
+        clips = exportcheck.ClipFinder(sample_rate)
+        written = [0]
+
+        def levels_heard(levels):            # before full scale cuts it off, so it says how much too loud
+            clips.add(levels, written[0])
+            written[0] += len(levels)
         try:
             for block in render_offline(song, synth, sample_rate, progress=progress, cancelled=cancelled,
                                         audio_loader=self.load_audio, tail_seconds=MAX_TAIL_SECONDS if tail else 0.0,
                                         until_silent=tail and only_track is None, take_loader=self._take_audio,
-                                        notes_by_track=notes_by_track):
+                                        notes_by_track=notes_by_track, fade_seconds=fade_seconds,
+                                        on_levels=levels_heard):
                 peak = max(peak, float(abs(block).max()))
                 writer.write(block)
             stopped = bool(cancelled and cancelled())
@@ -3137,7 +3170,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if stopped:
             writer.abort()
             log.info("%s export cancelled: %s", fmt.upper(), path)
-            return {"path": path, "cancelled": True, "seconds": 0.0, "peak": peak}
+            return {"path": path, "cancelled": True, "seconds": 0.0, "peak": peak, "clips": [], "loud_tracks": None}
         try:
             writer.close()
         except m4a.M4AError as exc:
@@ -3150,17 +3183,77 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         else:
             log.info("Exported WAV: %s (%.1f seconds, %d Hz, %d-bit, peak %.2f)", path, seconds, sample_rate, bits,
                      peak)
-        return {"path": path, "cancelled": False, "seconds": seconds, "peak": peak}
+        windows = clips.windows()
+        loud = None
+        if windows and only_track is None:
+            if stage is not None:
+                stage("Finding the loud tracks")
+            loud = self._loud_tracks(song, notes_by_track, windows, fade_seconds, progress, cancelled)
+            log.info("Export distorts at %d places, up to %.1f dB; loudest tracks there: %s", len(windows),
+                     exportcheck.decibels_over(max(w[2] for w in windows)),
+                     ", ".join("{} {:.2f}".format(t.name, level) for t, level in (loud or [])))
+        return {"path": path, "cancelled": False, "seconds": seconds, "peak": peak, "clips": windows,
+                "loud_tracks": loud, "fade": fade_seconds}
 
-    @staticmethod
-    def describe_export(result):
+    def _loud_tracks(self, song, notes_by_track, windows, fade_seconds, progress=None, cancelled=None):
+        """Each track you can hear, played on its own up to the last place the mix distorts, measured there:
+        [(track, its loudest level in those places)], loudest first (None when cancelled). Played at a lower sample
+        rate (ANALYSIS_RATE), so this takes about half as long as the export did per track; the levels are close
+        enough to say which tracks to turn down."""
+        rate = ANALYSIS_RATE
+        until = int(max(end for _s, end, _l in windows) * rate) + 1
+        spans = [(int(start * rate), int(end * rate) + 1) for start, end, _l in windows]
+        tracks = [t for t in song.audible_tracks() if (t.regions if t.is_audio else notes_by_track.get(t.id))]
+        found = []
+        for number, track in enumerate(tracks):
+            alone = song.clone()
+            for t in alone.tracks:
+                t.solo = t.id == track.id
+                t.mute = t.id != track.id
+            synth = self.synth_factory(rate)
+            level, done = 0.0, 0
+            heard = []
+
+            def part(fraction, number=number):
+                if progress:
+                    progress((number + min(1.0, fraction)) / float(len(tracks)))
+            try:
+                for block in render_offline(alone, synth, rate, cancelled=cancelled, audio_loader=self.load_audio,
+                                            tail_seconds=0.0, take_loader=self._take_audio,
+                                            notes_by_track=notes_by_track, fade_seconds=fade_seconds,
+                                            on_levels=heard.append):
+                    levels = heard.pop() if heard else np.max(np.abs(block), axis=1)
+                    first, done = done, done + len(block)
+                    for a, b in spans:
+                        lo, hi = max(a, first), min(b, done)
+                        if lo < hi:
+                            level = max(level, float(np.max(levels[lo - first:hi - first])))
+                    part(done / float(max(1, until)))
+                    if done >= until:
+                        break
+            finally:
+                try:
+                    synth.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if cancelled is not None and cancelled():
+                return None
+            found.append((self.song.track_by_id(track.id) or track, level))
+        found.sort(key=lambda pair: -pair[1])
+        return found
+
+    def describe_export(self, result):
         """What to say when an export finishes: the file, where it went and its length."""
         minutes, seconds = divmod(int(round(result["seconds"])), 60)
         message = "Exported {} in {}, {} minute{} {} second{}.".format(
             os.path.basename(result["path"]), projects.describe_file_location(result["path"]),
             minutes, "" if minutes == 1 else "s", seconds, "" if seconds == 1 else "s")
-        if result["peak"] >= 0.999:
-            # (Russell, 10 Oct 2026: only track volumes; the master volume in Preferences is not used by exports)
+        message += self._fade_words(result)
+        if result.get("clips"):
+            # where, how much, and the loudest tracks there (Russell, 21 Oct 2026). Only track volumes: the master
+            # volume in Preferences is not used by exports (10 Oct 2026)
+            message += exportcheck.song_words(result["clips"], self.song, result.get("loud_tracks"))
+        elif result["peak"] >= exportcheck.CLIP_LEVEL:
             message += DISTORTION_WORDS.format("song")
         return message
 
@@ -3185,6 +3278,7 @@ def describe_rate(rate):
     return "{} kHz".format(format_number(rate / 1000.0))
 
 
+ANALYSIS_RATE = 24000           # finding the loud tracks: half the usual rate, about twice as fast
 DISTORTION_WORDS = " There may be distortion in certain parts of the {}. Reducing track volumes will help with this."
 IMPORTED_DISTORTION_GUITAR = (41, 0)    # FSBS Electric Guitar Distorted 2 (packs.py), as most Hammer styles use
 

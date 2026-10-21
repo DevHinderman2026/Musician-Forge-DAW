@@ -44,7 +44,7 @@ DEFAULTS = {
     # No remembered export folder: exports always start next to the saved song, or in
     # Musician Forge Songs, so they are easy to find without seeing the screen.
     # format: "wav" or "m4a"; tail: let the sound ring out at the end
-    "export": {"format": "wav", "sample_rate": 48000, "bits": 24, "tail": True},
+    "export": {"format": "wav", "sample_rate": 48000, "bits": 24, "tail": True, "fade": False, "fade_seconds": 10},
     "recent_files": [],
     "speak_with_windows_voice": False,
     "announce_note_names": False,
@@ -175,6 +175,7 @@ def _limits():
         ("new_song", "denominator"): OneOf(VALID_DENOMINATORS), ("new_song", "tonic"): Between(0, 11),
         ("new_song", "scale"): OneOf(theory.SCALE_NAMES), ("export", "format"): OneOf(("wav", "m4a")),
         ("export", "sample_rate"): OneOf((44100, 48000)), ("export", "bits"): OneOf((16, 24)),
+        ("export", "fade_seconds"): Between(5, 30),
     }
 
 

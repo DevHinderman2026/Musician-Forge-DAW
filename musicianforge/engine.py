@@ -350,6 +350,8 @@ class Engine:
         self.metronome_volume = 0.7
         self.count_in_bars = 1
         self.master_gain = 1.0
+        self.keep_levels = False       # exports: keep each block's frame levels before the clip (self.levels)
+        self.levels = None
         self.record_offset_seconds = 0.0     # notes from the musical keyboard
         self.audio_offset_seconds = 0.0      # recordings from the microphone
         self.stop_at_end = True
@@ -587,6 +589,8 @@ class Engine:
             self._probe_clicks(out, frames)
         if not np.isfinite(out).all():
             self._silence_bad_numbers(out)
+        if self.keep_levels:          # (exports) how loud each frame was before full scale cut it off
+            self.levels = np.max(np.abs(out), axis=1) if out.ndim > 1 else np.abs(out)
         np.clip(out, -1.0, 1.0, out=out)
         self._clock += frames
         self.blocks_processed += 1
@@ -817,8 +821,9 @@ class Engine:
                 self.monitoring = cmd[1]
                 self._monitor_low, self._monitor_played = None, 0
                 self._monitor_prime, self._monitor_primed = None, False
-                # hearing yourself fades in (10 ms) when it starts, even with the microphone already open
-                self._monitor_start = StartFade(self.sample_rate, quiet=0, fade=0.01) if self.monitoring else None
+                # hearing yourself fades in (20 ms since 21 Oct 2026, was 10) when it starts, even with the microphone
+                # already open
+                self._monitor_start = StartFade(self.sample_rate, quiet=0, fade=0.02) if self.monitoring else None
                 if not self.monitoring:
                     self._monitor.clear()
             elif kind == "instrument":
@@ -1348,9 +1353,18 @@ def dsp_ramp_pair(start, end, frames):
     return start[None, :] + (end - start)[None, :] * t
 
 
+def fade_gains(positions, end, length):
+    """The fade-out's loudness at sample positions: 1 before it, falling to 0 at `end` over `length` samples. The
+    curve is (1 - x) squared: halfway through it is 12 dB down, and it keeps getting softer evenly to the ear, where
+    a straight line would hardly change at first and then drop off at the very end."""
+    start = end - length
+    x = np.clip((positions - start + 0.5) / float(max(1, length)), 0.0, 1.0)
+    return (1.0 - x) ** 2
+
+
 def render_offline(song, synth, sample_rate=48000, block_frames=4096, tail_seconds=3.0,
                    progress=None, cancelled=None, audio_loader=None, until_silent=False, take_loader=None,
-                   notes_by_track=None):
+                   notes_by_track=None, fade_seconds=0.0, on_levels=None):
     """Yield blocks of the whole song: from bar 1 to the end of its last section (or its last
     note, whichever is later), plus a tail so reverb and held notes can ring out.
 
@@ -1358,10 +1372,17 @@ def render_offline(song, synth, sample_rate=48000, block_frames=4096, tail_secon
     the tail as soon as the sound has faded to silence, and leave out the silence.
     Used for WAV export. The metronome is off. `progress(fraction)` is called
     now and then; if `cancelled()` returns True the export stops.
+    fade_seconds: a fade-out over the song's last seconds, ending where the song ends (Russell, 21 Oct 2026); the
+    whole song fades when it is shorter. Everything after the end is silent, so there is no ring-out with it.
+    on_levels(levels): called before each block is yielded with how loud each of its frames was before full scale
+    cut it off (a block is never louder than full scale; this says by how much it would have been).
     """
+    if fade_seconds > 0:
+        tail_seconds, until_silent = 0.0, False
     engine = Engine(synth, sample_rate)
     engine.metronome_on = False
     engine.stop_at_end = False
+    engine.keep_levels = on_levels is not None
     engine.set_data(PlaybackData(song, sample_rate, audio_loader, take_loader=take_loader,
                                  notes_by_track=notes_by_track))
     engine.play(0)
@@ -1377,22 +1398,35 @@ def render_offline(song, synth, sample_rate=48000, block_frames=4096, tail_secon
             data_end = max(engine.data.end_sample, song_end)
             total = data_end + int(tail_seconds * sample_rate)
         block = block[:max(0, total - done)].copy()
+        levels = engine.levels[:len(block)].copy() if on_levels is not None and engine.levels is not None else None
         start = done
         done += len(block)
+        if fade_seconds > 0 and len(block):
+            length = min(data_end, int(round(fade_seconds * sample_rate)))
+            gains = fade_gains(np.arange(start, done, dtype=np.float64), data_end, length)
+            block = (block * gains[:, None]).astype(block.dtype, copy=False)
+            if levels is not None:
+                levels = levels * gains
         if progress is not None:
             progress(min(1.0, done / float(max(1, total))))
         if until_silent and start >= data_end:
             if len(block) and float(np.max(np.abs(block))) < SILENCE_LEVEL:
-                quiet.append(block)
+                quiet.append((block, levels))
                 quiet_frames += len(block)
                 if quiet_frames >= SILENCE_SECONDS * sample_rate:
                     return  # faded out: the held-back silence is left out
             else:
-                for held in quiet:
+                for held, held_levels in quiet:
+                    if held_levels is not None:
+                        on_levels(held_levels)
                     yield held
                 quiet, quiet_frames = [], 0
+                if levels is not None:
+                    on_levels(levels)
                 yield block
         elif len(block):
+            if levels is not None:
+                on_levels(levels)
             yield block
         if cancelled is not None and cancelled():
             return

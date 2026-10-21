@@ -238,3 +238,7 @@ group of buttons; open each menu with its button and check every command you use
 Reforge a drummer region a few times: each time it says only "Regenerated performance" and the fills change.
 Open the Closed hi-hat's settings: there is no "Play this rhythm on" any more. Set the song's tempo to 130 and open
 the Ride's settings: the Pattern list has no sixteenth notes; play it and listen for eighth notes on the ride.
+Export audio (Control+E) with "Fade out at the end of the song" on and a fade of 10 seconds: listen to the end of the
+file. While it exports, it should say 10 percent, 20 percent and so on. Turn one track's volume up to 100 and play
+loud chords on it, then export: the message should name the bars, how many dB, and that track.
+Record on an audio track: listen for any pop at the very start of the take.

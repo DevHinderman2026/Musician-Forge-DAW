@@ -5,7 +5,24 @@ Git on the laptop keeps a snapshot of each tested version.
 
 ## 0.9.5 (21 October 2026, in testing)
 
-What Russell asked for after trying the public beta.
+What Russell asked for after trying the public beta: immediate bug fixes and feature improvements.
+
+- **Fade out at the end of exports.** Export audio has "Fade out at the end of the song" next to the ring-out,
+  with a slider from 5 to 30 seconds (10 to start), remembered for next time. The fade ends exactly where the song
+  ends and gets softer evenly to the ear (halfway through it is 12 dB down), so the ring-out is dimmed while it is
+  on. WAV, M4A and tracks on their own (each with the same fade, so they line up). It is heard in the exported file,
+  not while playing.
+- **The distortion warning says where, how much, and what to turn down.** Instead of "certain parts of the song":
+  the bars and sections where it distorts (the first three places, and how many more), how many decibels too loud
+  it gets, the loudest tracks there and the volume each would need ("Drums from volume 80 to 67"). To find them,
+  an export that distorts plays each track on its own up to the last place it distorts (at half the sample rate,
+  to be quicker). Tracks exported on their own name each track whose file distorts. The level is measured before
+  full scale cuts the sound off, so the decibels are real.
+- **Exports say how far they have got**, every 10 percent up to 100, and say when they move on to finding the
+  loud tracks.
+- **A softer start for the microphone.** A slight pop was still there when recording audio: its first 80 ms are now
+  silent (was 60) and it fades in over a rounded 25 ms (was a straight 15 ms); hearing yourself fades in over
+  20 ms (was 10).
 
 - **Every command is in the menus.** The groups of buttons (Transport, Track, Edit, Region, Song, File and
   Settings) are gone, to reduce clutter: each did what an item of its menu does, and every one of those items is

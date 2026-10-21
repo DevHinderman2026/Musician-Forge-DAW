@@ -8,6 +8,7 @@ import os
 import wx
 
 from .. import audiotracks, instruments, projects, theory
+from ..exportcheck import FADE_SECONDS_DEFAULT, FADE_SECONDS_RANGE
 from ..quantize import DEFAULT_GRID, GRID_NAMES, grid_ticks
 from ..song import Note
 from ..timeline import (MAX_BPM, MAX_NUMERATOR, MIN_BPM, NOTE_LENGTHS, PPQ, TimelineError,
@@ -1172,6 +1173,16 @@ class ExportAudioDialog(wx.Dialog):
                                             "has faded, up to 10 seconds)")
         self.tail.SetValue(bool(settings.get("tail", True)))
         form.add_wide(self.tail)
+        # a fade-out at the end (Russell, 21 Oct 2026: 5 to 30 seconds, 10 to start); it ends where the song ends, so
+        # the ring-out is dimmed while it is on
+        self.fade = wx.CheckBox(self, label="&Fade out at the end of the song")
+        self.fade.SetValue(bool(settings.get("fade", False)))
+        form.add_wide(self.fade)
+        low, high = FADE_SECONDS_RANGE
+        seconds = settings.get("fade_seconds", FADE_SECONDS_DEFAULT)
+        seconds = seconds if isinstance(seconds, int) and low <= seconds <= high else FADE_SECONDS_DEFAULT
+        self.fade_length = form.add("Fade-out length in seconds ({} to {})".format(low, high), slider_ctrl,
+                                    value=seconds, min_value=low, max_value=high)
         self.what = form.add("What to export (tracks on their own need WAV)", choice_ctrl,
                              choices=self.WHAT_NAMES, selection=0)
         # every track with something to play, in the order of the Tracks list
@@ -1195,6 +1206,7 @@ class ExportAudioDialog(wx.Dialog):
         for control in (self.format, self.rate, self.bits, self.what):
             control.Bind(wx.EVT_CHOICE, self.update_size)
         self.tail.Bind(wx.EVT_CHECKBOX, self.update_size)
+        self.fade.Bind(wx.EVT_CHECKBOX, self.update_size)
         self.tracks.Bind(wx.EVT_KEY_DOWN, self.on_track_key)
         self.select_button.Bind(wx.EVT_BUTTON, lambda e: self.toggle_track())
         self.all_button.Bind(wx.EVT_BUTTON, lambda e: self.choose_all())
@@ -1288,9 +1300,14 @@ class ExportAudioDialog(wx.Dialog):
         rate = self.RATES[self.rate.GetSelection()]
         bits = self.BITS[self.bits.GetSelection()]
         tail = self.tail.GetValue()
-        self.session.settings["export"].update(format=fmt, sample_rate=rate, bits=bits, tail=tail)
+        self.session.settings["export"].update(format=fmt, sample_rate=rate, bits=bits, tail=tail,
+                                               fade=self.fade.GetValue(), fade_seconds=self.fade_length.GetValue())
         self.session.settings.save()
         return fmt, rate, bits, tail
+
+    def fade_seconds(self):
+        """The fade-out's length in seconds, or 0 when it is off."""
+        return int(self.fade_length.GetValue()) if self.fade.GetValue() else 0
 
     def update_size(self, event):
         fmt = self.chosen_format()
@@ -1300,9 +1317,12 @@ class ExportAudioDialog(wx.Dialog):
         choosing = what == "chosen" and bool(self.track_ids)
         for control in (self.tracks, self.select_button, self.all_button):
             control.Enable(choosing)
+        fading = self.fade.GetValue()
+        self.fade_length.Enable(fading)
+        self.tail.Enable(not fading)            # the fade ends where the song ends: nothing is left to ring out
         rate = self.RATES[self.rate.GetSelection()]
         bits = self.BITS[self.bits.GetSelection()]
-        megabytes = self.session.estimate_export_bytes(fmt, rate, bits, self.tail.GetValue()) / 1e6
+        megabytes = self.session.estimate_export_bytes(fmt, rate, bits, self.tail.GetValue() and not fading) / 1e6
         if what == "song":
             self.size_label.SetLabel("Estimated file size: {:.1f} megabytes".format(megabytes))
         else:

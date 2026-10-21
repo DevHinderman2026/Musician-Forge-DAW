@@ -206,6 +206,34 @@ class KeyboardPanel(wx.Panel):
             pass
 
 
+class ExportCountdown:
+    """Says how far an audio export has got, every 10 percent up to 100 (Russell, 21 Oct 2026: exports can take a
+    while, longer when they look for the tracks that distort). When the export moves on to a second stage (finding
+    the loud tracks) it says so and counts from 10 again."""
+
+    STEP = 10
+
+    def __init__(self, say):
+        self.say = say
+        self.stage = None
+        self.next = self.STEP
+
+    def new_stage(self, words):
+        self.stage = words
+        self.next = self.STEP
+        if words:
+            self.say(words)
+
+    def reached(self, fraction):
+        percent = int(min(1.0, max(0.0, fraction)) * 100 + 1e-9)
+        last = None
+        while self.next <= min(100, percent):
+            last = self.next
+            self.next += self.STEP
+        if last is not None:                     # several steps at once: only the newest is said
+            self.say("{} percent".format(last))
+
+
 class MainFrame(wx.Frame):
     def __init__(self, session, audio_output=None, speaker=None, test_mode=False):
         super().__init__(None, title=APP_NAME, size=(960, 900))
@@ -1479,8 +1507,9 @@ class MainFrame(wx.Frame):
             fmt, rate, bits, tail = values
             what = dlg.what_to_export()
             track_ids = dlg.tracks_to_export()
+            fade = dlg.fade_seconds()
         if what != "song":
-            self.export_each_track(rate, bits, tail, track_ids)
+            self.export_each_track(rate, bits, tail, track_ids, fade)
             return
         name = os.path.splitext(default_song_file_name(self.session.song))[0] + "." + fmt
         with wx.FileDialog(self, "Export {} file".format(fmt.upper()), defaultDir=self.export_folder(),
@@ -1489,7 +1518,7 @@ class MainFrame(wx.Frame):
             if self.show_modal(fd) != wx.ID_OK:
                 return
             path = fd.GetPath()
-        result = self.run_export(path, rate, bits, tail, fmt)
+        result = self.run_export(path, rate, bits, tail, fmt, fade=fade)
         if result is None:
             return
         if result["cancelled"]:
@@ -1501,7 +1530,7 @@ class MainFrame(wx.Frame):
 
     export_wav = export_audio  # its name before M4A arrived
 
-    def export_each_track(self, rate, bits, tail, track_ids):
+    def export_each_track(self, rate, bits, tail, track_ids, fade=0):
         """Tracks on their own (Russell, 10 Oct 2026): one chosen track is one WAV file (the vocals alone, say);
         several are WAV files in one zip file. Every file has the song's length, so they line up."""
         song = self.session.song
@@ -1519,7 +1548,7 @@ class MainFrame(wx.Frame):
         ending = ".wav" if len(track_ids) == 1 else ".zip"
         if not path.lower().endswith(ending):
             path += ending
-        result = self.run_export(path, rate, bits, tail, "tracks", track_ids)
+        result = self.run_export(path, rate, bits, tail, "tracks", track_ids, fade=fade)
         if result is None:
             return
         if result["cancelled"]:
@@ -1534,19 +1563,23 @@ class MainFrame(wx.Frame):
         return wx.ProgressDialog("Exporting audio", "Rendering {}".format(os.path.basename(path)), maximum=100,
                                  parent=self, style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME)
 
-    def run_export(self, path, rate, bits, tail=True, fmt="wav", track_ids=None):
-        state = {"fraction": 0.0, "cancel": False, "result": None, "error": None}
+    def run_export(self, path, rate, bits, tail=True, fmt="wav", track_ids=None, fade=0):
+        state = {"fraction": 0.0, "cancel": False, "result": None, "error": None, "stage": None}
+
+        def stage(words):                     # the export moves on to finding the loud tracks: start counting again
+            state["fraction"] = 0.0
+            state["stage"] = words
 
         def work():
             try:
                 if fmt == "tracks":
                     state["result"] = self.session.export_tracks(
                         path, rate, bits, progress=lambda f: state.__setitem__("fraction", f),
-                        cancelled=lambda: state["cancel"], tail=tail, track_ids=track_ids)
+                        cancelled=lambda: state["cancel"], tail=tail, track_ids=track_ids, fade_seconds=fade)
                 else:
                     state["result"] = self.session.export_audio(
                         path, fmt, rate, bits, progress=lambda f: state.__setitem__("fraction", f),
-                        cancelled=lambda: state["cancel"], tail=tail)
+                        cancelled=lambda: state["cancel"], tail=tail, fade_seconds=fade, stage=stage)
             except ValueError as exc:  # explained to the user, no need for a traceback
                 state["error"] = exc
             except Exception as exc:  # noqa: BLE001
@@ -1556,14 +1589,27 @@ class MainFrame(wx.Frame):
         worker = threading.Thread(target=work, name="wav-export", daemon=True)
         progress = self.make_progress(path)
         worker.start()
+        said = ExportCountdown(self.session.announce)
         try:
             while worker.is_alive():
-                keep_going, _skip = progress.Update(min(99, int(state["fraction"] * 100)))
+                percent = min(99, int(state["fraction"] * 100))
+                stage_now = state["stage"]
+                if stage_now != said.stage:
+                    said.new_stage(stage_now)
+                    try:
+                        keep_going, _skip = progress.Update(percent, stage_now)
+                    except TypeError:            # a stand-in progress window without words
+                        keep_going, _skip = progress.Update(percent)
+                else:
+                    keep_going, _skip = progress.Update(percent)
+                said.reached(state["fraction"])
                 if not keep_going:
                     state["cancel"] = True
                 wx.MilliSleep(100)
         finally:
             progress.Destroy()
+        if state["error"] is None and state["result"] is not None and not state["result"].get("cancelled"):
+            said.reached(1.0)
         if state["error"] is not None:
             raise state["error"]
         return state["result"]
@@ -2543,7 +2589,9 @@ Hammer plays the two FreePats distorted guitar packs. Until they are downloaded,
 Projects and files
 Control+N: new project. Control+O: open a project. Control+S: save. Control+Shift+S: save as.
 Control+W: close the project and go back to the start screen.
-Control+E: export audio, as WAV (full quality) or M4A (smaller, for sharing and Apple devices).
+Control+E: export audio, as WAV (full quality) or M4A (smaller, for sharing and Apple devices). Fade out at the end
+fades the last 5 to 30 seconds. The export says every 10 percent how far it has got, and if it distorts, where, by
+how much, and which tracks to turn down.
 With WAV, What to export can also be every track, or only the tracks you choose (Space, or the button
 Select or unselect the track, selects), each as its own WAV file: one track makes a WAV file, several a zip file.
 Control+Shift+E: export the whole song as one MIDI file, with the chord track (silent) and the song's
