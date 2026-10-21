@@ -102,7 +102,9 @@ LIVE_DRUMMER_STYLES = ("rock", "hard_rock", "metal", "jazz", "funk", "pop")
 # The ride: above 120 in every style. The hi-hat: above 140 in the styles a real drummer plays (two hands can share
 # hi-hat sixteenths up to about there); the drum machines keep their fast hi-hats. Kicks (feet), shakers and fills
 # are not limited.
-SIXTEENTHS_UP_TO = {"ride": (120, None), "hat": (140, LIVE_DRUMMER_STYLES)}
+# (a drummer's hi-hat was held to eighths above 140 from 0.9.5 until Russell, 21 Oct 2026: "bring the 16th notes to
+# the hi-hats back, even if the tempo goes over 140": disco sixteenths on a closed hi-hat are his to choose)
+SIXTEENTHS_UP_TO = {"ride": (120, None)}
 
 
 def sixteenths_up_to(piece_key, style_key):
@@ -292,7 +294,7 @@ def clean_pieces(player_key, raw):
                 value = clean_value(piece, key, value, player_key)
             except (ValueError, TypeError, LookupError, OverflowError):
                 continue
-            if value != defaults.get(key):
+            if value != defaults.get(key) or key == "on":     # on or off as chosen (see piece_on)
                 kept[key] = value
         if kept:
             cleaned[piece.key] = kept
@@ -305,6 +307,22 @@ def piece_settings(settings, piece_key):
     full = defaults_for(piece)
     full.update((settings.get("pieces") or {}).get(piece_key, {}))
     return full
+
+
+def piece_on(settings, piece_key, has_groove=True):
+    """Whether a kit piece plays its groove (Russell, 21 Oct 2026: "if a kit piece is not in the groove ... those kit
+    pieces are off"). As chosen when it was turned on or off by hand; otherwise on when it has something of its own
+    to play: the variation's groove has it (has_groove), another pattern was chosen for it, it has hand-made steps,
+    or more ghost notes were asked of it. Off only takes a piece out of the groove: fills use the whole kit, and the crashes where a section starts
+    and after fills follow the crash's When setting (from rules 2; see players._KitPieces). The part is always on."""
+    piece = PIECE_BY_KEY[piece_key]
+    if piece.kind == "part":
+        return True
+    stored = (settings.get("pieces") or {}).get(piece_key) or {}
+    if "on" in stored:
+        return bool(stored["on"])
+    return bool(has_groove or stored.get("pattern", "style") not in ("style", "none") or stored.get("steps")
+                or stored.get("ghosts") == "more")      # more ghost notes: the snare plays them, groove or not
 
 
 def hand_made(settings):
@@ -592,7 +610,7 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
     full = piece_settings(settings, piece_key)
     words = []
     if piece.kind != "part":
-        words.append("on" if full["on"] else "off")
+        words.append("on" if piece_on(settings, piece_key, has_groove) else "off")
         if not kit_voices(piece, kit_notes):
             words.append("not in this kit")
     if full["pattern"] != "style":

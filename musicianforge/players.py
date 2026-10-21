@@ -27,6 +27,7 @@ in a recording). Pitches always come from the chord track.
 
 import hashlib
 import json
+import math
 import random
 from dataclasses import dataclass, field
 
@@ -793,17 +794,26 @@ def drum_intensity(intensity):
     return (0.4 * intensity - 10.0) / 0.75
 
 
+# Fill amount places fills on a count of bars from where the region starts, the same for every player (Russell,
+# 21 Oct 2026: "if fill amount is 50% and the section is eight bars long there would be a fill on the 4th bar and then
+# a fill on the 8th bar"; he chose these steps). Fill complexity decides only how big each fill is, and Reforge only
+# their shapes, never where they are. Until then Fill amount was a chance, so a fill at 50 might or might not come.
+FILL_STEPS = ((100, 1), (70, 2), (40, 4), (1, 8))      # (from this Fill amount, a fill every this many bars)
+
+
+def fill_every(amount):
+    """Every how many bars a fill comes at a Fill amount (0 to 100), or None for no fills."""
+    for lowest, every in FILL_STEPS:
+        if amount >= lowest:
+            return every
+    return None
+
+
 def fill_chance(bar, amount):
-    """How likely a fill is in a bar at a Fill amount (0 to 1): 1 is a fill in every bar."""
-    if amount <= 0:
-        return 0.0
-    if bar.phrase_position == 3 or bar.last_in_region:
-        if bar.index % 8 == 7 or bar.last_in_region:
-            return min(1.0, amount * 1.4)
-        return min(1.0, amount * 0.9 + max(0.0, amount - 0.75) * 0.4)
-    if bar.index % 2 == 1:
-        return max(0.0, (amount - 0.5) * 2)
-    return max(0.0, (amount - 0.75) * 4)
+    """1 when this bar has a fill at a Fill amount (0 to 1), else 0: every 8th bar from 1, every 4th from 40, every
+    2nd from 70, every bar at 100 (counted from the region's first bar)."""
+    every = fill_every(int(round(amount * 100)))
+    return 1.0 if every and (bar.index + 1) % every == 0 else 0.0
 
 
 def _fill_start(bar, size, rng):
@@ -828,15 +838,8 @@ def has_fills(settings):
 
 
 def _melodic_fill_chance(bar, amount):
-    """Fill amount for bass, keys, synth and guitar: a run into the next bar at phrase ends first, then every second
-    bar, then every bar at 100."""
-    if amount <= 0:
-        return 0.0
-    if bar.phrase_position == 3 or bar.last_in_region:
-        return min(1.0, amount * 0.8 + max(0.0, amount - 0.75) * 0.8)
-    if bar.index % 2 == 1:
-        return max(0.0, (amount - 0.5) * 2)
-    return max(0.0, (amount - 0.75) * 4)
+    """Fill amount for bass, keys, synth and guitar: the same count of bars as the drummer's (fill_chance)."""
+    return fill_chance(bar, amount)
 
 
 def _performance_touches(bar, hits, accents, pickups, rng, intensity):
@@ -1002,6 +1005,14 @@ class _KitPieces:
         rim = self.full["snare"]["rim"]
         self.rim = rim == "always" or (rim == "intensity" and (intensity <= pp.RIM_AT if new_rules(settings)
                                                                else intensity < RIM_BELOW_RULES_1))
+        # rules 2 (Russell, 21 Oct 2026): a piece is off when the groove has nothing for it (pp.piece_on), and off
+        # takes it out of the groove only: fills use the whole kit, and the crashes where a section starts and after
+        # fills follow the crash's When setting. Rules 1 (older regions): off takes out everything it plays, and only
+        # a piece turned off by hand is off, so they play as they did.
+        self.groove_only = new_rules(settings) and not for_steps
+        if self.groove_only:
+            for p in pp.DRUM_PIECES:
+                self.full[p.key]["on"] = pp.piece_on(settings, p.key, bool(pp.piece_rows(table, p)))
         # with every piece at its default, soft playing still goes to the rim and hard playing still opens the hi-hat
         self.active = (any(self.full[key] != pp.DRUM_DEFAULTS for key in self.full) or self.rim
                        or self.openness != "closed")
@@ -1104,7 +1115,7 @@ class _KitPieces:
         for piece in pp.DRUM_PIECES:
             settings, voices = full[piece.key], self.voices[piece.key]
             if not settings["on"]:
-                hits = [h for h in hits if h[1] not in voices]
+                hits = [h for h in hits if h[1] not in voices or (self.groove_only and h[3] in OUTSIDE_THE_GROOVE)]
                 continue
             if settings["steps"]:
                 hits = self._hand_made(bar, hits, voices, settings["steps"], fill_start, thinned)
@@ -1241,6 +1252,8 @@ CHOKE = "choke"                  # the silent pedal note that closes a half-open
 RIM_BELOW_RULES_1 = 35           # rules 1: Intensity below this went to the rim
 GHOST_LOUDNESS = 50              # a snare softer than this stays on the snare when the rim click is on (a ghost note)
 OVERLAYS = (ACCENT, CHORD_KICK, FOLLOWED)    # what comes on top of a piece's steps by itself
+OUTSIDE_THE_GROOVE = (FILL, ACCENT, CHOKE)    # what a piece that is off still plays (rules 2): fills, crashes and the
+                                              # pedal closing a half-open hi-hat of a build
 FILL_KEEPS = (KICK, HAT, OPEN_HAT, RIDE, PEDAL, SHAKER, FORGE_SHAKER)   # what keeps playing through a fill
 
 
@@ -1277,6 +1290,20 @@ def _two_hands(hits):
         dropped |= {id(h) for h in left[room:] if h[3] != HAND}
         kept += [h for h in together if id(h) not in dropped]
     return kept
+
+
+def _riding_the_crash(bar, hits):
+    """An acoustic drummer riding the crash (Russell, 21 Oct 2026: "when the drummer is selected to play a crash
+    cymbal then the ride should automatically be disabled ... research an actual drummer"). A drummer keeps time with
+    one hand: on the hi-hat, the ride, or, for a big chorus, the crash ("riding the crash", a crash wash). When the
+    crash keeps the time in a bar (at least one crash hit for each beat, as the Crash piece's "every beat" and
+    "eighth notes" patterns play), that hand is on the crash, so the ride and the hi-hat played by hand stop for that
+    bar; the hi-hat pedal (a foot) and steps you set by hand stay. A single crash on a beat already takes the ride's
+    or hi-hat's place on that beat (_two_hands)."""
+    crashes = sum(1 for h in hits if h[1] in _CRASHES and h[3] != ACCENT)
+    if crashes < len(bar.pulses):
+        return hits
+    return [h for h in hits if not (h[1] in _TIMEKEEPING and h[3] != HAND)]
 
 
 # the hand-played sounds of the pieces with a tempo limit for sixteenth notes (the hi-hat pedal is a foot)
@@ -1321,8 +1348,9 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
     rules_now = new_rules(settings)
     chosen_intensity = settings["intensity"]
     builds_at_all = rules_now and style_key in HAT_BUILD_STYLES and chosen_intensity < 100 and not for_steps
-    # no hi-hat playing (turned off): nothing to build (Russell)
-    builds_at_all = builds_at_all and kit.full["hat"]["on"]
+    # no hi-hat playing (turned off by hand): nothing to build (Russell); a groove with no hi-hat of its own (riding
+    # the ride, say) still builds on it, as it did before its hi-hat was said to be off when not in the groove
+    builds_at_all = builds_at_all and pp.piece_settings(settings, "hat")["on"]
     builds_up = (builds_at_all and next_intensity is not None and next_intensity - chosen_intensity >= BUILD_RISE)
     if rules_now:
         settings = dict(settings, intensity=drum_intensity(settings["intensity"]))   # how hard the notes are played
@@ -1429,6 +1457,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         hits = kit.ghost_loudness(hits)
         if rules_now:                           # (older regions play as they did until they are changed)
             hits = _eighths_when_fast(bar, hits, style_key)
+            if style_key in LIVE_DRUMMER_STYLES and not for_steps:   # acoustic drummers only, not drum machines
+                hits = _riding_the_crash(bar, hits)
         # eighth swing's triplet feel, the Step pattern view too (it shows where the notes are heard), before the two
         # hands, so a note that joins the "and" still finds only two hands there
         hits = _triplet_lock(hits, bar, settings["swing"], grid, lambda h: h[1], stays=lambda h: h[3] == CHOKE)
@@ -2069,8 +2099,120 @@ def _tidy(notes):
 # ----------------------------------------------------------------------
 # the one function
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# a human feel (Russell, 21 Oct 2026: "make sure it sounds a bit more human because some performances sound a bit
+# rigid ... both regular performances and then performances that have swing ... and all rhythm players"; and: "for
+# electronic drummers we obviously don't need that logic ... but definitely for acoustic drummers")
+# ----------------------------------------------------------------------
+# Until 0.9.6 every note fell exactly on the grid (only its loudness varied), as a drum machine plays. People are a
+# few milliseconds early or late, and not at random only: studies of drummers measure note-to-note timing that varies
+# by about 5 to 10 ms, a time that drifts slowly as the band breathes, and a "pocket" of their own, most of all a
+# backbeat played a little behind the beat in rock and pop (laid back), while the kick anchors the beat. Each player
+# below gets that, in milliseconds (so it is the same feel at any tempo), after swing, so swung notes are human too.
+# The Step pattern view stays on the grid, and so do the drum machines (dubstep, house, trap) and the synth (its
+# arpeggios and gates are a sequencer's). Each performance has its own feel: Reforge changes it.
+#   jitter: how far each note strays (one standard deviation, in ms; never more than 2.5 of them)
+#   pocket: {sounds: (least, most)} ms, chosen per performance, + late, - early
+#   roll: ms between the notes of a chord, low to high, at most (a keyboard player's chords are not one click)
+_SNARES = (SNARE, SNARE2, CLAP, RIM)
+_RIDES = (RIDE, RIDE_BELL, pp.RIDE2)
+HUMAN_FEEL = {
+    ("anvil", "rock"): {"jitter": 4.0, "pocket": {_SNARES: (3.0, 9.0), (HAT, OPEN_HAT) + _RIDES: (-2.0, 1.0)}},
+    ("anvil", "hard_rock"): {"jitter": 3.5, "pocket": {_SNARES: (2.0, 7.0), (HAT, OPEN_HAT) + _RIDES: (-2.0, 1.0)}},
+    ("anvil", "metal"): {"jitter": 2.5, "pocket": {_SNARES: (0.0, 3.0)}},
+    ("anvil", "pop"): {"jitter": 3.5, "pocket": {_SNARES: (2.0, 8.0), (HAT, OPEN_HAT) + _RIDES: (-2.0, 1.0)}},
+    ("anvil", "funk"): {"jitter": 3.0, "pocket": {_SNARES: (0.0, 4.0), (HAT, OPEN_HAT): (-1.5, 1.5)}},
+    ("anvil", "jazz"): {"jitter": 5.0, "pocket": {_RIDES: (-4.0, 0.0), _SNARES + (KICK,): (0.0, 6.0)}},
+    ("anvil", "hand_percussion"): {"jitter": 4.5, "pocket": {}},
+    ("anvil", "shakers"): {"jitter": 4.0, "pocket": {}},
+    "bellows": {"jitter": 4.0, "pocket": {"all": (0.0, 5.0)}},
+    "ember": {"jitter": 4.0, "pocket": {"all": (-2.0, 3.0)}, "roll": 6.0},
+    "hammer": {"jitter": 3.5, "pocket": {"all": (-1.0, 3.0)}},
+}
+DRIFT_MS = 4.0                  # how far the time drifts, slowly, beat by beat (the band breathes)
+CHORD_TICKS = 100               # notes this close (under a tenth of a beat) are one chord or strum (a six-string strum
+                                # spreads over 70)
+
+
+def human_feel(settings):
+    """This player's and style's human feel (HUMAN_FEEL), or None when it plays on the grid."""
+    return HUMAN_FEEL.get((settings["player"], settings["style"])) or HUMAN_FEEL.get(settings["player"])
+
+
+def _humanize(notes, settings, timeline, start, end):
+    """Each note moved by its own small amount, decided by the performance and the note's own place and sound (so
+    changing one note, a hand-made step say, never moves another), plus the performance's pocket and a slow drift."""
+    feel = human_feel(settings)
+    if not feel or not notes:
+        return notes
+    base = _seed(settings, "human")
+    choose = random.Random(base)
+    pocket = {sounds: choose.uniform(*span) for sounds, span in sorted(feel["pocket"].items(), key=str)}
+    walk = [0.0]
+    steps = random.Random(base + 1)
+
+    def drift_at(beat):                       # a slow random walk, one step per beat, kept within DRIFT_MS
+        while len(walk) <= beat:
+            walk.append(max(-DRIFT_MS, min(DRIFT_MS, walk[-1] * 0.9 + steps.gauss(0.0, 0.8))))
+        return walk[beat]
+
+    prefix = str(base).encode("ascii")
+
+    def own(*place):
+        """A note's own random numbers (the same on every computer and run): (a bell-curve number, an even one)."""
+        digest = hashlib.blake2b(prefix + repr(place).encode("ascii"), digest_size=16).digest()
+        u1 = (int.from_bytes(digest[:6], "big") + 1) / float(2 ** 48 + 1)
+        u2 = int.from_bytes(digest[6:12], "big") / float(2 ** 48)
+        return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2), int.from_bytes(digest[12:], "big") / 2.0 ** 32
+
+    def ticks(ms, tick):
+        return ms / 1000.0 * timeline.tempo_at_tick(tick) / 60.0 * PPQ
+
+    limit = 2.5 * feel["jitter"]
+    drums = settings["player"] == "anvil"
+    # what is played together: for a melodic player a chord or a strum (notes within CHORD_TICKS of its first, so a
+    # strum's spread stays in order, all moved alike), for the drummer each note on its own (each limb)
+    groups = []
+    for note in sorted(notes, key=lambda n: (n.tick, n.pitch)):
+        if not drums and groups and note.tick - groups[-1][0] <= CHORD_TICKS:
+            groups[-1][1].append(note)
+        else:
+            groups.append((note.tick, [note]))
+    out = []
+    for tick, together in groups:
+        drift = drift_at(max(0, tick - start) // PPQ)
+        shared = own(tick)[0] * feel["jitter"]
+        for k, note in enumerate(together):
+            if drums:
+                ms = own(tick, note.pitch)[0] * feel["jitter"]
+                ms += next((late for sounds, late in pocket.items() if note.pitch in sounds), 0.0)
+            else:
+                ms = shared + pocket.get("all", 0.0) + k * own(tick, note.pitch)[1] * feel.get("roll", 0.0)
+            ms = max(-limit, min(limit + 10.0, ms + drift))
+            moved = int(round(note.tick + ticks(ms, tick)))
+            out.append(Note(max(start, min(end - 1, moved)), note.length, note.pitch, note.velocity))
+    if drums:
+        out = _chokes_after_their_hats(sorted(notes, key=lambda n: (n.tick, n.pitch)), out)
+    return sorted(out, key=lambda n: (n.tick, n.pitch))
+
+
+def _chokes_after_their_hats(grid, moved):
+    """A half-open hi-hat is closed by a silent pedal note a sixteenth (or a thirty-second) after it: its choke.
+    Each moves by its own few milliseconds, so at a very fast tempo the choke could land before its hat and the hat
+    would ring open; the choke is kept just after its hat. moved[i] is grid[i] (in order of place) after moving."""
+    last_open = None
+    out = []
+    for before, after in zip(grid, moved):
+        if before.pitch == OPEN_HAT:
+            last_open = after.tick
+        elif before.pitch == PEDAL and before.velocity == 1 and last_open is not None and after.tick <= last_open:
+            after = Note(last_open + 1, after.length, after.pitch, after.velocity)
+        out.append(after)
+    return out
+
+
 def perform(settings, start, end, timeline, chord_changes, follow_hits=None, section_starts=(), for_steps=False,
-            next_intensity=None):
+            next_intensity=None, humanize=False):
     """The notes a rhythm player plays in [start, end).
 
     settings: the region's player settings. chord_changes: the song's chord track (an empty one
@@ -2081,6 +2223,8 @@ def perform(settings, start, end, timeline, chord_changes, follow_hits=None, sec
     for_steps: what the Step pattern view starts from: the performance as heard, but without fills, swing or
     passing notes (they still come on top of hand-made steps), each drum piece with its own sounds (before the
     hi-hat's openness and the rim click change them).
+    humanize: play with a human feel (human_feel; what is heard and exported), not exactly on the grid. Regions
+    under the rules from before 10 Oct 2026 and the Step pattern view stay on the grid.
     Same inputs, same notes."""
     settings = clean_settings(settings) or new_settings("anvil")
     bars = _bars(timeline, start, end)
@@ -2100,6 +2244,8 @@ def perform(settings, start, end, timeline, chord_changes, follow_hits=None, sec
         notes, fill_bars, accent_count, matched = _perform_melodic(settings, bars, chord_spans, hits_in, follow,
                                                                    rng_for, for_steps)
     notes = [n for n in notes if start <= n.tick < end]
+    if humanize and not for_steps and new_rules(settings):
+        notes = _humanize(notes, settings, timeline, start, end)
     return Performance(notes, fill_bars, accent_count, matched, len(hits_in))
 
 

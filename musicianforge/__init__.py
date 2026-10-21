@@ -1,4 +1,4 @@
 """Musician Forge: an accessible digital audio workstation for Windows."""
 
 APP_NAME = "Musician Forge"
-__version__ = "0.9.5"
+__version__ = "0.9.6"

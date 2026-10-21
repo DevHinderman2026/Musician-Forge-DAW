@@ -554,8 +554,8 @@ class NewPlayerDialog(wx.Dialog):
 
 SLIDERS = (("intensity", "Intensity (how hard it plays: softer or heavier, never more notes)"),
            ("complexity", "Complexity (how busy: how many notes, extra notes and variations)"),
-           ("fills", "Fill amount (0: no fills; 100: a fill in every bar)"),
-           ("fill_complexity", "Fill complexity (how big the fills are: a short pickup up to a bar or half)"),
+           ("fills", "Fill amount (0 none, from 1 every 8th bar, 40 every 4th, 70 every 2nd, 100 every bar)"),
+           ("fill_complexity", "Fill complexity (how big each fill is: from a short pickup up to a whole bar)"),
            ("swing", "Swing (0 is straight; more delays every second eighth or sixteenth)"))
 
 

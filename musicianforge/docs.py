@@ -11,12 +11,13 @@ import re
 from . import paths
 
 DOCS = {
-    "quick_start": ("Quick start guide", "Read Me.txt"),
+    "quick_start": ("Quick start guide", "README.md"),
     "whats_new": ("What's new", "Changelog.md"),
     "credits": ("Credits", "Credits.md"),
 }
 
 _LINK = re.compile(r"<(https?://[^>]+)>")
+_NAMED_LINK = re.compile(r"\[([^\]]+)\]\([^)\s]+\)")       # [Credits.md](Credits.md): the words only
 _MARKUP = re.compile(r"\*\*|`")
 
 
@@ -24,9 +25,16 @@ def markdown_to_text(text):
     """Plain, screen-reader-friendly text from simple Markdown (headings, bold, lists, tables)."""
     lines = []
     headers = None
+    fenced = False
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
+        if stripped.startswith("```"):       # a block shown as it is (the README's folder layout)
+            fenced = not fenced
+            continue
+        if fenced:
+            lines.append(line)
+            continue
         if stripped.startswith("|"):
             cells = [_clean(c) for c in stripped.strip("|").split("|")]
             if all(set(c) <= set("-: ") for c in cells):
@@ -55,7 +63,7 @@ def markdown_to_text(text):
 
 
 def _clean(text):
-    return _MARKUP.sub("", _LINK.sub(r"\1", text)).strip()
+    return _MARKUP.sub("", _LINK.sub(r"\1", _NAMED_LINK.sub(r"\1", text))).strip()
 
 
 def read_doc(key):

@@ -4,6 +4,101 @@ Every version of Musician Forge, newest first, from the first working version on
 developed. Each version starts with its release notes: new features and improvements, then bug fixes. The details
 of each version follow. Dates are when the version reached Russell's laptop.
 
+## 0.9.6 (21 October 2026, in testing)
+
+### New features and improvements
+
+- Fill amount now places fills on a steady count of bars, the same for every rhythm player: from 1, every 8th bar;
+  from 40, every 4th bar (50 in an 8-bar section fills bars 4 and 8); from 70, every 2nd bar; 100, every bar.
+- Fill complexity sets how big each fill is, from a short pickup to a whole bar; Reforge changes the fills' shapes,
+  never where they come.
+- The acoustic drummers (rock, hard rock, metal, jazz, funk, pop), the hand percussion, the bass, the keys and the
+  guitar play with a human feel: a few milliseconds off the grid, straight or swung, with a pocket of their own, such
+  as a rock backbeat sitting a little behind the beat. Each Reforge has its own feel.
+- When an acoustic drummer rides the crash (a crash on every beat or in eighth notes), the ride and the hi-hat
+  played by hand stop, as a real drummer's one hand moves to the crash.
+- The drum machines (dubstep, house, trap) and the synth stay exactly on the grid, as machines play.
+- A kit piece the variation's groove doesn't use is now off by itself, so the Kit pieces list says what really plays
+  (in a rock groove: the ride, crash, toms and congas say "off"). Choosing a pattern or making steps for it turns it
+  on, and turning a piece on or off yourself is kept with the project.
+- Off takes a piece out of the groove only: fills always use the whole kit, and the crash where a section starts
+  follows its When setting.
+- The hi-hat plays sixteenth notes at any tempo again, disco sixteenths included (0.9.5 held a drummer's hi-hat to
+  eighth notes above 140 beats a minute). The ride still plays eighth notes above 120.
+- The Guide for Testers is now a Markdown file (Guide for Testers.md), like the other documents on GitHub, and every
+  test is a numbered step with a heading, saying what to check and what to expect; a screen reader moves from step
+  to step by heading.
+- The Read Me is now README.md, so GitHub shows it on Musician Forge's page: a heading for each section, the piano
+  keys in a table, and links to the Guide for Testers, the Credits, the release notes and the License. The words are
+  the same. Help, Quick start guide reads it as plain text, as before.
+- The Transport, Track, Edit, Region and Song groups are back as buttons in the main window, as they were in 0.9.4,
+  before the Menus group. Their commands left the menus, so nothing is in two places, and their shortcuts work
+  everywhere. File and Settings stay in the menus; the Edit menu, now empty, is gone.
+
+### Bug fixes
+
+- Fixes Fill amount being a chance, so fills came in different bars from one performance to the next.
+- Fixes rhythm player performances sounding rigid, every note exactly on the grid.
+- Fixes an acoustic drummer playing the ride or hi-hat between the hits of a crash it was riding.
+- Fixes the Menus group's menus reading each item and its shortcut with no pause: there is a comma between them now.
+- Fixes a half-open hi-hat that could, very rarely at fast tempos with the human feel, ring open: the foot that
+  closes it could land a moment before it.
+- Fixes exporting tracks on their own from a song with one track to a zip file saying "1 WAV files, one for each
+  track".
+- Fixes the Kit pieces list saying a piece was on when the groove gave it nothing to play.
+- Fixes Latin jazz (jazz variation 4), which has no snare, still playing the style's soft snare ghost notes.
+
+### In detail
+
+Russell, 21 October 2026, after trying 0.9.5.
+- **Fills** (players.FILL_STEPS, fill_every, fill_chance): counted from the region's first bar, so they never move
+  with Reforge. Regions under the rules from before 10 October keep their old fills until they are changed.
+- **A human feel** (players.HUMAN_FEEL, _humanize): each note moves by its own few milliseconds (about 3 to 5 ms,
+  never more than about 2.5 times that), the time drifts slowly beat by beat (up to 4 ms), and each performance has
+  its pocket (rock and pop snares 2 to 9 ms behind, jazz ride a little ahead, a laid-back bass). A chord or a strum
+  moves as one, so its order stays; keys roll their chords by up to 6 ms. Measured in milliseconds, so it is the
+  same feel at any tempo, and applied after swing, so eighth and sixteenth swing are human too. Each note's own
+  amount comes from its place and sound, so changing one note (a hand-made step, say) never moves another. The Step
+  pattern view stays on the grid. A 100-bar drum region takes about 0.04 s more to work out.
+- **Riding the crash** (players._riding_the_crash): in a bar where the crash plays at least once per beat, the ride
+  and the hi-hat played by hand stop; the hi-hat pedal stays. A single crash on a beat already took the ride's place
+  on that beat.
+- **The button groups** (Russell, 5:14 to 5:19 AM: "bring the song sections control back into the main view ... and
+  the transport controls", "bring back the track group as well ... whenever you bring back remove it from the menu",
+  "also bring back the edit group and then the region group"; he chose to remove only those items from the menus):
+  the Transport, Track, Edit, Region and Song groups as in 0.9.4, before the Menus group. Their items left the
+  menus (the Edit menu entirely); their shortcuts are the window's own (MainFrame._shortcut, an accelerator table).
+  The menus keep Rename track, the nudge commands, beats, the count-in, Speak position, Stop all sound, Add a
+  section and Section settings, and File, Keyboard, Options and Help.
+- **Off when not in the groove** (Russell, 5:48 AM: "if the high hat or the ride or whatever is not in the current
+  variation or the current groove, then those kit pieces are off"; then "fills do their own thing ... with fills, it
+  would be the whole kit"; he chose that the section-start crash follows When). `player_pieces.piece_on`: as turned
+  on or off by hand (now always kept in the project), otherwise on when the groove has the piece, another pattern
+  (not "none") was chosen, it has hand-made steps, or more ghost notes were asked of it. "None in the groove" keeps
+  a piece on (a kick can still follow the chords). In rules-2 regions (`_KitPieces.groove_only`) an off piece keeps
+  its fill, crash and choke notes (`OUTSIDE_THE_GROOVE`); rules-1 regions play as before (off by hand only, off
+  silences everything). The hi-hat build still stops only for a hi-hat turned off by hand. Making a piece hand-made
+  turns it on, so its steps play.
+- **The hi-hat's sixteenths** (Russell, 5:48 AM: "bring the 16th notes to the high hats back, even if the tempo goes
+  over 140 ... the user can do disco 16th"): `SIXTEENTHS_UP_TO` keeps only the ride (120).
+- **The Guide for Testers in steps** (Russell, 6:07 AM: "convert that into markdown like all the other documents ...
+  divided into steps, for example, what to check, what to expect"): Parts 1 to 9 and "New in 0.9.6" and "Added in
+  0.9.4 and 0.9.5" as step headings (Step 1.1 and so on), each with What to check and What to expect; a test keeps
+  it so.
+  Stale lines corrected on the way (the Menus group is no longer the only group; the menus are File, Region,
+  Track, Transport, Song, Keyboard, Options and Help). The Read Me and the main branch name the new file.
+- **README.md** (Russell, about 6:30 AM, chose "Yes, make it README.md"): converted from Read Me.txt with git mv (history
+  follows), word for word (checked by comparing the words of both), sections as headings, lists as lists, the piano
+  layout as a table, the project folder as a block. `docs.markdown_to_text` now reads [words](link) as the words and
+  keeps a fenced block's indents, so Help, Quick start guide reads it cleanly. make_main, docs.DOCS and the tests
+  name README.md; Markdown files keep GitHub's line endings.
+- **Half-open hi-hats and the feel** (players._chokes_after_their_hats): a half-open hi-hat is closed by a silent
+  pedal note a sixteenth (or a thirty-second) after it. Each moved by its own few milliseconds, so at fast tempos
+  (a thirty-second at 400 beats a minute is under 20 ms) about 1 choke in 5000 came first and the hat rang on. The
+  choke now always stays just after its hat.
+- **Menus group** (MainFrame.spoken_menu_label): its copies of the menus say "Tempo changes..., Control+Shift+T";
+  the menu bar itself keeps the usual form, since its shortcuts work from it.
+
 ## 0.9.5 (21 October 2026, in testing)
 
 ### New features and improvements

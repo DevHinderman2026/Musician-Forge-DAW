@@ -11,12 +11,13 @@ Layout (Tab moves between them; F6 and Shift+F6 go from area to area; Control+1 
    Delete deletes, S splits at the playhead, J joins, M mutes, F2 renames.
 3. Musical keyboard: play notes with the letter keys. Right after it, the
    Show keyboard controls button reveals every keyboard setting (Control+4).
-4. The Menus group: a button for each menu (File, Edit, Region, Track, Transport, Song, Keyboard, Options and
-   Help). Every command is in the menus; since 0.9.5 there are no other button groups (Russell, 21 Oct 2026).
+4. Button groups: Transport, Track, Edit, Region and Song, then the Menus group: a button for each menu (File,
+   Region, Track, Transport, Song, Keyboard, Options and Help). A command that is a button is not in a menu too;
+   every other command is (Russell, 21 Oct 2026). File and Settings are in the menus.
 5. Status: a read-only summary you can review line by line.
 
 F6 goes to the next area and Shift+F6 to the previous one, round in a circle, in the order they are
-on screen: Tracks, Regions, the Musical keyboard, the Keyboard controls, the Menus group, and Status.
+on screen: Tracks, Regions, the Musical keyboard, the Keyboard controls, each button group, and Status.
 An area that is hidden or empty is skipped, and each jump says where it landed.
 
 The track you are on (the one the Musical keyboard plays) and the region you are on end with
@@ -247,7 +248,7 @@ class MainFrame(wx.Frame):
         self._last_status_bar = ""
         self._last_status_text = ""
         self.buttons = {}
-        self.groups = []            # the button groups (since 0.9.5 only Menus): (title, group box, [its buttons])
+        self.groups = []            # the button groups (Transport, Track, Edit, Region, Song, Menus): (title, box, controls)
         self.last_list = "tracks"   # where Cut, Copy, Paste, Duplicate and Delete act: "tracks" or "regions"
         self._menu_handlers = {}    # menu bar item id -> what it does (the Menus group's buttons copy the menus)
         self._build_menus()
@@ -420,13 +421,72 @@ class MainFrame(wx.Frame):
             self.arp_check.SetValue(bool(arp["on"]))
 
     def _build_buttons(self, panel, sizer):
-        """The Menus group: a button for each menu of the menu bar, so Tab reaches every command.
+        """The Transport and Song groups, then the Menus group: a button for each menu of the menu bar, so Tab reaches
+        every command.
 
         Until 0.9.5 the window also had a group of buttons for each menu (Transport, Track, Edit, Region, Song, File
         and Settings), each doing what an item of its menu does. Russell, 21 Oct 2026: "move all of the song controls,
         file controls, whatever into their respective menus to reduce clutter", so the menus hold every command, the
         same way everywhere, and this group's buttons open them (Russell's rule, 10 Oct 2026: every feature can be
-        reached with Tab, a key is extra; Alt opens the menu bar too)."""
+        reached with Tab, a key is extra; Alt opens the menu bar too). Then (5:14 to 5:19 AM): "bring the song
+        sections control back into the main view ... and the transport controls", "bring back the track group as
+        well ... and then whenever you bring back remove it from the menu", "also bring back the edit group and then
+        the region group": the Transport, Track, Edit, Region and Song groups are back as they were in 0.9.4, and
+        their commands left the menus (their shortcuts stay, in _build_menus). File and Settings stay in the menus."""
+        s = self.session
+        box, row = self._group(panel, sizer, "Transport")
+        self._button(box, row, "Go to start", s.go_to_start)
+        self._button(box, row, "Rewind", lambda: s.move_bars(-1))
+        self._button(box, row, "Play", self.play_button)
+        self._button(box, row, "Stop", s.stop_button)
+        self._button(box, row, "Record", s.toggle_record)
+        self._button(box, row, "Forward", lambda: s.move_bars(1))
+        self._button(box, row, "Previous section", s.previous_section)
+        self._button(box, row, "Next section", s.next_section)
+        self.metronome_check = self._check(box, row, "Metronome", self.toggle_metronome)
+        self.all_sections_check = self._check(box, row, "All sections", s.toggle_all_sections)
+        box, row = self._group(panel, sizer, "Track")
+        self._button(box, row, "New track", self.new_track)
+        self._button(box, row, "New audio track", self.new_audio_track)
+        self._button(box, row, "New rhythm player", self.new_player)
+        self._button(box, row, "Instrument", self.change_instrument)
+        self._button(box, row, "Track settings", self.track_settings)
+        self._button(box, row, "Effects", self.track_effects)
+        self._button(box, row, "Automation", self.track_automation)
+        self.write_check = self._check(box, row, "Write automation", self.session.toggle_automation_write)
+        self.mute_check = self._check(box, row, "Mute", self.toggle_mute)
+        self.solo_check = self._check(box, row, "Solo", self.toggle_solo)
+        self._button(box, row, "Event list", self.event_list)
+        self._button(box, row, "Move up", lambda: self.move_track(-1))
+        self._button(box, row, "Move down", lambda: self.move_track(1))
+        self._button(box, row, "Delete track", self.delete_track)
+        box, row = self._group(panel, sizer, "Edit")
+        self._button(box, row, "Undo", s.undo)
+        self._button(box, row, "Redo", s.redo)
+        self.select_check = self._check(box, row, "Select", self.toggle_selecting)
+        self._button(box, row, "Cut", lambda: self.edit_action("cut"))
+        self._button(box, row, "Copy", lambda: self.edit_action("copy"))
+        self._button(box, row, "Paste", lambda: self.edit_action("paste"))
+        self._button(box, row, "Duplicate", lambda: self.edit_action("duplicate"))
+        self._button(box, row, "Delete", lambda: self.edit_action("delete"))
+        self._button(box, row, "Quantize", self.quantize)
+        self._button(box, row, "Go to bar", self.go_to_bar)
+        box, row = self._group(panel, sizer, "Region")
+        self._button(box, row, "Open region", self.open_region)
+        self._button(box, row, "Move region", self.move_region)
+        self._button(box, row, "Split", self.split_region)
+        self._button(box, row, "Join", self.join_regions)
+        self._button(box, row, "Mute region", self.mute_regions)
+        self._button(box, row, "Rename region", self.rename_region)
+        self._button(box, row, "Region settings", self.region_settings)
+        self._button(box, row, "Reforge", self.reforge_region)
+        self._button(box, row, "New rhythm player region", self.new_player_region)
+        box, row = self._group(panel, sizer, "Song")
+        self._button(box, row, "Tempo changes", lambda: self.changes("tempo"))
+        self._button(box, row, "Time signature changes", lambda: self.changes("time"))
+        self._button(box, row, "Key changes", lambda: self.changes("key"))
+        self._button(box, row, "Sections", self.sections)
+        self._button(box, row, "Chord track", self.chord_track)
         box, row = self._group(panel, sizer, "Menus")
         for title in self.MENU_BUTTONS:
             label = "{} menu".format(title)
@@ -454,7 +514,7 @@ class MainFrame(wx.Frame):
         if chosen is not None:
             self.safe(actions[chosen])
 
-    MENU_BUTTONS = ("File", "Edit", "Region", "Track", "Transport", "Song", "Keyboard", "Options")
+    MENU_BUTTONS = ("File", "Region", "Track", "Transport", "Song", "Keyboard", "Options")
 
     def show_bar_menu(self, title, button):
         """A button in the Menus group: that menu bar menu, opened under the button, with the same items, shortcuts,
@@ -482,13 +542,25 @@ class MainFrame(wx.Frame):
                 continue
             handler = self._menu_handlers.get(item.GetId())
             kind = wx.ITEM_CHECK if item.IsCheckable() else wx.ITEM_NORMAL
-            copy = menu.Append(wx.ID_ANY, item.GetItemLabel(), "", kind)
+            copy = menu.Append(wx.ID_ANY, self.spoken_menu_label(item.GetItemLabel()), "", kind)
             if kind == wx.ITEM_CHECK:
                 copy.Check(item.IsChecked())
             copy.Enable(item.IsEnabled() and handler is not None)
             if handler is not None:
                 actions[copy.GetId()] = handler
         return menu
+
+    @staticmethod
+    def spoken_menu_label(label):
+        """A menu item as the Menus group's buttons show it: its words, a comma, then its shortcut in words ("New
+        track..., Control+T"). Russell, 21 Oct 2026: the screen reader read the item and its shortcut run together,
+        with no pause between them. The menu bar keeps the usual form, since its shortcuts work from it; in these
+        copies the shortcut is only said."""
+        text, _tab, keys = label.partition("\t")
+        if not keys:
+            return text
+        keys = "+".join({"Ctrl": "Control"}.get(part, part) for part in keys.split("+"))
+        return "{}, {}".format(text, keys)
 
     def popup_menu(self, menu, button, actions):
         """Show a menu under a button; returns the chosen item's id, or None (tests replace this)."""
@@ -531,6 +603,13 @@ class MainFrame(wx.Frame):
         self.buttons[label] = button
         self._group_controls(box).append(button)
         return button
+
+    def _check(self, box, row, label, handler):
+        check = wx.CheckBox(box, label=label)
+        check.Bind(wx.EVT_CHECKBOX, lambda e, h=handler: self._after(self.safe(h)))
+        row.Add(check, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 3)
+        self._group_controls(box).append(check)
+        return check
 
     # -- F6 and Shift+F6: from area to area ------------------------------------
     def jump_areas(self):
@@ -627,8 +706,16 @@ class MainFrame(wx.Frame):
         self._menu_handlers[item.GetId()] = handler
         return item
 
+    def _shortcut(self, handler, accel):
+        """A shortcut whose command is a button, not a menu item (the groups that came back on 21 Oct 2026): it works
+        anywhere in the window, as the menu item's did."""
+        command = wx.NewIdRef()
+        self.Bind(wx.EVT_MENU, lambda e, h=handler: self._after(self.safe(h)), id=command)
+        self._shortcuts.append((accel, int(command), handler))
+
     def _build_menus(self):
         bar = wx.MenuBar()
+        self._shortcuts = []          # (keys, command id, what it does): set as the window's accelerator table below
 
         m = wx.Menu()
         self._item(m, "&New project...", self.new_song, "Ctrl+N")
@@ -650,30 +737,18 @@ class MainFrame(wx.Frame):
         self._item(m, "E&xit", self.Close, "Alt+F4")
         bar.Append(m, "&File")
 
-        m = wx.Menu()
-        self.undo_item = self._item(m, "&Undo", self.session.undo, "Ctrl+Z")
-        self.redo_item = self._item(m, "&Redo", self.session.redo, "Ctrl+Y")
-        m.AppendSeparator()
-        self.select_item = self._item(m, "&Select: Space picks tracks and regions", self.toggle_selecting,
-                                      "Shift+F8", check=True)
-        self._item(m, "Cu&t (Control+X in the Tracks or Regions list)", lambda: self.edit_action("cut"))
-        self._item(m, "&Copy (Control+C in the Tracks or Regions list)", lambda: self.edit_action("copy"))
-        self._item(m, "&Paste (Control+V in the Tracks or Regions list)", lambda: self.edit_action("paste"))
-        self._item(m, "Dup&licate (Control+D in the Tracks or Regions list)", lambda: self.edit_action("duplicate"))
-        self._item(m, "&Delete (Delete in the Tracks or Regions list)", lambda: self.edit_action("delete"))
-        m.AppendSeparator()
-        self._item(m, "&Event list (every note or recording on the track)...", self.event_list, "Ctrl+L")
-        self._item(m, "&Quantize...", self.quantize, "Ctrl+Q")
-        bar.Append(m, "&Edit")
+        # The Transport, Track, Edit, Region and Song groups are buttons again (Russell, 21 Oct 2026: "whenever you
+        # bring back remove it from the menu"; he chose to remove just those items), so their commands left the menus.
+        # Their shortcuts stay: they live on the window itself (_shortcut). The Edit menu was all buttons, so it went.
+        s = self.session
+        self._shortcut(s.undo, "Ctrl+Z")
+        self._shortcut(s.redo, "Ctrl+Y")
+        self._shortcut(self.toggle_selecting, "Shift+F8")
+        self._shortcut(self.event_list, "Ctrl+L")
+        self._shortcut(self.quantize, "Ctrl+Q")
+        self._shortcut(self.go_to_bar, "Ctrl+G")
 
         m = wx.Menu()
-        self._item(m, "&Open region: its notes, or a rhythm player's editor (Enter in the Regions list)",
-                   self.open_region)
-        self._item(m, "Region se&ttings: trim and loop... (Alt+Enter in the Regions list)", self.region_settings)
-        self._item(m, "Re&forge: a new performance of a rhythm player region (R in the Regions list)",
-                   self.reforge_region)
-        self._item(m, "&New rhythm player region at the playhead (P in the Regions list)", self.new_player_region)
-        self._item(m, "&Move region to a bar...", self.move_region)
         self._item(m, "Nudge region &later (Alt+Right in the Regions list)", lambda: self.nudge_region(1))
         self._item(m, "Nudge region &earlier (Alt+Left in the Regions list)", lambda: self.nudge_region(-1))
         self._item(m, "Region st&art earlier (left bracket in the Regions list)",
@@ -686,64 +761,42 @@ class MainFrame(wx.Frame):
                    lambda: self.nudge_region_edge("end", 1))
         self._item(m, "C&hange the nudge step: bar, quarter, eighth or sixteenth note (N in the Regions list)",
                    lambda: self.session.cycle_nudge_step(1))
-        self._item(m, "&Split region at the playhead (S in the Regions list)", self.split_region)
-        self._item(m, "&Join selected regions (J in the Regions list)", self.join_regions)
-        self._item(m, "M&ute or unmute region (M in the Regions list)", self.mute_regions)
-        self._item(m, "&Rename region... (F2 in the Regions list)", self.rename_region)
         bar.Append(m, "&Region")
 
         m = wx.Menu()
-        self._item(m, "&New track...", self.new_track, "Ctrl+T")
-        self._item(m, "New &audio track (record a microphone)", self.new_audio_track, "Ctrl+U")
-        self._item(m, "New r&hythm player: drums, bass, keys, synth or guitar...", self.new_player, "Ctrl+Shift+R")
-        self._item(m, "Track &settings (region settings in the Regions list)...", self.settings_for_focus,
-                   "Alt+Enter")
-        self._item(m, "Change &instrument...", self.change_instrument, "Ctrl+I")
-        self._item(m, "&Effects (reverb, EQ, compressor and more)...", self.track_effects, "Ctrl+F")
-        self._item(m, "Au&tomation: volume, pan and effects changing over time...", self.track_automation,
-                   "Ctrl+Shift+U")
-        self.write_item = self._item(m, "Write automation while the song &plays", self.session.toggle_automation_write,
-                                     "Ctrl+Shift+W", check=True)
         self._item(m, "&Rename track...", self.rename_track, "F2")
-        self._item(m, "&Mute or unmute (M in the track list)", self.toggle_mute)
-        self._item(m, "S&olo on or off (S in the track list)", self.toggle_solo)
-        self._item(m, "Move track &up", lambda: self.move_track(-1), "Ctrl+Shift+Up")
-        self._item(m, "Move track do&wn", lambda: self.move_track(1), "Ctrl+Shift+Down")
-        self._item(m, "&Delete track (Delete in the track list)", self.delete_track)
         bar.Append(m, "&Track")
+        self._shortcut(self.new_track, "Ctrl+T")
+        self._shortcut(self.new_audio_track, "Ctrl+U")
+        self._shortcut(self.new_player, "Ctrl+Shift+R")
+        self._shortcut(self.settings_for_focus, "Alt+Enter")       # region settings in the Regions list
+        self._shortcut(self.change_instrument, "Ctrl+I")
+        self._shortcut(self.track_effects, "Ctrl+F")
+        self._shortcut(self.track_automation, "Ctrl+Shift+U")
+        self._shortcut(s.toggle_automation_write, "Ctrl+Shift+W")
+        self._shortcut(lambda: self.move_track(-1), "Ctrl+Shift+Up")
+        self._shortcut(lambda: self.move_track(1), "Ctrl+Shift+Down")
 
         m = wx.Menu()
-        self._item(m, "&Play or stop (Space)", self.session.toggle_play)
-        self._item(m, "&Record or stop (R)", self.session.toggle_record)
-        self._item(m, "Go to &start (Enter)", self.session.go_to_start)
-        self._item(m, "Previous bar (comma)", lambda: self.session.move_bars(-1))
-        self._item(m, "Next bar (period)", lambda: self.session.move_bars(1))
         self._item(m, "Previous beat (Shift+comma)", lambda: self.session.move_beats(-1))
         self._item(m, "Next beat (Shift+period)", lambda: self.session.move_beats(1))
-        self._item(m, "Previous section (Control+comma)", self.session.previous_section)
-        self._item(m, "Next section (Control+period)", self.session.next_section)
-        self.all_sections_item = self._item(m, "&All sections (off: the current section loops)",
-                                            self.session.toggle_all_sections, "Ctrl+Shift+L", check=True)
-        self._item(m, "&Go to bar...", self.go_to_bar, "Ctrl+G")
-        m.AppendSeparator()
-        self.metronome_item = self._item(m, "&Metronome", self.toggle_metronome, "Ctrl+K", check=True)
         self._item(m, "&Count-in: off, 1 bar or 2 bars", self.cycle_count_in, "Ctrl+Shift+C")
         m.AppendSeparator()
         self._item(m, "Spea&k position and song details", self.speak_position, "Ctrl+P")
         self._item(m, "Stop all sound (Escape)", self.stop_all_sound)
         bar.Append(m, "Tra&nsport")
+        self._shortcut(s.toggle_all_sections, "Ctrl+Shift+L")
+        self._shortcut(self.toggle_metronome, "Ctrl+K")
 
         m = wx.Menu()
-        self._item(m, "&Tempo changes...", lambda: self.changes("tempo"), "Ctrl+Shift+T")
-        self._item(m, "Time &signature changes...", lambda: self.changes("time"), "Ctrl+Shift+M")
-        self._item(m, "&Key changes...", lambda: self.changes("key"), "Ctrl+Shift+K")
-        m.AppendSeparator()
-        self._item(m, "C&hord track...", self.chord_track, "Ctrl+Shift+H")
-        m.AppendSeparator()
-        self._item(m, "S&ections...", self.sections, "Ctrl+Shift+A")
         self._item(m, "&Add a section after this one", lambda: self.session.add_section(), "Ctrl+Shift+N")
         self._item(m, "Section setti&ngs...", self.section_settings)
         bar.Append(m, "&Song")
+        self._shortcut(lambda: self.changes("tempo"), "Ctrl+Shift+T")
+        self._shortcut(lambda: self.changes("time"), "Ctrl+Shift+M")
+        self._shortcut(lambda: self.changes("key"), "Ctrl+Shift+K")
+        self._shortcut(self.chord_track, "Ctrl+Shift+H")
+        self._shortcut(self.sections, "Ctrl+Shift+A")
 
         m = wx.Menu()
         self._item(m, "Go to the musical &keyboard", lambda: self.keyboard.SetFocus(), "Ctrl+2")
@@ -751,7 +804,7 @@ class MainFrame(wx.Frame):
         self._item(m, "Go to the &tracks", lambda: self.track_list.SetFocus(), "Ctrl+1")
         self._item(m, "Go to the &regions", lambda: self.region_list.SetFocus(), "Ctrl+5")
         self._item(m, "Go to the &status", lambda: self.status_text.SetFocus(), "Ctrl+3")
-        self._item(m, "Go to the ne&xt area: tracks, regions, keyboard, the Menus group, status (F6)",
+        self._item(m, "Go to the ne&xt area: tracks, regions, keyboard, button groups, status (F6)",
                    lambda: self.jump(1))
         self._item(m, "Go to the pre&vious area (Shift+F6)", lambda: self.jump(-1))
         m.AppendSeparator()
@@ -785,6 +838,13 @@ class MainFrame(wx.Frame):
         bar.Append(m, "&Help")
 
         self.SetMenuBar(bar)
+        entries = []
+        for keys, command, _handler in self._shortcuts:
+            entry = wx.AcceleratorEntry(cmd=command)
+            if not entry.FromString(keys):
+                raise ValueError("Unknown shortcut " + keys)
+            entries.append(entry)
+        self.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
     # the keyboard controls' settings, one submenu each, the current one checked (Russell, 21 Oct 2026: every command in
     # its menu; he chose to keep the Keyboard controls area too, for trying settings quickly while playing)
@@ -1072,8 +1132,19 @@ class MainFrame(wx.Frame):
         self.refresh_controls()
 
     def refresh_controls(self):
-        """Keep the keyboard controls in step with the song (they can change from the keyboard too); the menus' check
-        marks follow in refresh_menus."""
+        """Keep the Transport group's check boxes and the keyboard controls in step with the song (they can change
+        from the keyboard too); the menus' check marks follow in refresh_menus."""
+        track = self.session.selected_track
+        for check, value in ((self.mute_check, bool(track and track.mute)),
+                             (self.solo_check, bool(track and track.solo)),
+                             (self.metronome_check, self.session.engine.metronome_on),
+                             (self.all_sections_check, self.session.all_sections),
+                             (self.select_check, self.session.selecting),
+                             (self.write_check, self.session.automation_write)):
+            if check.GetValue() != value:
+                check.SetValue(value)
+        self.mute_check.Enable(track is not None)
+        self.solo_check.Enable(track is not None)
         self._sync_keyboard_controls()
 
     def refresh_title(self):
@@ -1113,15 +1184,6 @@ class MainFrame(wx.Frame):
         self.refresh_regions(select=index)
 
     def refresh_menus(self):
-        h = self.session.history
-        self.undo_item.SetItemLabel("&Undo {}\tCtrl+Z".format(h.undo_label()) if h.can_undo() else "&Undo\tCtrl+Z")
-        self.redo_item.SetItemLabel("&Redo {}\tCtrl+Y".format(h.redo_label()) if h.can_redo() else "&Redo\tCtrl+Y")
-        self.undo_item.Enable(h.can_undo())
-        self.redo_item.Enable(h.can_redo())
-        self.metronome_item.Check(self.session.engine.metronome_on)
-        self.all_sections_item.Check(self.session.all_sections)
-        self.select_item.Check(self.session.selecting)
-        self.write_item.Check(self.session.automation_write)
         indexes = self.keyboard_setting_indexes()
         for key, items in self.keyboard_menu_items.items():
             for index, item in enumerate(items):
@@ -2396,13 +2458,19 @@ changes, and goes back to the start screen.
 
 Moving around the project window
 F6: go to the next area. Shift+F6: go to the previous area. They go round in a circle, in the order
-the areas are on screen: Tracks, Regions, the Musical keyboard, the Keyboard controls, the Menus group
-and Status. An area that is hidden or empty is skipped, and Musician Forge says where you landed, for
-example "Menus group, 9 buttons".
+the areas are on screen: Tracks, Regions, the Musical keyboard, the Keyboard controls, each button group
+(Transport, Track, Edit, Region, Song and Menus) and Status. An area that is hidden or empty is skipped, and
+Musician Forge says where you landed, for example "Track group, 11 buttons, 3 check boxes".
 Tab and Shift+Tab: move from control to control.
 Space or Enter presses the button you are on.
-Every command is in the menus. Alt opens the menu bar; the Menus group has a button for each menu (File,
-Edit, Region, Track, Transport, Song, Keyboard, Options and Help), which opens the same menu with Tab.
+The button groups: Transport (Go to start, Rewind, Play, Stop, Record, Forward, Previous and Next section, the
+Metronome and All sections check boxes), Track (New track, New audio track, New rhythm player, Instrument, Track
+settings, Effects, Automation, Write automation, Mute, Solo, Event list, Move up, Move down, Delete track), Edit
+(Undo, Redo, Select, Cut, Copy, Paste, Duplicate, Delete, Quantize, Go to bar), Region (Open region, Move region,
+Split, Join, Mute region, Rename region, Region settings, Reforge, New rhythm player region) and Song (Tempo, Time
+signature and Key changes, Sections, Chord track). Their commands are not in the menus too; their shortcuts work
+everywhere. Everything else is in the menus: Alt opens the menu bar, and the Menus group has a button for each menu
+(File, Region, Track, Transport, Song, Keyboard, Options and Help), which opens the same menu with Tab.
 Control+1: Tracks. Control+5: Regions. Control+2: Musical keyboard. Control+3: Status.
 Control+4: Keyboard controls.
 The track you are on and the region you are on end with "selected" in their lists. In selection mode
@@ -2423,7 +2491,7 @@ Space: play or stop.
 R: record, or stop recording. Pressing R while playing starts recording right away.
 Recording starts quietly so you can hear the count-in and metronome.
 Enter: go to the start of the section you are in (with All sections on, of the song). Rewinding stops there too.
-Comma and period: back or forward one bar (Transport menu, Previous bar and Next bar).
+Comma and period: back or forward one bar (the Rewind and Forward buttons do the same).
 Musician Forge says when you reach the start or end of a section.
 Shift+comma and Shift+period: back or forward one beat.
 Control+G: go to a bar.
@@ -2457,7 +2525,7 @@ Each region says its name, its sections, where it starts and ends, how long it i
 Recording makes a region that covers what you recorded: the looping section, or from the bar where you
 started to the bar after you stopped, across sections when All sections is on.
 Enter: open the region (its notes, a recording's settings, or a rhythm player's editor). Delete: delete it (asks).
-P, or Region menu, New rhythm player region: on a rhythm player track, a new region at the playhead, the same player
+P, or the New rhythm player region button: on a rhythm player track, a new region at the playhead, the same player
 and style starting from its defaults (it fills the empty part of the section, for example a section you just added).
 Alt+Enter: region settings: trim where it starts and ends, and loop it (play it several times in a row,
 or until the next region). R or Control+R on a rhythm player region: Reforge (on any other
@@ -2465,7 +2533,7 @@ region, R records as everywhere else).
 Control+X, Control+C, Control+V and Control+D: cut, copy, paste and duplicate. Paste puts regions at
 the playhead and replaces what was there (Control+Z brings it back).
 S: split the region at the playhead. J: join the selected regions. M: mute or unmute. F2: rename.
-Region menu, Move region to a bar, moves a region to another bar.
+The Region group's Move region button moves a region to another bar.
 Nudging (the nudge step is 1 bar, a quarter note, an eighth note or a sixteenth note; N changes it, Shift+N
 goes back):
 Alt+Left and Alt+Right: move the region (or the selected regions) earlier or later by the nudge step.
@@ -2475,7 +2543,7 @@ or later. That is how a rhythm player's region gets longer: its end moves later 
 A region never moves over another one: Musician Forge says what is in the way. Each key says where the region
 now starts or ends and how long it is. Presses of the same key in a row are one undo step (Control+Z).
 
-Selection (Shift+F8, or Edit menu, Select)
+Selection (Shift+F8, or the Select check box in the Edit group)
 Selection on: Space selects or unselects the track or region you are on, and Musician Forge says how many
 are selected. Cut, Copy, Paste, Duplicate, Delete, Mute and Solo then work on everything selected.
 Control+A selects every track or region in the list. Shift+F8 again turns selection off.
@@ -2485,14 +2553,14 @@ Up and Down arrows: choose a track. Musical typing plays and records on the chos
 Control+X, Control+C, Control+V and Control+D: cut, copy, paste and duplicate tracks.
 M: mute. S: solo. Left bracket and right bracket: volume down and up.
 Shift+left bracket and Shift+right bracket: pan left and right.
-Control+Up and Control+Down: move the track (also Track menu, Move track up and Move track down).
+Control+Up and Control+Down: move the track (also the Move up and Move down buttons).
 F2: rename. Delete: delete the track, or the selected tracks (asks first).
 Alt+Enter: track settings. Control+I: change instrument. Control+T: new track. Control+U: new audio track.
 Control+Shift+R: new rhythm player.
 Control+F: the track's effects. Control+Shift+U: the track's automation.
 Control+Shift+W: Write automation on or off.
 
-Effects (Control+F, or Track menu, Effects)
+Effects (Control+F, or the Effects button in the Track group)
 Every track has a list of effects its sound goes through, top to bottom, before its volume and pan:
 EQ, compressor, distortion, delay and reverb, and pitch correction on audio tracks.
 In the list: Alt+A adds an effect, Enter opens its settings, Space turns it on or off,
@@ -2502,14 +2570,14 @@ Up and Down arrows change a number (Page Up and Page Down by ten steps), and the
 at once; the Play or stop button plays the song so you can listen. OK keeps the changes, Cancel puts
 back what was there. Everything undoes with Control+Z. Exports include the effects.
 
-Automation (Control+Shift+U, or Track menu, Automation)
+Automation (Control+Shift+U, or the Automation button in the Track group)
 A track's volume, pan and effect settings can change over time. Each thing that changes has a lane;
 a lane has points (where, the value, and whether it glides to the next point or holds until it).
 In the lanes list: Alt+A adds a lane, Enter lists its points, Space turns it on or off, Delete removes it.
 In the points list: Alt+A adds a point at the playhead, Enter edits one, Delete removes one,
 Space plays from it. Once a lane has points it sets that value for the whole song; turned off,
 the track's own setting is used again.
-Write automation (Control+Shift+W, or Track menu, Write automation): while the song plays,
+Write automation (Control+Shift+W, or the Write automation check box): while the song plays,
 changing volume ([ and ]), pan (Shift+[ and Shift+]), Track settings, or an effect's settings
 writes points at the moment you hear. A whole play-through undoes with one Control+Z.
 Written values hold until the next change. Effect settings moved while writing stay in the
@@ -2539,7 +2607,7 @@ Check low-latency support says what your sound card allows. For no delay at all,
 or audio interface with its own headphone socket (direct monitoring), and wired headphones.
 Recordings are kept in the project's own folder, in Recordings (My Song, Recordings).
 
-Editing (also in the Edit menu: Undo, Redo, Event list and Quantize)
+Editing (also the Edit buttons: Undo, Redo, Quantize and Go to bar)
 Control+Z: undo. Control+Y: redo. A whole recorded take, all its loop passes, undoes in one step.
 Control+L: event list, every note on the selected track (or every recording on an audio track).
 In the event list: Space selects a note, Control+A selects all, P plays, Enter edits, Alt+A adds, Delete removes,
@@ -2550,33 +2618,42 @@ Song
 Control+Shift+T: tempo changes. Control+Shift+M: time signature changes. Control+Shift+K: key changes.
 Control+Shift+H: the chord track.
 
-Chord track (Control+Shift+H, or Song menu, Chord track)
+Chord track (Control+Shift+H, or the Chord track button in the Song group)
 The chords of the song, in order; each lasts until the next. Rhythm players play these chords.
 Enter edits a chord change, Alt+A adds one, Delete removes one. Fill from a progression puts a common
 progression (such as one, five, six, four) into bars you choose, in the song's key. Work out from a track
 listens to a track's notes, such as chord strips you played, and writes the chords it hears.
 The Status (Control+3) says the chord at the playhead.
 
-Rhythm players (Control+Shift+R, or Track menu, New rhythm player)
+Rhythm players (Control+Shift+R, or the New rhythm player button in the Track group)
 Anvil plays drums, Bellows bass, Ember keys, Spark synth, and Hammer guitar. Choose a player, a style,
 where it goes (a new track or the selected one) and how long it plays. It makes a rhythm player region.
 Enter on that region opens its editor: Style; Variation (each style has its own grooves or parts, numbered
 and described; Previous and Next variation step through them); Patch (the instrument or kit); Intensity
-(how hard it plays, never how many notes), Complexity (how busy), Fill amount, Fill complexity, Swing, Swing feel (eighth or
-sixteenth notes); Follow (the chord track, another track, or nothing), the track to follow, Follow
+(how hard it plays, never how many notes), Complexity (how busy), Fill amount (where fills come, counted from the
+region's first bar: from 1 every 8th bar, from 40 every 4th, from 70 every 2nd, 100 every bar), Fill complexity (how big
+each fill is), Swing, Swing feel (eighth or sixteenth notes); Follow (the chord track, another track, or nothing), the track to follow, Follow
 amount, Hit sensitivity (for a recording); and the Kit pieces (the part, for bass, keys, synth and guitar).
 Every change is heard at once. With several rhythm player regions selected, Enter edits them all together.
 Control+R or the editor's Reforge button: a new performance of the same variation, picked at random, with new fills and
 small details, and Musician Forge says "Regenerated performance"; the variation never changes, and Control+Z
 goes back to the one before. Alt+S says
 the summary. Turn into notes makes ordinary notes you can edit. Control+Z and Control+Y work inside the editor.
-Kit pieces: Space turns a piece on or off; Enter opens its settings: Pattern (the variation's own, another
+Kit pieces: a piece the variation's groove does not use is off by itself ("off, not in this groove"; the toms and crash
+usually are), until you choose a pattern or make steps for it. Off takes a piece out of the groove only: fills always use
+the whole kit, and the crash where a section starts follows its When setting. Space turns a piece on or off; Enter opens
+its settings: Pattern (the variation's own, another
 variation's, or a common one), Complexity and Loudness sliders for that piece alone, and its own extras: half or double
 time (kick and snare), ghost notes, their loudness and a rim click (snare), how open the hi-hat is, toms in fills, when and
 which crash comes, which ride and its bell. Each piece plays only its own sounds. Above 120 beats a minute the ride
-plays no runs of sixteenth notes (its eighth notes stay), and above 140 neither does the hi-hat of a drummer (rock,
-hard rock, metal, jazz, funk, pop); those patterns leave the Pattern list there. A part has the chord track on or off, an octave, a note length, the root
+plays no runs of sixteenth notes (its eighth notes stay; those patterns leave the Pattern list there); the hi-hat keeps
+its sixteenth notes at any tempo. A part has the chord track on or off, an octave, a note length, the root
 only, and passing notes into each chord change.
+A human feel: the acoustic drummers (rock, hard rock, metal, jazz, funk, pop), the hand percussion, the bass, the keys
+and the guitar play a few milliseconds off the grid, as people do, straight or swung, with a pocket of their own (a
+rock backbeat a little behind the beat); each Reforge has its own. The drum machines (dubstep, house, trap) and the
+synth stay exactly on the grid, as machines do. When an acoustic drummer's crash keeps the time (a crash on every beat
+or in eighth notes), the ride and the hi-hat played by hand stop, as a drummer's one hand rides the crash.
 Step pattern (in a piece's settings): every step of one to four bars, read one by one, starting from what the
 piece plays in the region's first bars, so changing one step changes only that step. A drum step can hold
 several sounds; a part's steps start as "as the style plays it". Space turns a step on or off, Left and Right

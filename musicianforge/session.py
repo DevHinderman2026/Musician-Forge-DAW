@@ -3062,6 +3062,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         where = "{} in {}".format(os.path.basename(result["path"]), projects.describe_file_location(result["path"]))
         if result["files"] == 1 and result["path"].lower().endswith(".wav"):
             message = "Export finished. {}: {} on its own, {} long.".format(where, result["tracks"][0], length)
+        elif result["files"] == 1:                      # a zip with one track's file in it
+            message = "Export finished. {}: 1 WAV file, for {}, {} long.".format(where, result["tracks"][0], length)
         else:
             message = "Export finished. {}: {} WAV files, one for each track, {} long.".format(
                 where, result["files"], length)

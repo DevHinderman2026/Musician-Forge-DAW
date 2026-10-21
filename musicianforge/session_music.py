@@ -77,6 +77,14 @@ def for_each_selected_region(method):
     return wrapped
 
 
+
+def in_the_groove(settings, piece_key):
+    """Whether the region's variation plays this piece in its groove (always for the part)."""
+    if settings["player"] != "anvil" or piece_key == "part":
+        return True
+    table = player_pieces.style_table(settings["style"], settings["variation"], players._DRUM_STYLES)
+    return bool(player_pieces.piece_rows(table, player_pieces.PIECE_BY_KEY[piece_key]))
+
 class HandMadeSteps(ValueError):
     """Changing the variation would reset hand-made steps: the message says which, for the warning."""
 
@@ -471,7 +479,12 @@ class MusicMixin:
         return keyboard_map.KIT_NOTES.get(self.kit_program(track_id))
 
     def piece_settings(self, track_id, index, piece_key):
-        return player_pieces.piece_settings(self.player_settings(track_id, index), piece_key)
+        """Every setting of one piece, with "on" as it plays (player_pieces.piece_on: off when the groove has
+        nothing for it, unless turned on by hand)."""
+        settings = self.player_settings(track_id, index)
+        full = player_pieces.piece_settings(settings, piece_key)
+        full["on"] = player_pieces.piece_on(settings, piece_key, in_the_groove(settings, piece_key))
+        return full
 
     def describe_pieces(self, track_id, index):
         """The Kit pieces list (or the part's line): [(piece key, words)]."""
@@ -507,6 +520,14 @@ class MusicMixin:
                 stored.pop(key, None)
             else:
                 stored[key] = value
+        if "on" in changes:
+            # kept only when it differs from what the piece does by itself (so a piece turned back on follows its
+            # groove again when the variation changes)
+            stored["on"] = player_pieces.clean_value(piece, "on", changes["on"], settings["player"])
+            by_itself = dict(settings, pieces=dict(settings["pieces"], **{piece_key: {k: v for k, v in stored.items()
+                                                                                       if k != "on"}}))
+            if stored["on"] == player_pieces.piece_on(by_itself, piece_key, in_the_groove(settings, piece_key)):
+                stored.pop("on")
         if stored:
             settings["pieces"][piece_key] = stored
         else:
@@ -627,7 +648,7 @@ class MusicMixin:
         if settings["follow"] == "none":
             return ""
         own = player_pieces.piece_settings(settings, "kick" if player.key == "anvil" else "part")
-        if player.key == "anvil" and not own["on"]:
+        if player.key == "anvil" and not player_pieces.piece_on(settings, "kick", in_the_groove(settings, "kick")):
             return "The kick is off, so Follow has nothing to move."
         if player.key != "anvil" and own["steps"] and settings["follow"] == "track":
             return "The part is hand-made, so Follow does not move its steps."
@@ -721,8 +742,9 @@ class MusicMixin:
         hits = self._follow_hits(track, region, settings)
         sections = self._section_starts(region)
         coming = self._next_intensity(track, region) if settings["player"] == "anvil" else None
+        human = getattr(self, "human_feel", True)      # tests that check the grid itself turn it off
         key = json.dumps([settings, region.start, region.end, span_chords, self._timeline_key(), sections, coming,
-                          None if hits is None else [(h.tick, round(h.weight, 3)) for h in hits]], sort_keys=True,
+                          human, None if hits is None else [(h.tick, round(h.weight, 3)) for h in hits]], sort_keys=True,
                          default=str)
         cache = self.__dict__.setdefault("_performances", {})
         found = cache.get(key)
@@ -730,7 +752,7 @@ class MusicMixin:
             if hits is None and settings["follow"] == "track":
                 settings = dict(settings, follow="chords")     # the followed track is gone: follow the chords
             found = players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords, hits,
-                                    sections, next_intensity=coming)
+                                    sections, next_intensity=coming, humanize=human)
             if len(cache) > 256:
                 cache.clear()
             cache[key] = found
@@ -795,7 +817,8 @@ class MusicMixin:
                 settings = dict(settings, follow="chords")
                 return players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords,
                                        None, self._section_starts(region),
-                                       next_intensity=self._next_intensity(t, region)).notes
+                                       next_intensity=self._next_intensity(t, region),
+                                       humanize=getattr(self, "human_feel", True)).notes
             return self.performance(t, region).notes
 
         return arrangement.sounding_notes(self.song, track, perform_for)
