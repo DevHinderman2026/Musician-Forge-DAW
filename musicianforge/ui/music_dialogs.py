@@ -1012,7 +1012,6 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
                 value=player_pieces.LEVEL_DEFAULT)
             self._choice(form, "rim", "Rim click (cross-stick) instead of the snare", player_pieces.RIM_CHOICES)
         if kind == "hat":
-            self._choice(form, "time_on", "Play this rhythm on", self._in_kit(player_pieces.TIME_ON, full["time_on"]))
             self._choice(form, "openness", "How open the hi-hat is", player_pieces.OPENNESS)
             self._check(form, "open_offbeats", "Open the hi-hat on the and of each beat")
         if kind == "toms":
@@ -1095,8 +1094,12 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
         settings = self.session.player_settings(self.track_id, self.index)
         if self.part:
             return player_pieces.part_pattern_options(self.player, settings["style"], settings["variation"])
+        # the region's fastest tempo: above it, no sixteenth-note patterns on the ride or hi-hat (21 Oct 2026)
+        region = self.session.song.track_by_id(self.track_id).note_regions[self.index]
+        tempo = players.fastest_tempo(self.session.song.timeline, region.start, region.end)
         return player_pieces.drum_pattern_options(settings["style"], settings["variation"], self.piece.key,
-                                                  players._DRUM_STYLES, self.kit, self.kit_notes)
+                                                  players._DRUM_STYLES, self.kit, self.kit_notes, tempo=tempo,
+                                                  chosen=self.full()["pattern"])
 
     # what a hand-made drum piece's steps decide instead (dimmed while it is hand-made)
     STEPS_DECIDE = ("pattern", "busy", "time", "ghosts", "ghost_level")

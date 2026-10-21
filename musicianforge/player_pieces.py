@@ -86,9 +86,50 @@ OPENNESS = (("intensity", "by intensity (closed, half open from {}, open from {}
 RIM_CHOICES = (("intensity", "by intensity (a rim click at Intensity {} or below)".format(RIM_AT)),
                ("always", "always a rim click (cross-stick)"), ("never", "never (always the snare)"))
 RIDE_SOUNDS = (("ride", "the ride", RIDE), ("bell", "the ride bell", RIDE_BELL), ("second", "the second ride", RIDE2))
-TIME_ON = (("hat", "the hi-hat", HAT), ("ride", "the ride", RIDE), ("bell", "the ride bell", RIDE_BELL),
-           ("crash", "the crash cymbal", CRASH))
+# Each kit piece plays only its own sounds (Russell, 21 Oct 2026: "with the hi-hat you can change the variation and
+# whatnot but you shouldn't change the hi-hat to a cymbal ... it should all be their own respective kit pieces"). Until
+# then the hi-hat had "Play this rhythm on" (the ride, its bell or the crash); a project that chose it is read without
+# it (clean_pieces leaves out a setting a piece no longer has), so its hi-hat plays on the hi-hat again.
 TIME = (("normal", "normal time"), ("half", "half time"), ("double", "double time"))
+
+# the styles a real drummer plays (not the drum machines of dubstep, house and trap, nor the hand percussion styles)
+LIVE_DRUMMER_STYLES = ("rock", "hard_rock", "metal", "jazz", "funk", "pop")
+# Sixteenth notes on a cymbal only as fast as a drummer's one hand can keep them up (Russell, 21 Oct 2026: "if the tempo
+# is over 120 beats a minute then the 16th note patterns shouldn't be an option for the ride cymbal, or whatever you
+# decide per kit"). Above the tempo: the Pattern list leaves out patterns with runs of sixteenth notes on that piece,
+# and what the piece plays by itself keeps its eighth notes and drops the sixteenths squeezed between them (a lone
+# hit on an "e" or "a", a sixteenth away from any other, is not a run and stays; steps you set by hand stay).
+# The ride: above 120 in every style. The hi-hat: above 140 in the styles a real drummer plays (two hands can share
+# hi-hat sixteenths up to about there); the drum machines keep their fast hi-hats. Kicks (feet), shakers and fills
+# are not limited.
+SIXTEENTHS_UP_TO = {"ride": (120, None), "hat": (140, LIVE_DRUMMER_STYLES)}
+
+
+def sixteenths_up_to(piece_key, style_key):
+    """The fastest tempo (quarter notes a minute) at which this piece plays sixteenth notes in this style, or None
+    when it has no limit."""
+    limit = SIXTEENTHS_UP_TO.get(piece_key)
+    if limit is None or (limit[1] is not None and style_key not in limit[1]):
+        return None
+    return limit[0]
+
+
+def too_fast_for_sixteenths(piece_key, style_key, tempo):
+    limit = sixteenths_up_to(piece_key, style_key)
+    return limit is not None and tempo is not None and tempo > limit
+
+
+def rows_have_sixteenths(rows):
+    """Whether rows ({voice: (16 chances, ...)}) can play two hits a sixteenth note apart, one of them between the
+    eighth notes (the piece's sounds together, as one hand plays them)."""
+    places = set()
+    for entry in rows.values():
+        places |= {place for place, chance in enumerate(entry[0]) if chance > 0}
+    return any((place - 1) % 16 in places or (place + 1) % 16 in places for place in places if place % 2 == 1)
+
+
+def tempo_words(limit):
+    return "eighth notes above {} beats a minute".format(limit)
 GHOSTS = (("style", "ghost notes as the style plays them"), ("none", "no ghost notes"), ("more", "more ghost notes"))
 LENGTHS = (("short", "short notes"), ("normal", "normal notes"), ("long", "long notes"))
 
@@ -105,16 +146,15 @@ BUSY_DEFAULT = 50
 DRUM_DEFAULTS = {"on": True, "pattern": "style", "busy": BUSY_DEFAULT, "level": LEVEL_DEFAULT, "time": "normal",
                  "ghosts": "style", "ghost_level": LEVEL_DEFAULT,
                  "rim": "intensity", "openness": "intensity", "open_offbeats": False, "in_fills": True,
-                 "when": "start_and_fills", "which": "crash1", "bell": False, "ride_sound": "ride", "time_on": "hat",
+                 "when": "start_and_fills", "which": "crash1", "bell": False, "ride_sound": "ride",
                  "steps": None}
 PART_DEFAULTS = {"pattern": "style", "chords": True, "octave": 0, "length": "normal", "root_only": False,
                  "passing": False, "busy": BUSY_DEFAULT, "level": LEVEL_DEFAULT, "steps": None}
 RANGES = {"busy": (0, 100), "level": (0, 100), "ghost_level": (0, 100), "octave": (-2, 2)}
 CHOICES = {"time": TIME, "ghosts": GHOSTS, "openness": OPENNESS, "when": WHEN,
            "which": tuple((key, key) for key, _notes in WHICH), "length": LENGTHS, "rim": RIM_CHOICES,
-           "ride_sound": tuple((key, words) for key, words, _note in RIDE_SOUNDS),
-           "time_on": tuple((key, words) for key, words, _note in TIME_ON)}
-EXTRAS = {"kick": ("time",), "snare": ("time", "ghosts", "ghost_level", "rim"), "hat": ("time_on", "openness", "open_offbeats"),
+           "ride_sound": tuple((key, words) for key, words, _note in RIDE_SOUNDS)}
+EXTRAS = {"kick": ("time",), "snare": ("time", "ghosts", "ghost_level", "rim"), "hat": ("openness", "open_offbeats"),
           "toms": ("in_fills",), "crash": ("when", "which"), "ride": ("ride_sound", "bell")}
 COMMON = ("on", "pattern", "busy", "level", "steps")
 PART_KEYS = ("pattern", "chords", "octave", "length", "root_only", "passing", "busy", "level", "steps")
@@ -371,32 +411,43 @@ def _rows_key(rows):
     return tuple(sorted((voice, tuple(entry[0]), entry[1]) for voice, entry in rows.items()))
 
 
-def drum_pattern_options(style_key, variation, piece_key, base_tables, kit_program=None, kit_notes=None):
+def drum_pattern_options(style_key, variation, piece_key, base_tables, kit_program=None, kit_notes=None, tempo=None,
+                         chosen=None):
     """[(key, words)] for a drum piece's Pattern list: the chosen variation's own first, then what the style's other
     variations play on this piece, then none, then common patterns (only those the kit has the sounds for). Each
-    rhythm is listed once, named with the kit's own names for its sounds."""
+    rhythm is listed once, named with the kit's own names for its sounds.
+    tempo: the region's fastest tempo; above the piece's limit (SIXTEENTHS_UP_TO) patterns with sixteenth notes are
+    left out, except `chosen` (the pattern the piece has), which stays and says it plays eighth notes there."""
     piece = PIECE_BY_KEY[piece_key]
     own = piece_rows(style_table(style_key, variation, base_tables), piece)
+    fast = too_fast_for_sixteenths(piece_key, style_key, tempo)
+    limit = sixteenths_up_to(piece_key, style_key)
 
-    def playable(rows):
+    def playable(rows, key=None):
+        if fast and rows_have_sixteenths(rows) and key != chosen:
+            return False
         return kit_notes is None or all(voice in kit_notes for voice in rows)
 
-    options = [("style", "As variation {} plays it: {}".format(variation, rows_words(own, kit_program) if own else
-                                                                "none in the groove"))]
+    def words_at_tempo(words, rows):
+        return words + (" ({})".format(tempo_words(limit)) if fast and rows_have_sixteenths(rows) else "")
+
+    options = [("style", words_at_tempo("As variation {} plays it: {}".format(
+        variation, rows_words(own, kit_program) if own else "none in the groove"), own))]
     seen = {_rows_key(own)}
     for number in range(1, pv.count("anvil", style_key) + 1):
         if number == variation:
             continue
         rows = piece_rows(style_table(style_key, number, base_tables), piece)
-        if rows and _rows_key(rows) not in seen and playable(rows):
+        if rows and _rows_key(rows) not in seen and playable(rows, "v{}".format(number)):
             seen.add(_rows_key(rows))
-            options.append(("v{}".format(number), "Variation {}'s: {}".format(number, rows_words(rows, kit_program))))
+            options.append(("v{}".format(number), words_at_tempo("Variation {}'s: {}".format(
+                number, rows_words(rows, kit_program)), rows)))
     if own:
         options.append(("none", "None in the groove" + (" (fills only)" if piece.kind == "toms" else "")))
     for key, words, rows in GENERIC.get(piece_key, ()):
-        if _rows_key(rows) not in seen and playable(rows):
+        if _rows_key(rows) not in seen and playable(rows, "g:" + key):
             seen.add(_rows_key(rows))
-            options.append(("g:" + key, words[0].upper() + words[1:]))
+            options.append(("g:" + key, words_at_tempo(words[0].upper() + words[1:], rows)))
     return options
 
 
@@ -560,9 +611,9 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
         # 10 Oct 2026 it fell through to here, and any value but 50 raised an error that broke the Kit pieces list)
         if key in ("when", "which", "ghost_level") or full[key] == DRUM_DEFAULTS[key]:
             continue
-        if key in ("time_on", "ride_sound"):
+        if key == "ride_sound":
             words.append("played on " + choice_words(key, full[key]))
-            note = dict((k, n) for k, _w, n in (TIME_ON if key == "time_on" else RIDE_SOUNDS)).get(full[key])
+            note = dict((k, n) for k, _w, n in RIDE_SOUNDS).get(full[key])
             if note is not None:
                 words[-1] += missing_words(note, kit_notes, kit_program)
         elif key in CHOICES:

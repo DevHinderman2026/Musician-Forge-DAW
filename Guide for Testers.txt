@@ -1,5 +1,5 @@
 MUSICIAN FORGE TESTER'S GUIDE
-For people trying Musician Forge 0.9.4 before its first release
+For people trying Musician Forge 0.9.5 before its first release
 
 Thank you for testing. Musician Forge is a music program for Windows made to work
 fully with screen readers (NVDA, JAWS and Narrator). This test version needs
@@ -70,10 +70,11 @@ or not read out by your screen reader. "Expected" says what should happen.
 
 1. Getting around (5 minutes)
    - Tab through the project window: Tracks, Regions, the Musical keyboard,
-     Show keyboard controls, the button groups, Status.
-     Expected: every control has a clear name; the button groups say their name.
+     Show keyboard controls, the Menus group, Status.
+     Expected: every control has a clear name; the Menus group says its name,
+     and its buttons open the menus (every command is in a menu).
    - F6 and Shift+F6 jump from area to area and round again.
-     Expected: each jump says where you are ("Track group, 11 buttons").
+     Expected: each jump says where you are ("Menus group, 9 buttons").
    - Control+1, Control+5, Control+2 and Control+3 jump to Tracks, Regions,
      Musical keyboard and Status.
    - Arrow through the Tracks list. Expected: the track you are on ends with
@@ -98,7 +99,7 @@ or not read out by your screen reader. "Expected" says what should happen.
    - In the Regions list, Enter on a player region opens its editor.
      - Variation: try a few. Expected: each is a different groove, said in
        words; the Regions list says "variation 3 of 6".
-     - Control+R: Reforge. Expected: "New performance of variation 3 of 6";
+     - Control+R: Reforge. Expected: "Regenerated performance", nothing more;
        the fills and small details change, the groove stays.
      - Kit pieces: Space on Crash cymbals turns them off; Enter opens a piece's
        settings (try When a crash comes, every 4 bars).
@@ -124,7 +125,7 @@ or not read out by your screen reader. "Expected" says what should happen.
      Control+Z undoes the whole pass.
 
 7. Importing, saving and exporting (10 minutes)
-   - Control+Shift+I (or the Import file button in the File group) imports an
+   - Control+Shift+I (or File menu, Import audio or MIDI file) imports an
      audio file (MP3, M4A, WAV and more) or a MIDI file. Expected: it says
      what it made and where; a long file shows its progress, and Escape
      cancels.
@@ -139,7 +140,7 @@ or not read out by your screen reader. "Expected" says what should happen.
      Control+Z undoes.
    - Change something, then Control+W (Close project) and choose Yes. Open
      the project again. Expected: your change is there.
-   - Add a section (Song group, Sections), move into it, then press Enter and
+   - Add a section (Song menu, Sections), move into it, then press Enter and
      comma a few times. Expected: you stay in that section ("Start of
      Section 2"). Turn on All sections and press Enter: the start of the song.
    - Control+I (Instrument): the drum kits are only in Drum Kits.
@@ -164,10 +165,10 @@ or not read out by your screen reader. "Expected" says what should happen.
      where Windows plays, and Musician Forge says "Sound now on" and its name.
 
 8. The microphone, if you have one (optional, 15 minutes)
-   - The Audio settings button in the Settings group (Tab or F6 gets there;
-     Control+Shift+O too): choose the microphone and Test it.
-   - The Measure the recording delay button in the Settings group (or
-     Control+Shift+D): headphones off, speakers up, a quiet room.
+   - Options menu, Audio settings (Tab to the Options menu button in the Menus
+     group; Control+Shift+O too): choose the microphone and Test it.
+   - Options menu, Measure the recording delay (or Control+Shift+D):
+     headphones off, speakers up, a quiet room.
    - Control+U adds an audio track; R records from the microphone. Expected:
      no pop as the microphone starts.
    - With headphones on, open Track settings on the audio track and tick
@@ -200,7 +201,7 @@ The logs hold no recordings and no songs, only what Musician Forge did, the
 names of your sound devices, and the folders it used.
 
 
-KNOWN LIMITS IN 0.9.4
+KNOWN LIMITS IN 0.9.5
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B1 to D6 (key 35 to 86): drop D, drop C and
@@ -231,3 +232,9 @@ Then: make two drummer regions one after the other on the same track, the first 
 100. The last two bars of the first should build on the hi-hat: closed, then half open, then wide open into the
 second region. Set the first to 100 too: the build should go away.
 Then: select two drummer regions (Shift+F8, Space on each), press Enter, move Intensity: both should change.
+
+NEW TO TRY IN 0.9.5: Tab through the project window: after the keyboard controls comes the Menus group, the only
+group of buttons; open each menu with its button and check every command you used to find as a button is there.
+Reforge a drummer region a few times: each time it says only "Regenerated performance" and the fills change.
+Open the Closed hi-hat's settings: there is no "Play this rhythm on" any more. Set the song's tempo to 130 and open
+the Ride's settings: the Pattern list has no sixteenth notes; play it and listen for eighth notes on the ride.

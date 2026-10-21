@@ -1,5 +1,5 @@
 MUSICIAN FORGE
-An accessible digital audio workstation for Windows, version 0.9.4
+An accessible digital audio workstation for Windows, version 0.9.5
 
 Musician Forge records what you play on the laptop keyboard into tracks of
 realistic instruments, and records your voice or any instrument through a
@@ -38,7 +38,7 @@ settings say Windows default; an output chosen there by name stays chosen.
    first. Delete removes a project from the recent list (the file itself is
    kept).
 3. Press F1 inside a project for the full list of keyboard shortcuts.
-4. Control+W (or the Close project button) closes the project, asks to save
+4. Control+W (or File menu, Close project) closes the project, asks to save
    any changes, and goes back to the start screen.
 
 The name: this program was called Melody Forge until 8 October 2026. The first time you run
@@ -52,9 +52,9 @@ THE PROJECT WINDOW
 Tab moves through these areas. Every control can be reached with Tab, and most
 also have a shortcut key. F6 jumps to the next area and Shift+F6 to the previous
 one, going round in a circle: Tracks, Regions, the Musical keyboard, the keyboard
-controls, each button group and Status (areas that are hidden or empty are skipped).
-Each jump says where you are and what is there, for example "Track group, 11
-buttons, 3 check boxes".
+controls, the Menus group and Status (areas that are hidden or empty are
+skipped). Each jump says where you are and what is there, for example "Menus
+group, 9 buttons".
 - Tracks (Control+1): your instrument tracks and audio tracks. Up and Down
   arrow choose the track you play and record on; it ends with "selected".
 - Regions (Control+5): the selected track's regions. Each one says where it
@@ -62,29 +62,32 @@ buttons, 3 check boxes".
   with "selected". (In selection mode, "selected" means marked with Space.)
 - Musical keyboard (Control+2): play notes with the letter keys.
 - Show keyboard controls (Control+4 goes straight there): reveals Layout,
-  Scale, Octave, Velocity and the Arpeggiator settings.
-- Button groups: Transport (Go to start, Rewind, Play, Stop, Record, Forward,
-  Previous section, Next section, Metronome, All sections), Track (New track,
-  New audio track, New rhythm player, Instrument, Track settings, Effects,
-  Automation, Write automation, Mute, Solo, Event list, Move up, Move down,
-  Delete track), Edit (Undo, Redo, Select, Cut, Copy, Paste, Duplicate, Delete,
-  Quantize, Go to bar), Region (Open region, Move region, Split, Join, Mute
-  region, Rename region, Region settings, Reforge, New rhythm player region), Song (Tempo changes, Time
-  signature changes, Key changes, Sections, Chord track), File (Save, Import
-  file, Export audio, Export MIDI, Close project), Settings (Audio settings,
-  Measure the recording delay, Preferences) and Menus (a button for each menu:
-  File, Edit, Region, Track, Transport, Song, Keyboard, Options and Help; each
-  opens that menu, with the same items and shortcuts as the menu bar). Your
-  screen reader says the group name as you Tab into it. The menu bar itself
-  opens with Alt, as in any Windows program.
+  Scale, Octave, Velocity and the Arpeggiator settings, for trying settings
+  quickly while you play (the Up and Down arrows change one and you hear it).
+  The Keyboard menu has each of them too, as a submenu with the current choice
+  checked.
+- Menus group: a button for each menu: File, Edit, Region, Track, Transport,
+  Song, Keyboard, Options and Help. Each opens that menu, with the same items
+  and shortcuts as the menu bar. Every command is in a menu (since 0.9.5 there
+  are no other groups of buttons): File (projects, import and export), Edit
+  (undo, redo, selection, cut, copy, paste, duplicate, delete, the event list,
+  quantize), Region (open, settings, Reforge, a new rhythm player region, move,
+  nudge, split, join, mute, rename), Track (new tracks and rhythm players,
+  settings, instrument, effects, automation, rename, mute, solo, move, delete),
+  Transport (play, record, go to start, bars, beats, sections, All sections, Go
+  to bar, the metronome, the count-in), Song (tempo, time signature and key
+  changes, the chord track, sections), Keyboard, and Options (Audio settings,
+  Measure the recording delay, Preferences). Your screen reader says the group
+  name as you Tab into it. The menu bar itself opens with Alt, as in any Windows
+  program.
 - Status (Control+3): a summary you can read line by line with the arrow keys.
 
 
 SONG SECTIONS
 
 A new project is one 8-bar section, and you can add as many sections as you like
-(Song menu, or the Sections button). Space plays and loops the section you are
-in; turn on All sections to play the whole song. Rewind and Forward move one bar
+(Song menu, Sections). Space plays and loops the section you are
+in; turn on All sections to play the whole song. Comma and period move one bar
 and tell you when you reach the start or end of a section. Enter (Go to start)
 goes to the start of the section you are in, and rewinding stops there; with All
 sections on, both go back through the whole song.
@@ -119,8 +122,8 @@ Scale layout: the home row plays the notes of the song's key, starting on the
 key's root note, and the top row keeps going upward. When the song changes
 key, the scale layout changes with it.
 
-In the keyboard controls you can choose another scale (blues, Dorian and so
-on). It starts on the root note of the song's key.
+In the keyboard controls (or Keyboard menu, Scale) you can choose another scale
+(blues, Dorian and so on). It starts on the root note of the song's key.
 
 Chord strips: A S D F G H J and K play eight chords, the
 seven chords of the song's key and then a borrowed one (B flat in C major,
@@ -137,7 +140,8 @@ says its notes. Space plays it. Your chords are saved with the project and stay
 as they are when the key changes; Use the key's chords goes back to the song
 key's own. Every change is one undo step (Control+Z works in the window too).
 
-Arpeggiator (Control+Shift+P, or the keyboard controls): hold notes or a chord
+Arpeggiator (Control+Shift+P, the keyboard controls, or the Keyboard menu's
+Arpeggiator pattern, speed and octave range): hold notes or a chord
 and it plays them one at a time, in time with the song: up, down, up and down,
 down and up, as played, or random, from quarter notes to 32nd notes, across 1 to
 4 octaves. While recording, every note it plays is recorded.
@@ -179,7 +183,7 @@ Control+K turns the metronome on or off. Control+Shift+C changes the count-in.
 
 RECORDING SOUND: AUDIO TRACKS
 
-1. Control+U (or the New audio track button) adds an audio track.
+1. Control+U (or Track menu, New audio track) adds an audio track.
 2. Use wired headphones, so the metronome and the other tracks stay out of the
    recording. Wired, not Bluetooth: Bluetooth headphones delay the sound by a
    fifth of a second or more, which makes playing in time very hard. The
@@ -222,7 +226,7 @@ imports an audio file; Delete removes it.
 
 IMPORTING AUDIO AND MIDI FILES
 
-Control+Shift+I (or the Import file button in the File group, or File, Import)
+Control+Shift+I (or File menu, Import audio or MIDI file)
 opens Windows' Open window, which lists audio and MIDI files together first,
 then each kind.
 - Audio files: WAV, MP3, M4A, MP4 and AAC, FLAC, Ogg Vorbis, Opus, AIFF, Apple
@@ -248,8 +252,8 @@ then each kind.
 
 EFFECTS
 
-Every track has its own effects (Control+F, or the Effects button in the Track
-group). The track's sound goes through them from top to bottom, then through
+Every track has its own effects (Control+F, or Track menu, Effects). The
+track's sound goes through them from top to bottom, then through
 its volume and pan:
 - EQ: cut the lowest rumble, turn the bass, middle and treble up or down,
   and cut the highest frequencies.
@@ -284,7 +288,7 @@ AUTOMATION
 
 A track's volume, pan and effect settings can change over time: a fade-out, a
 guitar that moves from left to right, more reverb in the chorus. Open a track's
-automation with Control+Shift+U (or the Automation button in the Track group).
+automation with Control+Shift+U (or Track menu, Automation).
 - Each thing that changes has a lane: Volume, Pan, or one setting of one of the
   track's effects (for example "Reverb 1: Mix"). Alt+A adds a lane, Space turns
   one on or off, Delete removes it, Enter lists its points.
@@ -298,8 +302,8 @@ automation with Control+Shift+U (or the Automation button in the Track group).
   point it uses the first point's value, after its last point the last point's
   value. Turn the lane off and the track's own setting is used again.
 
-Write automation records lanes as you go. Turn it on with Control+Shift+W (or the
-Write automation check box in the Track group), play the song, and change a
+Write automation records lanes as you go. Turn it on with Control+Shift+W (or
+Track menu, Write automation), play the song, and change a
 track's volume ([ and ]), pan (Shift+[ and Shift+]), Track settings, or an
 effect's settings: each change is written at the moment you hear it. Playing over
 the same place again replaces what you cross. A whole play-through undoes with
@@ -318,9 +322,9 @@ MEASURING THE RECORDING DELAY
 
 Musician Forge already lines recordings up with the beat using the delays the
 sound card reports. Those are never quite exact, so Audio settings has
-"Measure the recording delay". The Measure the recording delay button in the
-Settings group (or Control+Shift+D) opens Audio settings on it; the Audio
-settings button (or Control+Shift+O) opens the whole window:
+"Measure the recording delay". Options menu, Measure the recording delay (or
+Control+Shift+D) opens Audio settings on it; Options menu, Audio settings (or
+Control+Shift+O) opens the whole window:
 1. Take headphones off, turn the speakers up, and keep the room quiet.
 2. Press Measure the recording delay. Musician Forge plays eight short clicks
    through the speakers and listens with the microphone (about five seconds).
@@ -337,8 +341,8 @@ The musical keyboard has its own timing adjustment in the same window.
 THE CHORD TRACK
 
 The chord track holds the song's chords: each chord change lasts until the next
-one. Rhythm players play these chords. Open it with Control+Shift+H (or the
-Chord track button in the Song group). In the list, Alt+A adds a chord change
+one. Rhythm players play these chords. Open it with Control+Shift+H (or Song
+menu, Chord track). In the list, Alt+A adds a chord change
 (where it starts, its root note, its type such as minor or seven, and a
 different bass note if you like), Enter edits one and Delete removes one.
 - Fill from a progression puts a common progression into the bars you choose,
@@ -357,7 +361,7 @@ A rhythm player plays a part for you in a region: Anvil plays drums, Bellows
 bass, Ember keys, Spark synth and Hammer guitar. Each has styles, for example
 Anvil: dubstep, house, trap, rock, hard rock, metal, jazz, funk, pop, hand
 percussion, and shakers and tambourine.
-1. Control+Shift+R (or the New rhythm player button in the Track group): choose
+1. Control+Shift+R (or Track menu, New rhythm player): choose
    the player, its style, where it goes (a new track, or the selected track) and
    how long it plays (the section the playhead is in, the whole song, or bars
    you choose).
@@ -376,9 +380,9 @@ percussion, and shakers and tambourine.
    Swing feel (eighth or sixteenth notes); Follow: the
    chord track, another track, or nothing; the track to follow; Follow amount;
    Hit sensitivity (for a recording); and the Kit pieces (for bass, keys, synth
-   and guitar, the part). The drummer's Closed hi-hat can play its rhythm on
-   the hi-hat, the ride, the ride bell or the crash; the Ride can sound as the
-   ride, the ride bell or the second ride.
+   and guitar, the part). Each kit piece plays only its own sounds (the hi-hat
+   always on the hi-hat); the Ride can sound as the ride, the ride bell or the
+   second ride.
    Every change is heard at once and is one undo step, and Control+Z and
    Control+Y work inside the editor.
    Several regions at once: in selection mode (Shift+F8), select rhythm player
@@ -392,16 +396,16 @@ percussion, and shakers and tambourine.
    plays by today's rules. New regions always do.
 3. Reforge (Control+R in the editor; R or Control+R on the region in the Regions
    list, where R on any other region still records) plays a new performance of
-   the same variation: new fills and small details, with the groove and every
-   setting kept. Each performance also has its own habits: how the hi-hat and
+   the same variation, picked at random from about nine quadrillion: new fills
+   and small details, with the groove and every setting kept. Each performance also has its own habits: how the hi-hat and
    the other players accent the beat, a kick before a beat now and then, many
    shapes of fill (tom runs up or down, flams, snare and kick together, rolls).
    When the next drummer region on the track is at least 20 Intensity louder
    (50 going to 100, say), the hi-hat builds over the last two bars before it:
    harder and harder, closed, then half open, then wide open into the crash.
-   Ordinary fills don't build, nor does a hi-hat that is off or moved to a
-   cymbal, and at Intensity 100 there are no builds, since
-   there is nothing to build to. It says "New performance of variation 2 of 6", and Control+Z
+   Ordinary fills don't build, nor does a hi-hat that is off, and at Intensity
+   100 there are no builds, since there is nothing to build to. It says only
+   "Regenerated performance", and Control+Z
    goes back to the one before. The same settings always play exactly the same
    notes, so a reopened project sounds the same. Projects from before 0.9.2
    open on variation 1, the groove they played before. (Since 0.9.4 Intensity
@@ -422,7 +426,12 @@ percussion, and shakers and tambourine.
    on the offbeats, the toms in fills or not, when a crash comes (where the
    region starts and after fills, at each section, every 2, 4 or 8 bars, on the
    followed track's strongest hits, or never) and which cymbal, and the ride's
-   bell on the beats. Choices a kit does not have are not offered (the Forge
+   bell on the beats. Fast songs: above 120 beats a minute the ride plays no
+   runs of sixteenth notes (its eighth notes stay, and the Pattern list leaves
+   out sixteenth-note patterns there); a drummer's hi-hat (rock, hard rock,
+   metal, jazz, funk, pop) does the same above 140. Drum machines (dubstep,
+   house, trap) keep their fast hi-hats, and steps you set by hand stay as you
+   set them. Choices a kit does not have are not offered (the Forge
    kits have no congas, for example). Bellows, Ember, Spark and Hammer have one
    piece, the part: its pattern (any variation of any of its styles), following
    the chord track or the key's own chord, an octave up or down, short, normal or
@@ -457,8 +466,8 @@ percussion, and shakers and tambourine.
 8. Turn into notes makes the performance into ordinary notes you can edit.
 9. New rhythm player region: adding a section adds no region to a player's
    track. Move the playhead into the new section, choose the player's track, and
-   press P in the Regions list (or the New rhythm player region button in
-   the Region group, or the Region menu). It fills the empty part of that section
+   press P in the Regions list (or Region menu, New rhythm player region). It
+   fills the empty part of that section
    with a new region of the same player and style, starting from the style's own
    settings and its first variation (not the settings of the region before).
    Then change anything you like in its editor (Enter).
@@ -471,7 +480,7 @@ percussion, and shakers and tambourine.
    ("Variation 3's", "None in the groove", "Eighth notes"); what it plays is in
    This piece now, at the top of the window. Changing a pattern or the
    variation, Follow or the track to follow says only that, not the whole
-   summary, and Reforge says only "New performance of variation 2 of 6".
+   summary, and Reforge says only "Regenerated performance".
 12. Every time signature: the players feel each bar in its own beats (three in
    3/4, two big beats in 6/8, four in 12/8, 2+2+3 eighths in 7/8, five in 5/4)
    and play their groove beat by beat, so a rock drummer in 3/4 plays the kick on
@@ -494,7 +503,7 @@ choose them with Change instrument, in the Guitar family.
 
 TRIMMING AND LOOPING REGIONS
 
-Alt+Enter on a region in the Regions list (or the Region settings button) sets
+Alt+Enter on a region in the Regions list (or Region menu, Region settings) sets
 where it starts and ends, and how many times it plays in a row, or "Loop until
 the next region" (until the next region on the track, or the end of the song).
 Trimming a region of notes removes the notes outside it (Control+Z brings them
@@ -532,7 +541,7 @@ the playhead, J joins, M mutes, F2 renames. Paste puts regions at the playhead a
 replaces whatever was there. The same keys cut, copy, paste and duplicate whole
 tracks in the Tracks list.
 
-Selection: Shift+F8 (or the Select check box) turns selection on, and Musician Forge
+Selection: Shift+F8 (or Edit menu, Select) turns selection on, and Musician Forge
 tells you how it works. Space then selects or unselects the track or region you
 are on; Cut, Copy, Paste, Duplicate, Delete, Mute and Solo work on everything you
 selected. Shift+F8 again turns selection off.

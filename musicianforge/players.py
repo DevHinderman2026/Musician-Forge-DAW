@@ -159,7 +159,10 @@ DEFAULTS = {"intensity": 60, "complexity": 40, "fills": 40, "fill_complexity": 5
 SETTING_RANGES = {"intensity": (0, 100), "complexity": (0, 100), "fills": (0, 100), "fill_complexity": (0, 100),
                   "swing": (0, 100),
                   "follow_amount": (0, 100), "sensitivity": (0, 100)}
-MAX_PERFORMANCE = 9999
+# Reforge picks a performance at random from this many (Russell, 21 Oct 2026: "9999 possibilities ... there should be
+# way more than that ... picked at random and it should be pretty much infinite"). 2**53 - 1 is the largest whole
+# number every JSON reader keeps exactly; a project saved before keeps its own number (1 to 9999 are in here too).
+MAX_PERFORMANCE = 2 ** 53 - 1
 # Rules a region plays by (Russell, 10 Oct 2026: "make this project the exception of all these changes unless I
 # manually change something"). 1: as before 10 Oct 2026, 3 PM (louder drums, fills only at phrase ends, no piece
 # Complexity of its own, fewer fill shapes, no hi-hat builds or per-performance habits); 2: today's. A region saved
@@ -169,6 +172,18 @@ RULES = 2
 
 def new_rules(settings):
     return settings.get("rules", 1) >= 2
+
+
+_CHANCE = random.SystemRandom()          # Reforge's own random numbers: never the same sequence twice
+
+
+def random_performance(current=None):
+    """A performance number picked at random, never the one playing now: which fills come where, their shapes, the
+    ghost notes, accents and voicings all follow from it, so each Reforge is a new draw from about nine quadrillion."""
+    while True:
+        number = _CHANCE.randint(1, MAX_PERFORMANCE)
+        if number != current:
+            return number
 
 
 def style_label(player, style):
@@ -381,6 +396,7 @@ class _Bar:
         self.index = index              # 0 for the region's first bar
         self.phrase_position = phrase_position
         self.last_in_region = last_in_region
+        self.tempo = None               # the fastest tempo in the bar (_bars sets it)
         lengths = pulse_lengths(meter[0], meter[1], steps)
         starts = [sum(lengths[:i]) for i in range(len(lengths))]
         self.pulses = list(zip(starts, lengths))             # (first sixteenth, length) of each beat
@@ -414,6 +430,16 @@ class _Bar:
         return self.steps
 
 
+def fastest_tempo(timeline, start, end):
+    """The fastest tempo (quarter notes a minute) anywhere in [start, end)."""
+    fastest = timeline.tempo_at_tick(start)
+    for change in timeline.tempos:
+        tick = timeline.position_to_tick(change.bar, change.beat)
+        if start < tick < end:
+            fastest = max(fastest, change.bpm)
+    return fastest
+
+
 def _bars(timeline, start, end):
     bars = []
     first = timeline.tick_to_bar(start)
@@ -430,6 +456,7 @@ def _bars(timeline, start, end):
         signature = timeline.time_signature_at_bar(number)
         bars.append(_Bar(number, timeline.bar_to_tick(number), bar_end, steps, beat_steps, index, 0, False,
                          (signature.numerator, signature.denominator)))
+        bars[-1].tempo = fastest_tempo(timeline, bar_start, bar_end)
         number += 1
         index += 1
     if bars:
@@ -1100,19 +1127,15 @@ class _KitPieces:
         if crash["which"] != "crash1":
             hits = self._crash_which(hits, crash["which"])
         hat = full["hat"]
-        if hat["on"] and hat["time_on"] != "hat":       # the hi-hat's rhythm played on a cymbal instead
-            target = dict((k, n) for k, _w, n in pp.TIME_ON)[hat["time_on"]]
-            hits = [(h[0], target, h[2], h[3]) if h[1] in (HAT, OPEN_HAT) and h[3] in (GROOVE, ROLL, HAND) else h
-                    for h in hits]
         sound = full["ride"]["ride_sound"]
-        if sound != "ride":          # Which ride: every ride note on that cymbal (the hi-hat's too, when moved there)
+        if sound != "ride":          # Which ride: every ride note on that cymbal
             target = dict((k, n) for k, _w, n in pp.RIDE_SOUNDS)[sound]
             hits = [(h[0], target, h[2], h[3]) if h[1] == RIDE else h for h in hits]
         if full["ride"]["bell"]:
             hits = [(h[0], RIDE_BELL, h[2], h[3]) if h[1] in (RIDE, pp.RIDE2) and h[0] == int(h[0])
                     and int(h[0]) in bar.beats else h for h in hits]
         offbeats = hat["open_offbeats"] or hat["pattern"] == "g:disco"     # disco sixteenths open their offbeats
-        if hat["on"] and hat["time_on"] == "hat" and (self.openness != "closed" or offbeats):
+        if hat["on"] and (self.openness != "closed" or offbeats):
             # half open by intensity keeps the full loudness: playing harder never makes a hit softer
             hits = self._open_hats(bar, hits, dict(hat, openness=self.openness, open_offbeats=offbeats,
                                                    soften=hat["openness"] != "intensity"))
@@ -1225,7 +1248,7 @@ FILL_KEEPS = (KICK, HAT, OPEN_HAT, RIDE, PEDAL, SHAKER, FORGE_SHAKER)   # what k
 # when hitting the snare drum"). In the styles a real drummer plays (not the drum machines of dubstep, house and trap,
 # nor the hand percussion styles), at most two hand sounds start together, and a crash takes the place of the hi-hat
 # or ride the same hand was keeping time on. The feet (kick, hi-hat pedal) are free. Hand-made steps are kept as set.
-LIVE_DRUMMER_STYLES = ("rock", "hard_rock", "metal", "jazz", "funk", "pop")
+LIVE_DRUMMER_STYLES = pp.LIVE_DRUMMER_STYLES
 _CRASHES = (CRASH, CRASH2, SPLASH, CHINA)
 _TIMEKEEPING = (HAT, OPEN_HAT, RIDE, RIDE_BELL, pp.RIDE2)
 _HAND_ORDER = [(_CRASHES, 0), ((SNARE, SNARE2, RIM), 1), ((TOM_HIGH, TOM_MID, TOM_LOW, TOM_FLOOR), 2),
@@ -1256,6 +1279,29 @@ def _two_hands(hits):
     return kept
 
 
+# the hand-played sounds of the pieces with a tempo limit for sixteenth notes (the hi-hat pedal is a foot)
+_SIXTEENTH_VOICES = {"ride": (RIDE, RIDE_BELL, pp.RIDE2), "hat": (HAT, OPEN_HAT)}
+
+
+def _eighths_when_fast(bar, hits, style_key):
+    """Above a piece's tempo limit (player_pieces.SIXTEENTHS_UP_TO; Russell, 21 Oct 2026: no sixteenth notes on the
+    ride over 120 beats a minute), the ride and hi-hat keep their eighth notes and leave out the sixteenths squeezed
+    between them, whatever made them (the style, a pattern, Complexity, a fill). A hit between the eighths with no
+    other hit of the piece a sixteenth away is not a run, and stays. Steps set by hand stay as set."""
+    for key, voices in _SIXTEENTH_VOICES.items():
+        if not pp.too_fast_for_sixteenths(key, style_key, bar.tempo):
+            continue
+        places = [float(h[0]) for h in hits if h[1] in voices and h[3] != CHOKE]
+
+        def in_a_run(step):
+            whole = int(step)
+            between = step != whole or not 0 <= whole < bar.steps or bar.map[whole] % 2 == 1
+            return between and sum(1 for other in places if abs(other - step) < 1.01) > 1
+
+        hits = [h for h in hits if not (h[1] in voices and h[3] not in (HAND, CHOKE) and in_a_run(float(h[0])))]
+    return hits
+
+
 def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, section_starts=(), for_steps=False,
                    next_intensity=None):
     """for_steps: for the Step pattern view, the performance as heard but with no fills (each bar's random choices
@@ -1275,8 +1321,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
     rules_now = new_rules(settings)
     chosen_intensity = settings["intensity"]
     builds_at_all = rules_now and style_key in HAT_BUILD_STYLES and chosen_intensity < 100 and not for_steps
-    # no hi-hat playing (turned off, or its rhythm moved to the ride or another cymbal): nothing to build (Russell)
-    builds_at_all = builds_at_all and kit.full["hat"]["on"] and kit.full["hat"]["time_on"] == "hat"
+    # no hi-hat playing (turned off): nothing to build (Russell)
+    builds_at_all = builds_at_all and kit.full["hat"]["on"]
     builds_up = (builds_at_all and next_intensity is not None and next_intensity - chosen_intensity >= BUILD_RISE)
     if rules_now:
         settings = dict(settings, intensity=drum_intensity(settings["intensity"]))   # how hard the notes are played
@@ -1381,6 +1427,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
             hits = others + kept_kicks + placed
         hits = kit.finish(bar, hits, fill_start, fill_bars, thinned if not for_steps else ())
         hits = kit.ghost_loudness(hits)
+        if rules_now:                           # (older regions play as they did until they are changed)
+            hits = _eighths_when_fast(bar, hits, style_key)
         # eighth swing's triplet feel, the Step pattern view too (it shows where the notes are heard), before the two
         # hands, so a note that joins the "and" still finds only two hands there
         hits = _triplet_lock(hits, bar, settings["swing"], grid, lambda h: h[1], stays=lambda h: h[3] == CHOKE)

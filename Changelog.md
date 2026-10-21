@@ -3,6 +3,35 @@
 Every version, newest first. Dates are when the version reached Russell's laptop.
 Git on the laptop keeps a snapshot of each tested version.
 
+## 0.9.5 (21 October 2026, in testing)
+
+What Russell asked for after trying the public beta.
+
+- **Every command is in the menus.** The groups of buttons (Transport, Track, Edit, Region, Song, File and
+  Settings) are gone, to reduce clutter: each did what an item of its menu does, and every one of those items is
+  in its menu (File, Edit, Region, Track, Transport, Song, Keyboard, Options). The Menus group stays, so Tab
+  still reaches every command: its buttons open the menus, and Alt opens the menu bar. F6 now goes Tracks,
+  Regions, the Musical keyboard, the Keyboard controls, the Menus group and Status.
+- **The Keyboard menu has every keyboard setting.** Layout, Scale, Octave, Velocity, and the Arpeggiator's
+  pattern, speed and octave range are submenus, the current choice checked; choosing one says it. The Keyboard
+  controls area stays as well (Russell's choice), for trying settings quickly while playing.
+- **Reforge picks at random from a near endless number of performances.** It used to count up, one performance
+  at a time, to 9,999. Now each Reforge picks one at random from about nine quadrillion, so the fills (where they
+  come and their shapes), the ghost notes, the accents and the voicings come out new every time. It says only
+  "Regenerated performance", also when several regions are reforged together. Control+Z still goes back.
+- **Each kit piece plays only its own sounds.** The Closed hi-hat no longer has "Play this rhythm on" (the ride,
+  its bell or the crash): the hi-hat plays on the hi-hat, in every kit and style. Its variations, patterns,
+  openness and the rest are still there, and the Ride still chooses between its own sounds (the ride, its bell, the
+  second ride). A project that had moved the hi-hat to a cymbal plays it on the hi-hat again.
+- **No sixteenth-note runs on the ride in fast songs.** Above 120 beats a minute the ride keeps its eighth notes
+  and leaves out the sixteenths between them, whatever made them (the style, a pattern, Complexity), and the
+  Pattern list leaves out ride patterns in sixteenths there (a pattern already chosen stays and says "eighth notes
+  above 120 beats a minute"). The same for a drummer's hi-hat (rock, hard rock, metal, jazz, funk, pop) above 140,
+  where two hands could still share sixteenths. Drum machines (dubstep, house, trap) keep their fast hi-hats, a
+  single hit between the eighths (jazz's dotted-eighth bell) stays, steps set by hand stay, and a tempo change
+  part way through a region counts from the bar it starts in. Regions from before 10 October that were never
+  changed keep playing as they did until you change them.
+
 ## 0.9.4 (9 October 2026, in testing)
 
 What Russell found trying 0.9.3, and one thing he asked for.

@@ -21,6 +21,7 @@ SETTING_WORDS = {"style": "style", "intensity": "intensity", "complexity": "comp
                  "follow_amount": "follow amount", "sensitivity": "hit sensitivity",
                  "play_after_reforge": "play after Reforge"}
 PIECE_COALESCE = ("busy", "level", "ghost_level", "octave")       # sliders and number boxes: one undo step per run
+REFORGE_WORDS = "Regenerated performance"     # what Reforge says, and nothing more (Russell, 21 Oct 2026)
 
 
 def for_each_selected_region(method):
@@ -45,7 +46,6 @@ def for_each_selected_region(method):
                                  merge=method.__name__ in ("update_player", "update_piece"), merge_key=key):
                 # a Reforge plays its region once every region has its new performance (below)
                 result = method(self, track_id, index, *args, **(dict(kwargs, play=False) if reforging else kwargs))
-                said = getattr(self, "last_announcement", None)
                 # the others say nothing, and a Reforge plays only the region in the editor (the final review,
                 # 10 Oct 2026: each one took the playing over in turn, so the last region of the selection played)
                 quiet = dict(kwargs, speak=False)
@@ -61,8 +61,7 @@ def for_each_selected_region(method):
                         method(self, track_id, other, *args, **quiet)
                     except ValueError:
                         stayed += 1              # a variation its style does not have, hand-made steps...
-                if reforging and said:
-                    self.announce("{}, in {} regions".format(said, len(group[1])))
+                # a Reforge of several says only "Regenerated performance", as one does (Russell, 21 Oct 2026)
                 if stayed:                       # said, so a change that missed some regions is never a surprise
                     self.announce("{} of the {} regions could not take that and stayed as {} {}".format(
                         stayed, len(group[1]), "it" if stayed == 1 else "they", "was" if stayed == 1 else "were"))
@@ -389,12 +388,11 @@ class MusicMixin:
         neither say anything nor take over the playing from the region in the editor."""
         track, region = self._player_region(track_id, index)
         settings = players.clean_settings(region.player)
-        settings["performance"] = settings["performance"] % players.MAX_PERFORMANCE + 1
+        settings["performance"] = players.random_performance(settings["performance"])
         with self.edit("reforge"):
             settings["rules"] = players.RULES               # changed by hand: it plays by today's rules
             self.song.track_by_id(track_id).note_regions[index].player = settings
-        text = "New performance of variation {} of {}".format(settings["variation"],      # short (10 Oct 2026)
-                                                              players.variation_count(settings))
+        text = REFORGE_WORDS                    # all it says (Russell, 21 Oct 2026)
         if speak:
             self.announce(text)
         if play and settings.get("play_after_reforge", True):
