@@ -70,6 +70,27 @@ def note_text(parent, text, width=NOTE_WIDTH):
     return label
 
 
+def set_note_text(label, text, width=NOTE_WIDTH):
+    """Give a note made with note_text new words, wrapped to `width`. wx's own Wrap does nothing when it is asked for
+    the same width a second time, even after SetLabel, so a note whose words change (the Chord strips window's) kept
+    one line 721 pixels wide on Windows (Run Tests, 21 Oct 2026). Here the words are wrapped first, measured in the
+    label's own font, then set."""
+    limit = label.GetParent().FromDIP(width)
+    lines = []
+    for paragraph in text.split("\n"):
+        line = ""
+        for word in paragraph.split(" "):
+            candidate = word if not line else line + " " + word
+            if line and label.GetTextExtent(candidate)[0] > limit:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+    label.SetLabel("\n".join(lines))
+    return label
+
+
 def text_ctrl(parent, value="", **kw):
     return wx.TextCtrl(parent, value=value, **kw)
 

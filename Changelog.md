@@ -1,11 +1,55 @@
-# Musician Forge changelog
+# Musician Forge release notes
 
-Every version, newest first. Dates are when the version reached Russell's laptop.
-Git on the laptop keeps a snapshot of each tested version.
+Every version of Musician Forge, newest first, from the first working version on, so you can follow how it was
+developed. Each version starts with its release notes: new features and improvements, then bug fixes. The details
+of each version follow. Dates are when the version reached Russell's laptop.
 
 ## 0.9.5 (21 October 2026, in testing)
 
-What Russell asked for after trying the public beta: immediate bug fixes and feature improvements.
+### New features and improvements
+
+- Every command now lives in the menus (File, Edit, Region, Track, Transport, Song, Keyboard, Options and Help),
+  replacing the separate groups of buttons, for a cleaner and more consistent window. The Menus group's buttons
+  still let Tab reach every menu.
+- The Keyboard menu includes every musical keyboard setting as a submenu, with the current choice checked: Layout,
+  Scale, Octave, Velocity, and the Arpeggiator's pattern, speed and octave range. The Keyboard controls area remains
+  for quick changes while playing.
+- Reforge picks each new performance at random from a near endless number, so fills, ghost notes, accents and
+  voicings come out new every time.
+- Reforge says only "Regenerated performance", including when several regions are reforged together.
+- Undo and Redo step back and forth through each Reforge, one performance at a time.
+- Each drum kit piece plays only its own sounds, in every kit and style; the hi-hat can no longer be moved onto the
+  ride or crash.
+- Above 120 beats a minute the ride plays eighth notes instead of runs of sixteenth notes, and sixteenth-note ride
+  patterns leave its Pattern list.
+- Above 140 beats a minute, a live drummer's hi-hat (rock, hard rock, metal, jazz, funk and pop) does the same.
+  Drum machine styles keep their fast hi-hats.
+- Export audio can fade out at the end of the song, over 5 to 30 seconds (10 to start). It is remembered, and
+  tracks exported on their own all get the same fade, so they line up.
+- When an export distorts, Musician Forge says where (bars and sections), by how many decibels, which tracks are
+  loudest there, and the volume each would need.
+- Audio exports say how far they have got, every 10 percent.
+
+### Bug fixes
+
+- Reforge now regenerates the way it was supposed to, instead of counting up through 9,999 numbered performances.
+- Fixes a slight pop at the start of audio recordings when the microphone starts.
+- Fixes an issue where the explanation in the Chord strips window was too wide for the window.
+- Fixes a test that failed only on Windows (the program itself was not affected).
+- The Linux testing setup now catches these Windows-only problems before a Windows test run.
+
+### In detail
+
+Still a public beta, in testing. What Russell asked for after trying it: immediate bug fixes and feature
+improvements, then important bug fixes and improvements from his Windows test run.
+
+**Important bug fixes and improvements (21 October, 3:30 AM),** from Run Tests on Windows (2 problems; Check Accessibility found none):
+- **The Chord strips window's note fits the window again.** Its explanation (which chords the strips hold) was one
+  line 721 pixels wide, wider than the window should be. Windows did not re-wrap it after the words changed; it is
+  now wrapped by Musician Forge itself.
+- **A window test that read a menu after it had closed** was fixed (the program was fine; only the test failed on
+  Windows). The Linux stand-in the tests also run on now refuses both of these, as Windows does, so they are caught
+  before a Windows run.
 
 - **Fade out at the end of exports.** Export audio has "Fade out at the end of the song" next to the ring-out,
   with a slider from 5 to 30 seconds (10 to start), remembered for next time. The fade ends exactly where the song
@@ -32,7 +76,8 @@ What Russell asked for after trying the public beta: immediate bug fixes and fea
 - **The Keyboard menu has every keyboard setting.** Layout, Scale, Octave, Velocity, and the Arpeggiator's
   pattern, speed and octave range are submenus, the current choice checked; choosing one says it. The Keyboard
   controls area stays as well (Russell's choice), for trying settings quickly while playing.
-- **Reforge picks at random from a near endless number of performances.** It used to count up, one performance
+- **Reforge now regenerates the way it was supposed to: at random, from a near endless number of performances.**
+  It used to count up, one performance
   at a time, to 9,999. Now each Reforge picks one at random from about nine quadrillion, so the fills (where they
   come and their shapes), the ghost notes, the accents and the voicings come out new every time. It says only
   "Regenerated performance", also when several regions are reforged together. Control+Z still goes back.
@@ -50,6 +95,57 @@ What Russell asked for after trying the public beta: immediate bug fixes and fea
   changed keep playing as they did until you change them.
 
 ## 0.9.4 (9 October 2026, in testing)
+
+### New features and improvements
+
+- Export tracks on their own: every track you can hear, or only the tracks you choose, each as its own WAV file.
+- MIDI export works with other programs: General MIDI instruments, a silent chord track, and the song's tempos, time
+  signatures, keys and section markers. MIDI import reads all of these back.
+- Rhythm players: Complexity sliders for each kit piece and part, Fill amount and Fill complexity for every player,
+  Loudness sliders, softer drums, a Ghost note loudness slider, and more variety on Reforge.
+- The hi-hat builds over the last two bars into a louder drummer region.
+- Edit several rhythm player regions at once.
+- Rhythm players play in every time signature, eighth swing plays in triplets, and Swing feel chooses eighth or
+  sixteenth notes.
+- Intensity now changes only how hard a player plays; Complexity changes how busy.
+- A drummer plays with two hands: no more than two hand sounds at once in the live drummer styles.
+- Your own chord strips (Control+Shift+J).
+- Time signature changes keep each section's bars, and everything stays in its bar.
+- New rhythm player region: P in the Regions list fills an empty part of a section.
+- Quantize chooses the region you are on, the selected track or all tracks; Space selects notes in the event list;
+  every key of a list inside a window also has a button.
+- Nudge and trim regions from the keyboard.
+- A project opens where you saved it; Enter opens a recent project; Browse projects; a shorter window title.
+- The sound follows headphones plugged in or out.
+- The crash-recovery copy is kept up to date a few seconds after every change.
+- Duplicating a section puts the copy at the end of the song.
+- A Menus group and a Settings group you can Tab to, and an Import file button.
+- Go to start and rewinding stay in the section you are in.
+- Remove Musician Forge, which never touches your projects.
+- Only one Musician Forge runs at a time; windows bigger than the screen scroll; the rhythm player editor fits the
+  screen.
+- Musician Forge is free software under the MIT License.
+
+### Bug fixes
+
+- Fixes Kit pieces changes not being heard until some other change was made.
+- Fixes Ghost note loudness other than 50 making the rhythm player windows say "Something went wrong".
+- Fixes the event list moving your selection onto other notes, so Delete could remove notes you had not selected.
+- Fixes half-open hi-hats ringing wide open with eighth-note swing.
+- Fixes cymbals a kit lacks being silent: they now play on the nearest cymbal the kit has.
+- Fixes Close project, then Yes, not always saving.
+- Fixes Delete in selection mode deleting only the track you were on; regions now always ask first.
+- Fixes a pop when the microphone starts.
+- Fixes drum kits listed among other instrument families.
+- Fixes Reforge on several regions playing the last region instead of the one in the editor.
+- Fixes going silent without a word when switching to headphones failed.
+- Fixes a half-made zip file left behind when a track export failed.
+- Fixes the help naming Insert (screen readers keep it for themselves) instead of Alt+A.
+- Fixes unsaved changes being lost when Windows shuts down or signs out.
+- Fixes the distortion warning suggesting the master volume, which exports do not use.
+- Fixes "(unsaved changes)" being read in the title every time a window closed.
+
+### In detail
 
 What Russell found trying 0.9.3, and one thing he asked for.
 
@@ -244,6 +340,35 @@ that open every window and make thousands of random changes. What it found, all 
 
 ## 0.9.3 (9 October 2026, in testing)
 
+### New features and improvements
+
+- Run Tests says how far it is and stops a test that is stuck, so the run goes on.
+- Check Accessibility measures every window against the screen.
+- The project window fits the screen and scrolls, and long notes in every window wrap.
+- The public beta: the main branch for users, with the Guide for Testers; testers email Musician Forge's log.
+
+### Bug fixes
+
+- Fixes a take being lost when the window was closed, or a new project opened, while recording.
+- Fixes Control+Z during a looping take also taking back the change made before the take.
+- Fixes chord strips played legato cutting off shared notes.
+- Fixes the event list and region windows changing the wrong note or region when opened during a take.
+- Fixes a note struck again before it ended being cut short.
+- Fixes an effect staying silent or noisy after something impossible was fed into it.
+- Fixes pitch correction on a very short recording stopping later changes from being heard.
+- Fixes quantize moving notes past the bar line with grids that do not divide the bar.
+- Fixes windows closing on a mistyped number and losing what was typed.
+- Fixes moving a tempo, time signature or key change to a beat its bar lacks deleting it.
+- Fixes hand-made steps past the 64th being dropped in long bars.
+- Fixes opening a damaged project's backup putting the wrong name in Recent projects.
+- Fixes saving failing while OneDrive or an antivirus program held the file.
+- Fixes settings from a newer version, or edited by hand, stopping Musician Forge from starting.
+- Fixes errors nothing else caught being silent.
+- Fixes stray asterisks in What's new being read as "star".
+- Fixes the Windows voice speaking over itself without a screen reader.
+
+### In detail
+
 A review of the whole program, line by line, after the 9 October Windows test run. Every bug it found is fixed,
 each with a test.
 
@@ -328,6 +453,24 @@ wxPython), each fix with a test that fails on 0.9.2 where that could be shown. N
 
 ## 0.9.2 (9 October 2026, in testing)
 
+### New features and improvements
+
+- Every rhythm player style has its own variations, each a different groove or part, described in words.
+- Reforge keeps the variation and plays a new performance of the same groove.
+- Kit pieces: every piece of the drum kit, and the part of the other players, has settings of its own: pattern,
+  complexity, loudness and its own extras.
+- Step pattern: an accessible step sequencer for any piece.
+- A warning before changing the variation resets your hand-made steps.
+- A rebuilt, heavier Forge Dubstep Kit.
+
+### Bug fixes
+
+- Fixes a song made only of rhythm players saying there was nothing to export.
+- Fixes a damaged project file leaving a project stuck.
+- Fixes the Step pattern not starting from what is heard, and editing a part's step changing the whole part.
+
+### In detail
+
 **Rhythm players: real variations, and a Reforge that keeps them**
 - **Every style has its own variations**, at least four (Anvil's dubstep and rock have six), each a different
   groove or part, worked out from how each kind of music is played and described in words: "Variation 2 of 6:
@@ -392,6 +535,25 @@ times; its findings are fixed with tests. The most serious were in the Step patt
 from what is heard, and editing a part's step changed the whole part. Not yet run on Windows.
 
 ## 0.9.1 (9 October 2026, in testing)
+
+### New features and improvements
+
+- F6 and Shift+F6 jump from area to area in the project window.
+- The track and region you are on end with "selected" in their lists.
+- Import audio files of every common kind (WAV, MP3, M4A, AAC, FLAC, Ogg, Opus, AIFF, Apple Lossless, Windows Media
+  Audio), and MIDI files.
+- Low-latency hearing yourself (Windows 10 and later).
+- Raw microphone sound, without Windows' noise reduction.
+- The measured recording delay is remembered for each output and microphone.
+- Clearer pitch correction.
+
+### Bug fixes
+
+- Fixes a take seeming lost when recording past the end of a looping section.
+- Fixes hearing yourself staying behind after a hiccup.
+- Fixes Run Tests' guitar pack stage printing a harmless warning.
+
+### In detail
 
 **Moving around the project window**
 - **F6 and Shift+F6** jump to the next and previous area, going round in a circle in the order they are on
@@ -465,6 +627,28 @@ Windows-only parts (low-latency streams, Media Foundation import, raw microphone
 run in Run Tests on the laptop.
 
 ## 0.9.0 (8 October 2026, in testing)
+
+### New features and improvements
+
+- The program is now called Musician Forge (it was Melody Forge); your songs and settings move with it.
+- Automation: volume, pan and effect settings can change over time, and Write automation records them as the song
+  plays.
+- A project can have up to 100 tracks.
+- Run Tests checks the sound engine step by step, and runs each test file on its own.
+- Every menu item has its own underlined letter.
+
+### Bug fixes
+
+- Fixes Musician Forge closing on Windows as soon as it played: Install or Update now installs FluidSynth 2.5.7,
+  and Musician Forge refuses the builds that crash.
+- Fixes changing a track's volume, pan or effects while playing cutting off notes.
+- Fixes a stutter when a guitar pack was chosen while the song played.
+- Fixes swing leaving the notes between the swung ones in place, which roughened drum fills.
+- Fixes Region settings trimming a region that was not changed.
+- Fixes Install or Update showing an old report when its self check was ended by Windows.
+- Fixes Run Tests' guitar pack stage staying silent until it ended.
+
+### In detail
 
 **New name (8 October 2026)**
 - The program, which was called Melody Forge, is now **Musician Forge**. The launchers are "Install or Update
@@ -540,6 +724,22 @@ run in Run Tests on the laptop.
 
 ## 0.8.0 (8 October 2026, in testing)
 
+### New features and improvements
+
+- Five rhythm players: Anvil (drums), Bellows (bass), Ember (keys), Spark (synth) and Hammer (guitar).
+- Eleven drummer styles, and two new kits of Musician Forge's own: Forge House and Forge Trap.
+- A rhythm player editor: style, patch, intensity, complexity, fills, swing and Follow.
+- Reforge, Follow (lock to another track, even a recording) and Turn into notes.
+- The chord track: the song's chords, which rhythm players play.
+- Two distorted electric guitar packs.
+- Trim and loop regions (Region settings).
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 **Rhythm players**
 - Five rhythm players play parts for you: Anvil (drums), Bellows (bass), Ember
   (keys), Spark (synth) and Hammer (guitar). Control+Shift+R, or the New rhythm
@@ -586,6 +786,20 @@ run in Run Tests on the laptop.
 
 ## 0.7.0 (8 October 2026, in testing)
 
+### New features and improvements
+
+- Effects on every track: EQ, compressor, distortion (with a bit crusher), delay and reverb, plus pitch correction
+  on audio tracks, with 36 presets.
+- Measure the recording delay, so recordings land on the beat.
+- Separate timing adjustments for the musical keyboard and the microphone.
+- Each track's sound is processed on its own.
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 **Effects on every track**
 - Control+F, or the new Effects button in the Track group, opens the selected
   track's effects. The sound goes through them from top to bottom, then through
@@ -619,6 +833,20 @@ run in Run Tests on the laptop.
 
 ## 0.6.0 (7 October 2026, in testing)
 
+### New features and improvements
+
+- Regions on every track, listed after Tracks, with cut, copy, paste, duplicate, split, join, mute, rename and
+  move.
+- Selection mode (Shift+F8): cut, copy, paste, duplicate, delete, mute and solo work on everything selected.
+- Whole tracks can be cut, copied, pasted and duplicated.
+- The help recommends wired headphones.
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 **Regions**
 - Every track now has regions, listed right after Tracks in the project window
   (Control+5). Each region says its name, its sections, where it starts and ends,
@@ -649,6 +877,17 @@ run in Run Tests on the laptop.
 
 ## 0.5.1 (7 October 2026, in testing)
 
+### New features and improvements
+
+- M4A export (AAC), about a tenth of the size of WAV, good for sharing and Apple devices.
+- The install self check tests M4A export.
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 **M4A export**
 - Export audio (Control+E, or the Export audio button) now offers two formats:
   WAV (full quality) and M4A (AAC at 192 kbps, about a tenth of the size, good
@@ -659,6 +898,22 @@ run in Run Tests on the laptop.
 - The install self check tests M4A export too.
 
 ## 0.5.0 (7 October 2026, in testing)
+
+### New features and improvements
+
+- Audio tracks: record your voice or any instrument, with takes, punch-in and a recordings list.
+- Import WAV files.
+- Choose and test the microphone in Audio settings.
+- A folder for each project, with its recordings and exports.
+- Musician Forge's own Save project as and Open project windows.
+- Let the sound ring out after the end of an export.
+- Move up and Move down buttons for tracks.
+
+### Bug fixes
+
+- Fixes the keyboard controls' labels being shifted by one, so screen readers named the boxes wrongly.
+
+### In detail
 
 **Audio tracks: record your voice or any instrument**
 - New audio track (Control+U, or the New audio track button). R records from the
@@ -707,6 +962,18 @@ run in Run Tests on the laptop.
 
 ## 0.4.0 (7 October 2026, in testing)
 
+### New features and improvements
+
+- The Forge Dubstep Kit: drum sounds made inside Musician Forge, with no outside samples.
+- The Forge 808 Sub bass.
+- The drum layout speaks the kit's own sound names.
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 **Musician Forge's own sounds**
 - Forge Dubstep Kit (Drum Kits): hard-hitting sounds made from scratch inside
   Musician Forge, with no outside samples and no license limits. Kicks with a soft
@@ -722,6 +989,22 @@ run in Run Tests on the laptop.
   loads next to GeneralUser GS. The install self check tests it too.
 
 ## 0.3.0 (7 October 2026, in testing)
+
+### New features and improvements
+
+- A start screen to choose a project, and Close project.
+- Show keyboard controls: layout, scale, octave, velocity and the arpeggiator, all reachable with Tab.
+- The Chord strips layout and a scale choice for the keyboard.
+- The arpeggiator.
+- An Edit group and a Help group.
+
+### Bug fixes
+
+- Fixes R and Enter starting a recording or jumping to the start while typing in a list or box.
+- Fixes key names that did not match their key signatures (E flat minor showed 6 sharps).
+- Fixes deleted or moved projects staying in Recent projects.
+
+### In detail
 
 **Start screen and projects**
 - Musician Forge opens on a start screen, "Choose a project", with New project,
@@ -767,6 +1050,19 @@ run in Run Tests on the laptop.
 
 ## 0.2.1 (7 October 2026)
 
+### New features and improvements
+
+- After every save or export, Musician Forge says which folder it went into.
+- Every save, open, export and recovery is written to the log.
+
+### Bug fixes
+
+- Fixes an export going into the wrong folder: Save As and exports always start in the project's folder or in
+  Musician Forge Songs.
+- Fixes the tests creating folders in the real Documents folder.
+
+### In detail
+
 - Save As and both exports always start in the project's own folder or in
   Musician Forge Songs. The last export folder is no longer remembered (an export
   had gone into Documents\.claude).
@@ -781,6 +1077,19 @@ run in Run Tests on the laptop.
 
 ## 0.2 (7 October 2026)
 
+### New features and improvements
+
+- Buttons in named groups.
+- Song sections that loop, with All sections to play the whole song, and recording that layers each pass.
+- Rewind and Forward say when you reach a section's edge.
+- Quiet recording: nothing is spoken when recording or playback starts.
+
+### Bug fixes
+
+- No bug fixes in this version.
+
+### In detail
+
 - Buttons in named groups: Transport (with Rewind and Forward, one bar each),
   Track, Song and File.
 - Song sections: every new project is one 8-bar section; no limit
@@ -794,6 +1103,18 @@ run in Run Tests on the laptop.
   controls, 0 problems; 0 audio dropouts.
 
 ## 0.1 (7 October 2026)
+
+### New features and improvements
+
+- The first working version: musical typing on the computer keyboard (piano, scale and drum layouts), FluidSynth
+  with GeneralUser GS, tempo, time signature and key changes, the event list, quantize, WAV and MIDI export,
+  autosave and crash recovery, and support for NVDA, JAWS and Narrator.
+
+### Bug fixes
+
+- None: the first version.
+
+### In detail
 
 - First working version: laptop-key musical typing (piano layout), scale
   mode, drum layout, FluidSynth with GeneralUser GS, tempo, time signature and

@@ -13,7 +13,7 @@ from .. import player_variations as pv
 from ..session_music import FOLLOW_CHOICES, FOLLOW_NAMES, HandMadeSteps
 from ..timeline import MAX_NUMERATOR
 from .common import (DecimalField, Form, ask_values, choice_ctrl, end_dialog, finish_dialog, fit_to_screen, note_text,
-                     show_error, show_items, silence_name, slider_ctrl, spin_ctrl)
+                     set_note_text, show_error, show_items, silence_name, slider_ctrl, spin_ctrl)
 from .effects_dialogs import percent_label
 
 # the highest beat a beat box takes: the last beat of the longest bar (32/16 time), with decimals; each bar's own
@@ -303,11 +303,10 @@ class ChordStripsDialog(wx.Dialog):
         self.list.SetSelection(max(0, min(7, here if here != wx.NOT_FOUND else 0)))
         own = bool(self.session.song.strips)
         self.buttons["reset"].Enable(own)
-        self.note.SetLabel("These are your own chords; they stay as they are when the key changes. Number keys 1 to 8 "
-                           "play their bass notes." if own else
-                           "These are the song key's chords; they follow key changes. Change one to make them your "
-                           "own. Number keys 1 to 8 play their bass notes.")
-        self.note.Wrap(self.FromDIP(460))
+        set_note_text(self.note, "These are your own chords; they stay as they are when the key changes. Number keys 1 "
+                                 "to 8 play their bass notes." if own else
+                                 "These are the song key's chords; they follow key changes. Change one to make them "
+                                 "your own. Number keys 1 to 8 play their bass notes.", width=460)
 
     def _run(self, action):
         try:
