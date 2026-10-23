@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import urllib.request
@@ -37,15 +38,28 @@ VENV_PY = os.path.join(VENV_DIR, "Scripts", "python.exe")
 FLUID_DIR = os.path.join(DATA_DIR, "fluidsynth")
 SF_DIR = os.path.join(DATA_DIR, "soundfonts")
 LOG_PATH = os.path.join(PROGRAM_DIR, "logs", "install_log.txt")
+# Written when an install starts and removed once everything Musician Forge needs to start is installed; while it is
+# there, "Start Musician Forge" will not start (an install that stopped partway left a program that closed at once,
+# without a word). An install from before 0.9.7 has no marker at all and starts as before (23 Oct 2026: the first
+# version of this check waited for an "install finished" file older installs never had, so Start refused them).
+UNFINISHED_MARKER = os.path.join(DATA_DIR, "install_unfinished.json")
+# What "Install or Update Musician Forge" and get_python.bat did to find Python (and to install it with winget).
+PYTHON_SETUP_LOG = os.path.join(tempfile.gettempdir(), "musicianforge_python_setup.txt")
 
-SOUNDFONT_URL = "https://github.com/mrbumpy409/GeneralUser-GS/raw/main/GeneralUser-GS.sf2"
-SOUNDFONT_LICENSE_URL = "https://github.com/mrbumpy409/GeneralUser-GS/raw/main/documentation/LICENSE.txt"
+# GeneralUser GS 2.0.3, pinned to the commit that added it ("Update SoundFont to v2.0.3", 22 Feb 2026), so a newer
+# version on main (another size) can never make every install fail its size check
+SOUNDFONT_COMMIT = "97049183643d5fc5a9322a69c5b09efb667c6c3a"
+SOUNDFONT_URL = "https://github.com/mrbumpy409/GeneralUser-GS/raw/{}/GeneralUser-GS.sf2".format(SOUNDFONT_COMMIT)
+SOUNDFONT_LICENSE_URL = "https://github.com/mrbumpy409/GeneralUser-GS/raw/{}/documentation/LICENSE.txt".format(
+    SOUNDFONT_COMMIT)
 SOUNDFONT_SIZE = 32319396
 USER_AGENT = "MusicianForge-installer/1.0"
 TOTAL_STEPS = 7
 
 sys.path.insert(0, PROGRAM_DIR)
-from musicianforge import fluidbuild, legacy, packs  # noqa: E402  (standard library only)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_python  # noqa: E402
+from musicianforge import __version__, fluidbuild, legacy, packs  # noqa: E402  (standard library only)
 
 # FluidSynth 2.5.7, the glib download: every 2.6 Windows download (and the "cpp11" 2.5 ones) crashes as soon
 # as tracks have their own outputs (see musicianforge\fluidbuild.py; found 8 Oct 2026).
@@ -53,6 +67,7 @@ FLUIDSYNTH_VERSION = fluidbuild.INSTALL_VERSION
 FLUIDSYNTH_URL = fluidbuild.INSTALL_URL
 
 _log_file = None
+LOGS_DIR = None         # set when the Musician Forge folder cannot be written to (open_log)
 
 
 def say(message):
@@ -73,12 +88,20 @@ def exit_text(code):
     return "0x{:08X}".format(code & 0xFFFFFFFF) if code < 0 or code > 255 else str(code)
 
 
+def child_environment():
+    """For the programs the installer runs: Python prints in UTF-8, so a name such as José or a screen reader's
+    name with an accent cannot stop the self check (a pipe is cp1252 otherwise, which has no room for many letters)."""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    env["MUSICIANFORGE_LOGS_DIR"] = LOGS_DIR or os.path.join(PROGRAM_DIR, "logs")   # where selfcheck.py reports
+    return env
+
+
 def run_logged(cmd, timeout=1800):
     """Run a program and write everything it prints to the log. Returns its exit code; what it printed
     stays in run_logged.output."""
     write_log("RUN: " + " ".join('"{}"'.format(c) if " " in c else c for c in cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace", env=child_environment())
     run_logged.output = proc.stdout
     write_log(proc.stdout)
     write_log(proc.stderr)
@@ -126,33 +149,59 @@ def download(url, dest, expected_size=None, label="file"):
     raise RuntimeError("Could not download {}: {}".format(label, last_error))
 
 
-STORE_PYTHON_MESSAGE = (
-    "This computer's Python comes from the Microsoft Store. The Store version quietly moves the files "
-    "Musician Forge sets up into a hidden folder of its own, so they cannot run (the log says "
-    "\"failed to locate pyvenv.cfg\"). Please install Python from python.org: choose Install Now, which "
-    "does not need administrator rights. Then run Install or Update Musician Forge again.")
-
-
 def is_store_python(executable=None, prefix=None):
     """True for the Microsoft Store's Python, which redirects new files in AppData to a private folder."""
-    places = " ".join([executable or sys.executable, prefix or sys.prefix, getattr(sys, "_base_executable", "")])
-    return "WindowsApps" in places or "PythonSoftwareFoundation.Python" in places
+    return check_python.is_store_python(executable, prefix)
+
+
+def python_problem():
+    """Why this Python cannot be used (check_python.py), or None. Python 3.15 came out on 9 Oct 2026 and the py
+    launcher picked it, but wxPython 4.3.1 has no build for it; numpy 2.5.3 needs 3.12 or newer."""
+    code, sentence = check_python.problem(store=is_store_python())
+    if code == check_python.OK:
+        return None
+    return "{} {} Then run Install or Update Musician Forge again.".format(sentence, check_python.INSTALL_WORDS)
+
+
+VERSION_CODE = ("import sys, sysconfig; "
+                "print('%d.%d %s' % (sys.version_info[0], sys.version_info[1], sysconfig.get_platform()))")
+
+
+def environment_problem():
+    """Why Musician Forge's own environment must be made again, or None when it can be kept: it is missing or does
+    not start, or it was made with another Python than this one (an older install with Python 3.15 kept failing,
+    because the environment it had made was kept)."""
+    if not os.path.exists(VENV_PY):
+        return "there is none yet" if not os.path.isdir(VENV_DIR) else "it is incomplete"
+    if run_logged([VENV_PY, "-c", VERSION_CODE]) != 0:
+        return "it does not start"
+    found = run_logged.output.strip().split()
+    if len(found) != 2:
+        return "it did not say which Python it is"
+    wanted = "%d.%d" % sys.version_info[:2]
+    platform_name = sysconfig.get_platform()
+    if found[0] != wanted:
+        return "it was made with Python {}, and this install uses Python {}".format(found[0], wanted)
+    if found[1] != platform_name:
+        return "it was made for {}, and this install uses {}".format(found[1], platform_name)
+    return None
 
 
 def step_environment():
     say("Step 1 of 7: setting up Musician Forge's own Python environment.")
-    if is_store_python():
-        raise RuntimeError(STORE_PYTHON_MESSAGE)
-    if sys.version_info < (3, 10):
-        raise RuntimeError("Python 3.10 or newer is needed; this is {}".format(sys.version))
-    if sys.maxsize <= 2 ** 32:
-        raise RuntimeError("64-bit Python is needed")
+    problem = python_problem()
+    if problem:
+        raise RuntimeError(problem)
     os.makedirs(DATA_DIR, exist_ok=True)
-    healthy = os.path.exists(VENV_PY) and run_logged([VENV_PY, "-c", "import sys; print(sys.version)"]) == 0
-    if not healthy:
+    why = environment_problem()
+    if why:
+        write_log("The Python environment is made new: {}.".format(why))
         if os.path.isdir(VENV_DIR):
-            write_log("Existing environment is broken; rebuilding it.")
+            say("  Making Musician Forge's Python environment again: {}.".format(why))
             shutil.rmtree(VENV_DIR, ignore_errors=True)
+            if os.path.isdir(VENV_DIR):
+                raise RuntimeError("The old Python environment could not be removed; Musician Forge may still be "
+                                   "open. Close it, then run Install or Update Musician Forge again")
         if run_logged([sys.executable, "-m", "venv", VENV_DIR]) != 0:
             raise RuntimeError("Could not create the Python environment")
     say("  Environment ready.")
@@ -288,11 +337,20 @@ def step_fluidsynth():
             shutil.rmtree(new_dir, ignore_errors=True)
         raise
     finally:
-        if os.path.exists(tmp_zip):
-            os.remove(tmp_zip)
+        remove_quietly(tmp_zip)
     swap_in(new_dir)
     remove_leftovers()
     say("  FluidSynth {} installed.".format(FLUIDSYNTH_VERSION))
+
+
+def remove_quietly(path):
+    """Remove a downloaded file that is no longer needed. Windows (an antivirus program checking it) can refuse for
+    a moment; that is written in the log and the install goes on, instead of stopping with an error."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as exc:
+        write_log("Removing {} failed: {!r}".format(path, exc))
 
 
 def soundfont_ok(path):
@@ -350,7 +408,7 @@ def guitar_pack_step(number, pack):
 
 def step_selfcheck():
     say("Step 7 of 7: checking that everything works.")
-    logs = os.path.join(PROGRAM_DIR, "logs")
+    logs = LOGS_DIR or os.path.join(PROGRAM_DIR, "logs")
     report = os.path.join(logs, "selfcheck_log.txt")
     trace = os.path.join(logs, "selfcheck_trace.txt")
     for stale in (report, trace):       # 8 Oct: an old report was shown as if it were this run's result
@@ -426,13 +484,56 @@ def trace_tail(path, count=3):
         return []
 
 
+def open_log():
+    """The install log, in the Musician Forge folder's logs folder; when that folder cannot be written to (a
+    read-only folder, or one Windows protects), in %LOCALAPPDATA%\MusicianForge\logs, as Musician Forge's own log."""
+    global LOG_PATH, LOGS_DIR
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        return open(LOG_PATH, "w", encoding="utf-8"), False
+    except OSError:
+        LOGS_DIR = os.path.join(DATA_DIR, "logs")
+        LOG_PATH = os.path.join(LOGS_DIR, "install_log.txt")
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        return open(LOG_PATH, "w", encoding="utf-8"), True
+
+
+def copy_python_setup_log():
+    """What the batch files did to find (and perhaps install) Python, into this log."""
+    try:
+        with open(PYTHON_SETUP_LOG, encoding="utf-8", errors="replace") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return
+    if text:
+        write_log("Finding Python:\n" + text)
+
+
+def mark_finished(done):
+    """done False: an install is under way, so Start waits for it (the marker is written); True: everything Musician
+    Forge needs to start is in place (the marker goes)."""
+    try:
+        if not done:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(UNFINISHED_MARKER, "w", encoding="utf-8") as fh:
+                json.dump({"version": __version__, "python": sys.version.split()[0],
+                           "started": datetime.datetime.now().isoformat(timespec="seconds")}, fh)
+        elif os.path.exists(UNFINISHED_MARKER):
+            os.remove(UNFINISHED_MARKER)
+    except OSError as exc:
+        write_log("The install marker {} could not be {}: {!r}".format(
+            UNFINISHED_MARKER, "removed" if done else "written", exc))
+
+
 def main():
     global _log_file
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-    _log_file = open(LOG_PATH, "w", encoding="utf-8")
+    _log_file, moved_log = open_log()
     write_log("Musician Forge installer, Python {}".format(sys.version))
     write_log("Program folder: {}".format(PROGRAM_DIR))
     write_log("Data folder: {}".format(DATA_DIR))
+    if moved_log:
+        say("The Musician Forge folder cannot be written to, so the install log is in {}.".format(LOG_PATH))
+    copy_python_setup_log()
     try:
         moved, blocked = legacy.migrate()       # Melody Forge's folders get Musician Forge's name (8 Oct 2026)
     except Exception as exc:  # noqa: BLE001
@@ -443,11 +544,16 @@ def main():
         say("Problem: the old data folder could not be renamed, so the install stopped before downloading "
             "everything again. Close every Musician Forge or Melody Forge window and run this again.")
         return 1
+    mark_finished(False)
     steps = [step_environment, step_packages, step_fluidsynth, step_soundfont,
              guitar_pack_step(5, packs.PACKS[0]), guitar_pack_step(6, packs.PACKS[1]), step_selfcheck]
     for step in steps:
         try:
             step()
+            if step is step_soundfont:
+                # Everything Musician Forge needs to start is in place (the guitar packs come by themselves later,
+                # and the self check only reports), so Start can start it
+                mark_finished(True)
         except Exception as exc:  # noqa: BLE001
             say("Problem: {}".format(exc))
             import traceback

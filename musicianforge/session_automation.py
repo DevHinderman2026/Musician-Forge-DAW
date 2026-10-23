@@ -67,7 +67,9 @@ class AutomationMixin:
         with self.edit("add automation lane"):
             self.song.track_by_id(track_id).automation.append(lane)
         index = len(self.lanes_of(track_id)) - 1
-        self.announce("Added a {} lane. Enter on it lists its points, where Alt+A adds one.".format(self.lane_name(track_id, index)))
+        # no "Enter lists its points" hint: the Points window opens straight away and the hint was lost under it
+        # (screen reader audit B4, 23 Oct 2026)
+        self.announce("Added a {} lane".format(self.lane_name(track_id, index)))
         return index
 
     def remove_lane(self, track_id, index):
@@ -179,10 +181,10 @@ class AutomationMixin:
     def toggle_automation_write(self):
         self.automation_write = not getattr(self, "automation_write", False)
         if self.automation_write:
-            self.announce("Write automation on. While the song plays, changing a track's volume or pan, or an "
-                          "effect setting, writes it into that track's automation.")
+            self.announce_state("Write automation on", "While the song plays, changing a track's volume or pan, or "
+                                "an effect setting, writes it into that track's automation.")
         else:
-            self.announce("Write automation off")
+            self.announce_state("Write automation off")
         self.notify("transport")
         return self.automation_write
 

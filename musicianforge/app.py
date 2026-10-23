@@ -35,7 +35,7 @@ A11Y_TARGETS = ["start", "main", "keyboard_controls", "new_song", "track_setting
                 "audio_track_settings", "recording_settings", "import_file", "midi_import", "effects", "add_effect",
                 "effect_settings", "audio_effect_settings", "chord_track", "chord", "fill_chords", "new_player",
                 "player_editor", "region_settings", "automation", "add_lane", "automation_points", "automation_point",
-                "drummer_editor", "piece_settings", "part_settings", "step_pattern"]
+                "drummer_editor", "piece_settings", "part_settings", "step_pattern", "new_track"]
 
 
 def setup_logging():
@@ -126,6 +126,8 @@ def demo_notes(session, folder=None):
     from .song import Note
 
     piano = session.selected_track_id
+    if piano is None:              # (the project behind the start screen has its piano track, but in case)
+        piano = session.add_track("Piano").id
     for i, pitch in enumerate([57, 60, 64, 67]):
         session.add_note(piano, Note(i * 480, 480, pitch, 100))
     if folder:
@@ -273,7 +275,10 @@ def main(argv=None):
         wx.CallAfter(_first_window, frame, session, args.song)
         if not test_dir and not isinstance(synth, SimpleSynth):
             from .pack_downloader import PackDownloader   # downloads a guitar pack the installer could not
-            PackDownloader(engine, lambda text: wx.CallAfter(session.announce, text, False)).start()
+            from .ui.common import say_after
+            # said two seconds after it arrives, queued: it must not talk over the first window opening (screen
+            # reader audit A4, 23 Oct 2026)
+            PackDownloader(engine, lambda text: wx.CallAfter(say_after, session.announce, text, 2000)).start()
 
     gc.collect()
     gc.freeze()  # keeps garbage collection pauses away from the audio
@@ -299,9 +304,10 @@ def _first_window(frame, session, song_path):
         if session.recovery_available():
             if ask_yes_no(None, "Musician Forge did not close properly last time. "
                                 "Recover the project you were working on?"):
-                if frame.safe(session.recover):
-                    frame.show_project()
-                    return
+                with session.pressed("window"):   # "Recovered ..." is said once the project window shows
+                    if frame.safe(session.recover):
+                        frame.show_project()
+                        return
             session.mark_clean_exit()
     except Exception:  # noqa: BLE001 - a window must always open (before the review of 9 Oct 2026, an error
         log.exception("Crash recovery failed")   # here left Musician Forge running with no window at all)
@@ -418,6 +424,7 @@ def _open_a11y_target(frame, target):
         "chord_track": frame.chord_track,
         "new_player": frame.new_player,
         "new_song": frame.new_song,
+        "new_track": frame.new_track,
         "track_settings": frame.track_settings,
         "instrument": frame.change_instrument,
         "tempo": lambda: frame.changes("tempo"),

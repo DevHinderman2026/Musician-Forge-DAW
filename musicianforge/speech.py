@@ -26,6 +26,7 @@ log = logging.getLogger("musicianforge.speech")
 
 NOTIFICATION_KIND_OTHER = 4
 NOTIFICATION_PROCESSING_IMPORTANT_MOST_RECENT = 1
+NOTIFICATION_PROCESSING_ALL = 2
 NOTIFICATION_PROCESSING_MOST_RECENT = 3
 SPI_GETSCREENREADER = 0x0046
 
@@ -61,7 +62,14 @@ class NvdaOutput(_Output):
     def speak(self, text, interrupt):
         if interrupt:
             self.dll.nvdaController_cancelSpeech()
-        return self.dll.nvdaController_speakText(text) == 0
+        spoken = self.dll.nvdaController_speakText(text) == 0
+        try:
+            # on a braille display too, as a message (screen reader audit E3, 23 Oct 2026): speakText alone
+            # reached only the voice
+            self.dll.nvdaController_brailleMessage(text)
+        except Exception:  # noqa: BLE001 - braille is extra; speech has already gone
+            log.debug("NVDA braille message failed", exc_info=True)
+        return spoken
 
     def silence(self):
         self.dll.nvdaController_cancelSpeech()
@@ -132,8 +140,11 @@ class UiaNotificationOutput(_Output):
         display = self._oleaut.SysAllocString(text)
         activity = self._oleaut.SysAllocString("MusicianForgeAnnouncement")
         try:
+            # not interrupting: every one is read, in turn. MOST_RECENT (until 23 Oct 2026) let a newer notification
+            # with the same activity replace one still waiting, and some screen readers treat it as "stop and say
+            # this" (screen reader audit E1)
             processing = (NOTIFICATION_PROCESSING_IMPORTANT_MOST_RECENT if interrupt
-                          else NOTIFICATION_PROCESSING_MOST_RECENT)
+                          else NOTIFICATION_PROCESSING_ALL)
             result = self._uia.UiaRaiseNotificationEvent(provider, NOTIFICATION_KIND_OTHER,
                                                          processing, display, activity)
             return result == 0
@@ -254,8 +265,10 @@ class Speaker:
         self._active, self._checked_at = chosen, now
         return chosen
 
-    def describe(self):
-        output = self.active_output(refresh=True)
+    def describe(self, refresh=True):
+        """The output's name. refresh=False: the one chosen in the last two seconds, without asking each screen
+        reader again (for the Status area, which is filled again after every key)."""
+        output = self.active_output(refresh=refresh)
         return output.name if output else "none (no screen reader detected)"
 
     def speak(self, text, interrupt=True):

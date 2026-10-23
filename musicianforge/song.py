@@ -20,8 +20,14 @@ FILE_VERSION = 8   # 2 added song sections, 3 audio tracks, 4 regions on instrum
                    # variations, performances and pieces (players.clean_settings reads the older settings
                    # the way 0.9.1 played them); older files open
 FILE_EXTENSION = ".mforge"
+# (A development build of 0.9.7 saved "features" in a new project, 23 Oct 2026, to keep its kit-piece loudness and the
+# ride and hi-hats taking turns out of older projects; Russell then chose them for every project, 23 Oct 2026, 4:52 AM.
+# A file that has it opens as any other; it is not read or saved.)
 
 MAX_TRACKS = 100
+# what a command that needs a track says in a project with none yet (a new project starts with no tracks since
+# Russell's request of 23 Oct 2026)
+NO_TRACK_YET = "There is no track yet. Press Control+T to add one."
 AUDIO_RATE = 48000     # recordings are kept at the engine's sample rate
 INSTRUMENT_TRACK = "instrument"
 AUDIO_TRACK = "audio"
@@ -176,6 +182,10 @@ class Track:
     note_regions: list = field(default_factory=list)  # instrument tracks: NoteRegion list (see regions.py)
     effects: list = field(default_factory=list)       # the track's effects, in order (see effects.py)
     automation: list = field(default_factory=list)    # lanes: volume, pan, effect settings over time (automation.py)
+    # the drummer's kit-piece loudness on this track ({piece key: 0 to 100}, only those not at 50; 0.9.7, every
+    # project): every Anvil region on the track plays each piece this loud. An older project's tracks have none, so
+    # they play as they did.
+    kit_levels: dict = field(default_factory=dict)
 
     @property
     def is_audio(self):
@@ -457,6 +467,7 @@ class Song:
                     "note_regions": [r.to_list() for r in t.note_regions],
                     "effects": copy.deepcopy(t.effects),
                     "automation": copy.deepcopy(t.automation),
+                    **({"kit_levels": dict(t.kit_levels)} if t.kit_levels else {}),
                 }
                 for t in self.tracks
             ],
@@ -498,6 +509,9 @@ class Song:
                                                 # stop the whole song playing; the review of 9 Oct 2026)
                 track.effects = effects.clean_effects(td.get("effects", []), track.kind)
                 track.automation = automation.clean_lanes(td.get("automation", []), track)
+                from . import player_pieces
+
+                track.kit_levels = player_pieces.clean_kit_levels(td.get("kit_levels"))
                 track.sort_notes()
                 track.sort_regions()
                 song.tracks.append(track)
@@ -524,7 +538,9 @@ class Song:
             song.strips = valid_strips(data.get("strips"))
         except SongFileError:
             raise
-        except (KeyError, TypeError, ValueError, IndexError, AttributeError) as exc:
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError, OverflowError) as exc:
+            # OverflowError: a number too big to be one (Infinity, or 1e999) where a whole number belongs; until
+            # 23 Oct 2026 it got past this, so opening offered no backup
             raise SongFileError("The song file is damaged: {}".format(exc)) from exc
         return song
 

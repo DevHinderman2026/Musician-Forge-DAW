@@ -19,7 +19,7 @@ from contextlib import contextmanager
 import numpy as np
 
 from . import (arpeggiator, arrange, audioimport, audiotracks, effects, exportcheck, latency, m4a, meterchange,
-               midifile, packs, pitchfix,
+               midifile, packs, pitchfix, player_pieces,
                projects, regions, theory, wavfile)
 from . import chords as chords_module
 from . import keyboard_map as km
@@ -30,6 +30,7 @@ from .session_music import MusicMixin
 from .session_nudge import NudgeMixin
 from .song import (AUDIO_RATE, AUDIO_TRACK, FILE_EXTENSION, MAX_TRACKS, AudioRegion, AudioTake, Instrument, Note,
                    Song, SongFileError, UndoHistory, new_song)
+from .song import NO_TRACK_YET
 from .timeline import PPQ, format_number
 from .paths import replace_file
 from .wavfile import WavWriter, wav_size_bytes
@@ -84,6 +85,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 self.typing.scale = settings["keyboard_scale"]
             self.arp.update({k: v for k, v in settings["arpeggiator"].items() if k in self.arp})
         self.listeners = []
+        self.say_later = None          # set by the window: say(text) a moment later, queued (common.say_after)
+        self._pressed = None           # "button" or "check" while a focused control runs its command (pressed)
         self._merge_label = None     # the last edit that can absorb the next one (moving a slider)
         self.automation_write = False  # Write automation: moving a setting while playing writes it
         self._write_pass = {}          # (track, lane) -> the last tick written in this play-through
@@ -98,6 +101,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self._play_start = 0
         self._held = {}
         self._take = None
+        self._stopping = False         # inside stop(): words about the take wait for "Stopped" (_say_after_stop)
+        self._stop_words = []
+        self._clipboard_project = None  # which project copied tracks came from (_project_token)
+        self._project_token = 0        # changes whenever another project is opened or made
         self._stale_take = False       # a take the engine still hands back belongs to a project now closed
         self.selecting = False         # selection mode (Shift+F8): Space picks tracks and regions
         self.selected_tracks = set()   # track ids
@@ -148,11 +155,48 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 log.exception("A listener failed for %s", what)
 
     def announce(self, text, interrupt=True):
+        if getattr(self, "_pressed", None):
+            # A focused button or check box is running its command (Russell, 23 Oct 2026: "it says pressed, but it
+            # barely gets the word out before being cut off"). The screen reader is still saying "pressed" or
+            # "checked", and the command may yet move the focus or rebuild a list, which the screen reader reads
+            # out too: our words come a moment later and wait their turn instead of cutting either off.
+            later = getattr(self, "say_later", None)
+            if later is not None:
+                later(self._say, text)
+                return
+            interrupt = False
+        self._say(text, interrupt)
+
+    def _say(self, text, interrupt=True):
         self.last_announcement = text
         log.debug("Announce: %s", text)
         if self.speaker is not None:
             self.speaker.speak(text, interrupt)
         self.notify("announcement")
+
+    @contextmanager
+    def pressed(self, kind):
+        """While a focused control runs its command, or a window changes: kind "button" (the screen reader says the
+        button; everything said here comes a moment later, queued after it), "check" (a check box or choice list: the
+        screen reader says its new state, so announce_state leaves the state out, and anything else is queued),
+        "list" (a list window's command: said after the list is filled again), "window" (a window opens or closes:
+        said a little later still, after its title and focus), or None (as usual: an open dialog)."""
+        before = getattr(self, "_pressed", None)
+        self._pressed = kind
+        try:
+            yield
+        finally:
+            self._pressed = before
+
+    def announce_state(self, words, more=""):
+        """The new state of something a check box shows ("Metronome on"), and `more` to know about it. From the check
+        box itself, the screen reader already says "checked" or "not checked", so only `more` is said, after it; from
+        a shortcut both are said."""
+        if getattr(self, "_pressed", None) == "check":
+            if more:
+                self.announce(more)
+            return
+        self.announce("{}. {}".format(words, more) if more else words)
 
     # ------------------------------------------------------------------
     # song files
@@ -160,17 +204,26 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def new_song(self):
         defaults = self.settings["new_song"] if self.settings is not None else {}
         self._stop_engine_quietly()
+        replacing = self.song is not None    # not the empty project made at start, before recovery is offered
         self.song = new_song(bpm=defaults.get("bpm", 120.0), numerator=defaults.get("numerator", 4),
                              denominator=defaults.get("denominator", 4), tonic=defaults.get("tonic", 0),
                              scale=defaults.get("scale", "Major"))
         self._after_load(None)
+        if replacing:
+            # the project left behind was not wanted (or was saved): its crash-recovery copy must not be offered
+            # if Musician Forge then stops without closing properly (23 Oct 2026)
+            self.mark_clean_exit()
 
     def new_song_with(self, title="Untitled", bpm=120.0, numerator=4, denominator=4, tonic=0, scale="Major"):
-        """New song from the New Song dialog's choices."""
+        """New song from the New Song dialog's choices. It has no tracks: the window opens the New track list at
+        once (Russell, 23 Oct 2026: a piano track to begin with was "very annoying"). Projects saved before keep
+        their tracks, and new_song() (the empty project behind the start screen) keeps its piano track."""
         self._stop_engine_quietly()
         self.song = new_song(title=title, bpm=bpm, numerator=numerator, denominator=denominator,
                              tonic=tonic, scale=scale)
+        self.song.tracks, self.song._next_id = [], 1        # no tracks yet: the first one added is track 1
         self._after_load(None)
+        self.mark_clean_exit()     # the project left behind must not be offered as crash recovery (23 Oct 2026)
 
     def open(self, path, backup=False):
         """Open a project. backup: open path's backup (the save before the last one) because path itself is
@@ -182,14 +235,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self._stop_engine_quietly()
         self.song = song
         self._after_load(path)
+        self.mark_clean_exit()     # the project left behind must not be offered as crash recovery (23 Oct 2026)
         self.modified = bool(backup)
         if self.settings is not None:
             self.settings.add_recent(path)
             self.settings.save()
         log.info("Opened song: %s", source)
         missing = self.missing_recordings()
-        text = "Opened {}{}, {} tracks".format("the backup of " if backup else "", self.song.title,
-                                              len(self.song.tracks))
+        text = "Opened {}{}, {}".format("the backup of " if backup else "", self.song.title,
+                                       self._count_words(len(self.song.tracks), "track"))
         if self._playhead:                # back where it was saved: say where
             text += ". {}, {}".format(self.song.section_name(self.current_section_index()), self.describe_position())
         if missing:
@@ -199,6 +253,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def _after_load(self, path):
         self.path = path
+        self._project_token += 1     # tracks copied before this came from another project
         self._autosaved_content = None
         self.history.clear()
         self.selected_tracks.clear()
@@ -356,9 +411,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             yield self.song
             self.song.fit_last_section()
             self.song.tidy_regions()
-            self.modified = True
-            return
+            return      # (the group's own edit marks the change, if there was one)
         snapshot = self.song.to_dict()
+        chosen = self._chosen_regions()
         try:
             yield self.song
             self.song.fit_last_section()
@@ -367,13 +422,35 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.song = Song.from_dict(snapshot)
             self._sync_engine()
             raise
+        self._follow_chosen_regions(chosen)
         joined = merge and self._merge_label == (label, merge_key) and self.history.undo_label() == label
-        if record_undo and not joined:
+        # Nothing changed (the volume already at 100 and ] pressed, Track settings closed with OK and nothing changed):
+        # no undo step that undoes nothing, and the project does not count as changed.
+        changed = self.song.to_dict() != snapshot
+        if record_undo and not joined and changed:
             self.history.push(label, snapshot)
         self._merge_label = (label, merge_key) if merge else None
-        self.modified = True
+        if changed:
+            self.modified = True
         self._sync_engine()
         self.notify("song")
+
+    def _chosen_regions(self):
+        """The regions selected with Space (the objects themselves), or None when none are."""
+        if not getattr(self, "selected_regions", None):
+            return None
+        regions = self.regions_of(self.selected_track_id)
+        return [regions[i] for i in sorted(self.selected_regions) if 0 <= i < len(regions)]
+
+    def _follow_chosen_regions(self, chosen):
+        """After an edit: the selection follows the regions it was made of. It is kept as places in the Regions
+        list, and until 23 Oct 2026 an edit that put a region before them (a note added in an earlier bar, a
+        section deleted) left it pointing at other regions, so Delete took away the wrong ones. Regions the edit
+        took away leave the selection."""
+        if chosen is None:
+            return
+        regions = self.regions_of(self.selected_track_id)
+        self.selected_regions = {i for i, region in enumerate(regions) if any(region is c for c in chosen)}
 
     @contextmanager
     def edit_group(self, label, merge=False, merge_key=None):
@@ -417,11 +494,19 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def _replace_song(self, song):
         selected = self.selected_track_id
+        old_index = self.song.index_of(selected) if self.song is not None else -1
         self.song = song
         self.selected_regions.clear()
         self.selected_tracks = {t for t in self.selected_tracks if song.track_by_id(t) is not None}
         if self.song.track_by_id(selected) is None:
-            self.selected_track_id = self.song.tracks[0].id if self.song.tracks else None
+            # The selected track went away (Undo add track, paste or duplicate): the track before where it was, which
+            # is the one it was added after, instead of track 1.
+            if self.song.tracks:
+                index = max(0, min(old_index - 1, len(self.song.tracks) - 1))
+                self.selected_track_id = self.song.tracks[index].id
+            else:
+                self.selected_track_id = None
+        self._clamp_playhead()     # (undoing Add section can leave it past the song's end)
         self.modified = True
         self._sync_engine()
         self.notify("song")
@@ -475,13 +560,23 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.notify("selection")
 
     def describe_track(self, track_id):
+        self._need_track(track_id)
         index = self.song.index_of(track_id)
         return self.song.tracks[index].describe(index + 1)
+
+    def _need_track(self, track_id):
+        """The track, or a ValueError in words: a project can have no tracks yet (a new one starts that way)."""
+        track = self.song.track_by_id(track_id)
+        if track is None:
+            raise ValueError(NO_TRACK_YET if not self.song.tracks else "That track is not there any more")
+        return track
 
     def add_track(self, name=None, instrument=None):
         if instrument is None and self.presets:
             first = self.presets[0]
             instrument = Instrument(first.bank, first.program, first.name)
+        if self.engine.recording:      # (a track added above the one recording would move it to another channel)
+            raise ValueError("Stop recording before adding a track")
         with self.edit("add track"):
             index = self.song.index_of(self.selected_track_id) + 1 if self.selected_track_id else None
             track = self.song.add_track(name, instrument, index=index)
@@ -512,17 +607,22 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         name = (name or "").strip()
         if not name:
             raise ValueError("A track needs a name")
+        self._need_track(track_id)
         with self.edit("rename track"):
             self.song.track_by_id(track_id).name = name
         self.announce("Renamed to {}".format(name))
 
     def update_track(self, track_id, name=None, preset=None, volume=None, pan=None, mute=None, solo=None,
-                     stereo=None, monitor=None):
+                     stereo=None, monitor=None, kit_levels=None):
         """Apply everything from the Track Settings dialog as one undo step (while Write automation is
-        on and the song plays, a changed volume or pan is written into the automation instead)."""
+        on and the song plays, a changed volume or pan is written into the automation instead).
+        kit_levels: a drummer track's kit-piece loudness ({piece key: 0 to 100}; 0.9.7, every project,
+        player_pieces.clean_kit_levels), heard at once."""
         name = (name or "").strip() if name is not None else None
         if name == "":
             raise ValueError("A track needs a name")
+        if kit_levels is not None:
+            kit_levels = player_pieces.clean_kit_levels(kit_levels)
         if self._writing():
             current = self.song.track_by_id(track_id)
             if volume is not None and int(volume) != self._heard_setting(current, "volume"):
@@ -532,7 +632,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             volume = pan = None
             others = {"name": (name, current.name), "stereo": (stereo, current.stereo),
                       "monitor": (monitor, current.monitor), "mute": (mute, current.mute),
-                      "solo": (solo, current.solo)}
+                      "solo": (solo, current.solo), "kit_levels": (kit_levels, current.kit_levels)}
             unchanged = all(new is None or new == old for new, old in others.values())
             if unchanged and (preset is None or current.is_audio or (preset.bank, preset.program) ==
                               (current.instrument.bank, current.instrument.program)):
@@ -558,6 +658,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 track.mute = bool(mute)
             if solo is not None:
                 track.solo = bool(solo)
+            if kit_levels is not None and not track.is_audio:
+                track.kit_levels = kit_levels
         self.announce("Track settings saved")
 
     @staticmethod
@@ -569,8 +671,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return preset
 
     def set_instrument(self, track_id, preset):
-        track = self.song.track_by_id(track_id)
-        if track is not None and track.is_audio:
+        track = self._need_track(track_id)
+        if track.is_audio:
             raise ValueError("An audio track plays recordings, so it has no instrument")
         preset = self._real_preset(preset)
         with self.edit("change instrument"):
@@ -579,6 +681,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def set_volume(self, track_id, volume, speak=True):
         volume = max(0, min(100, int(volume)))
+        self._need_track(track_id)
         if self._writing():
             self.write_automation(track_id, ("volume", None, None), volume, speak)
             return
@@ -599,6 +702,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def set_pan(self, track_id, pan, speak=True):
         pan = max(-100, min(100, int(pan)))
+        self._need_track(track_id)
         if self._writing():
             self.write_automation(track_id, ("pan", None, None), pan, speak)
             return
@@ -636,18 +740,21 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return track.volume if target == "volume" else track.pan
 
     def toggle_mute(self, track_id):
-        track = self.song.track_by_id(track_id)
+        track = self._need_track(track_id)
         with self.edit("mute"):
             track.mute = not track.mute
-        self.announce("Muted" if track.mute else "Unmuted")
+        self.announce_state("Muted" if track.mute else "Unmuted")
 
     def toggle_solo(self, track_id):
-        track = self.song.track_by_id(track_id)
+        track = self._need_track(track_id)
         with self.edit("solo"):
             track.solo = not track.solo
-        self.announce("Solo on" if track.solo else "Solo off")
+        self.announce_state("Solo on" if track.solo else "Solo off")
 
     def move_track(self, track_id, delta):
+        if self.engine.recording:   # the take's notes are found by the track's place in the list
+            self.announce("Stop recording before moving a track")
+            return
         index = self.song.index_of(track_id)
         target = index + delta
         if not 0 <= target < len(self.song.tracks):
@@ -709,6 +816,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def describe_play_mode(self):
         return "All sections play" if self.all_sections else "The current section loops"
 
+    def _clamp_playhead(self):
+        """After the song got shorter (a section deleted or shortened, an undo): a playhead past the end goes to the
+        start of the last bar, not to the very last tick ("Bar 4, beat 4.999")."""
+        song_end = self.song.song_end_tick()
+        if self._playhead >= song_end:
+            tl = self.song.timeline
+            self._playhead = max(0, tl.bar_to_tick(max(1, self.song.end_bar() - 1)))
+        self._playhead = max(0, self._playhead)
+
     def _clamped_playhead(self):
         """The playhead, pulled back inside the song if it is past the end."""
         song_end = self.song.song_end_tick()
@@ -751,11 +867,22 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if not self.engine.playing:
             return
         tick = self.position_tick()
+        if self.engine.recording and self.engine.in_count_in():
+            tick = self._play_start     # stopped during the count-in: back where recording was to start
         self.engine.stop()
         self._playhead = min(tick, max(0, self.song.song_end_tick() - 1))
-        self._wait_for_engine()
+        self._stopping = True           # what the take's end has to say comes after "Stopped"
+        self._stop_words = []
+        try:
+            self._wait_for_engine()
+        finally:
+            self._stopping = False
         if speak:
-            self.announce("Stopped, {}".format(self.describe_position(self._playhead)))
+            self.announce(". ".join(["Stopped, {}".format(self.describe_position(self._playhead))]
+                                    + self._stop_words))
+        elif self._stop_words:
+            self.announce(". ".join(self._stop_words), interrupt=False)
+        self._stop_words = []
         self.notify("transport")
 
     def stop_button(self):
@@ -770,7 +897,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def toggle_record(self):
         track = self.selected_track
         if track is None:
-            self.announce("Add a track before recording")
+            self.announce(NO_TRACK_YET)
             return
         if self.engine.recording:
             self.stop()
@@ -935,7 +1062,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.settings["play_all_sections"] = self.all_sections
             self.settings.save()
         self._refresh_region()
-        self.announce("All sections play" if self.all_sections else "Current section loops")
+        self.announce_state("All sections play" if self.all_sections else "Current section loops")
         self.notify("transport")
 
     def toggle_metronome(self):
@@ -944,7 +1071,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self.settings is not None:
             self.settings["metronome_on"] = on
             self.settings.save()
-        self.announce("Metronome on" if on else "Metronome off")
+        self.announce_state("Metronome on" if on else "Metronome off")
         self.notify("transport")
 
     def cycle_count_in(self):
@@ -982,9 +1109,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 self._soundfont_loaded(message[1], message[2])
             elif kind == "soundfont_failed":
                 log.warning("SoundFont %s could not be loaded: %s", message[1], message[2])
-                self.announce("{} could not be loaded: {}".format(os.path.basename(message[1]), message[2]))
+                # not caused by a key: it waits for whatever the screen reader is saying (screen reader audit D6)
+                self.announce("{} could not be loaded: {}".format(os.path.basename(message[1]), message[2]),
+                              interrupt=False)
             elif kind == "error":
-                self.announce(message[1])
+                self.announce(message[1], interrupt=False)
         return handled
 
     def _soundfont_loaded(self, path, presets):
@@ -994,22 +1123,28 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         for pack in packs.PACKS:
             if os.path.basename(pack.filename) == name:
                 name = pack.name
-        self.announce("{} is ready. Tracks that use it play it now.".format(name))
         self.notify("presets")
+        # after the lists are brought up to date, and never over other speech (screen reader audit D6)
+        self.announce("{} is ready. Tracks that use it play it now.".format(name), interrupt=False)
 
     def _finish_recording(self, track_id, notes, partial=False):
         """Notes from a take (or from one pass of a looped take) go into the song.
 
-        All passes of one take share a single undo step.
-        """
+        All passes of one take share a single undo step, as long as nothing else was changed in between (a volume
+        change during a looping take is its own step, and the passes after it make a new one: Control+Z then takes
+        back only what it says)."""
         track = self.song.track_by_id(track_id)
         take = self._take if self._take and self._take["track_id"] == track_id else None
         if take is None:
             take = self._new_take(track_id, notes[0].tick if notes else 0)
+        if partial:
+            take["wrapped"] = True          # the loop went round: the whole looping section was recorded
         if notes:
             take["end"] = max(take["end"], max(n.end for n in notes))
         if track is not None and (notes or (not partial and take["count"])):
-            with self.edit("recording on {}".format(track.name), record_undo=not take["undo_open"]):
+            top = self.history._undo[-1] if self.history._undo else None
+            joined = take["undo_open"] and top is not None and top is take.get("undo_entry")
+            with self.edit("recording on {}".format(track.name), record_undo=not joined):
                 section = take["section"]
                 if (not partial and take["automatic"] and section < len(self.song.sections)
                         and self.song.sections[section].automatic):   # Control+Z during the take can change that
@@ -1019,6 +1154,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 if not partial and not track.is_audio:
                     self._place_take_region(track, take)
                     self.selected_regions.clear()
+            if not joined:
+                now_top = self.history._undo[-1] if self.history._undo else None
+                if now_top is not top:
+                    take["undo_entry"] = now_top
             take["undo_open"] = True
             take["count"] += len(notes)
         if partial:
@@ -1032,17 +1171,55 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                               interrupt=False)
             else:
                 self.announce("Nothing was recorded", interrupt=False)
+        if take.get("words"):
+            self._say_after_stop(take["words"])
+
+    def _say_after_stop(self, words):
+        """Words about a take that just ended: after "Stopped, bar ..." when stop() is still speaking, else at once
+        (without cutting off what is being said)."""
+        if self._stopping:
+            self._stop_words.append(words)
+        else:
+            self.announce(words, interrupt=False)
 
     def _place_take_region(self, track, take):
-        """A finished take gets a region of its own: the looping section it was recorded in, or from
-        the bar where recording started to the bar after it stopped (across sections if need be)."""
+        """A finished take gets a region of its own, covering the bars it recorded: from the bar where recording
+        started to the bar after it stopped (across sections if need be), or the whole looping section once the loop
+        went round. It keeps the name of the region it was recorded into, and bars of a muted region stay a muted
+        region of their own (a take used to unmute them); a rhythm player region gives way for those bars only. Both
+        are said when recording stops (second review, 23 Oct 2026: a take wiped the whole section's rhythm player).
+        """
         tl = self.song.timeline
+        stop = max(take["end"], int(round(self.engine.position_tick())), take["start"] + 1)
         if take["loop"] is not None:
-            start, end = take["loop"]
+            loop_start, loop_end = take["loop"]
+            if take.get("wrapped") or not loop_start <= take["start"] < loop_end:
+                start, end = loop_start, loop_end
+            else:
+                start, end = regions.bar_span(tl, take["start"], min(stop, loop_end))
+                start, end = max(start, loop_start), min(end, loop_end)
         else:
-            stop = max(take["end"], int(round(self.engine.position_tick())), take["start"] + 1)
             start, end = regions.bar_span(tl, take["start"], stop)
-        regions.claim(track, start, end)
+        covered = [r for r in track.note_regions if r.start < end and r.end > start]
+        names = {r.name for r in covered if not r.player and not r.mute}
+        muted = [(max(r.start, start), min(r.end, end), r.name) for r in covered if not r.player and r.mute]
+        replaced = [(max(r.start, start), min(r.end, end)) for r in covered if r.player]
+        regions.claim(track, start, end, name=names.pop() if len(names) == 1 else "")
+        for first, last, muted_name in muted:          # muted bars stay muted (the take's notes there too)
+            regions.claim(track, first, last, name=muted_name, mute=True)
+        words = []
+        if replaced:
+            bars = []
+            for first, last in replaced:
+                first_bar, last_bar = tl.tick_to_bar(first), tl.tick_to_bar(last - 1)
+                bars.append("bar {}".format(first_bar) if first_bar == last_bar else
+                            "bars {} to {}".format(first_bar, last_bar))
+            words.append("The recording replaced the rhythm player in {}. Control+Z brings it back".format(
+                " and ".join(bars)))
+        if muted:
+            words.append("{} of the recording is in a muted region. M in the Regions list unmutes it".format(
+                "All" if [(m[0], m[1]) for m in muted] == [(start, end)] else "Part"))
+        take["words"] = ". ".join(words)
 
     def _wait_for_engine(self, timeout=0.5):
         """After stop: give the audio thread a moment to hand back the recording."""
@@ -1109,7 +1286,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         name = self.song.section_name(index)
         with self.edit("delete section"):
             arrange.delete_section(self.song, index)
-        self._playhead = max(0, min(self._playhead, self.song.song_end_tick() - 1))
+        self._clamp_playhead()
         self.announce("Deleted {}".format(name))
         return min(index, len(self.song.sections) - 1)
 
@@ -1134,7 +1311,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 section.automatic = bool(automatic)
             if length is not None and int(length) != section.length:
                 arrange.set_section_length(self.song, index, int(length))
-        self._playhead = max(0, min(self._playhead, self.song.song_end_tick() - 1))
+        self._clamp_playhead()
         self.announce("Section settings saved. {}".format(self.describe_section(index)))
 
     def notes_lost_if_shortened(self, index, new_length):
@@ -1189,6 +1366,19 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def _takes(self, song=None):
         return [take for track in (song or self.song).tracks for region in track.regions for take in region.takes]
 
+    def _clipboard_takes(self):
+        """The recordings copied tracks or regions on the clipboard use."""
+        clip = getattr(self, "clipboard", None)
+        if not isinstance(clip, dict):
+            return []
+        if clip.get("kind") == "tracks":
+            found = [r for track in clip.get("tracks", []) for r in getattr(track, "regions", [])]
+        elif clip.get("kind") == "audio":
+            found = [r for _offset, r in clip.get("regions", [])]
+        else:
+            return []
+        return [take for region in found for take in getattr(region, "takes", [])]
+
     def missing_recordings(self):
         return sum(1 for take in self._takes() if not os.path.isfile(self.audio_path(take.file)))
 
@@ -1235,6 +1425,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def _discard_scratch(self):
         """Delete recordings of a project that was never saved, now that it is gone."""
         keep = {os.path.normcase(self.audio_path(t.file)) for t in self._takes()} if self.song else set()
+        # recordings on the clipboard stay too (23 Oct 2026): copy a track or a recording, start a new project
+        # without saving, paste, and before this the pasted recording's file had already been deleted
+        keep |= {os.path.normcase(self.audio_path(t.file)) for t in self._clipboard_takes()}
         for path in list(self._scratch):
             if os.path.normcase(path) in keep:
                 continue
@@ -1317,7 +1510,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.audio_input.ensure_open(channels=2 if track.stereo else 1)
         except Exception as exc:  # noqa: BLE001
             log.exception("Could not open the microphone")
-            self.announce("The microphone could not be opened. {}".format(exc))
+            self.announce(microphone_problem(exc))
             return False
         self._chunks_at_start = self.audio_input.chunks
         self._start_monitoring(track)
@@ -1546,9 +1739,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         log.info("Imported audio: %s (%d Hz, %d channel(s), read by %s) as %s", path, rate, channels, decoder, file)
         return PreparedImport(path, os.path.normpath(file), audio, rate, channels, decoder)
 
-    def check_import_target(self, track_id=None):
+    def check_import_target(self, track_id=None, new_track=False):
         """Raise ValueError (in words) before the slow part of an import when it could not be placed: while
-        recording, on a track that is not an audio track, or when a new track is needed and there is no room."""
+        recording, on a track that is not an audio track, or when a new track is needed and there is no room.
+        new_track: the file goes on a new audio track whatever track is selected (the New track list)."""
         if self.engine.recording:
             raise ValueError("Stop recording before importing")
         if track_id is not None:
@@ -1556,7 +1750,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if track is None or not track.is_audio:
                 raise ValueError("Choose an audio track first. Control+U adds one.")
             return
-        track = self.selected_track
+        track = None if new_track else self.selected_track
         if (track is None or not track.is_audio) and len(self.song.tracks) >= MAX_TRACKS:
             raise ValueError("A song can have up to {} tracks, so there is no room for the audio track this file "
                              "needs. Choose an audio track first.".format(MAX_TRACKS))
@@ -1568,7 +1762,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         except OSError:
             pass
 
-    def import_audio(self, track_id, path, tick=None, decoded=None, prepared=None):
+    def import_audio(self, track_id, path, tick=None, decoded=None, prepared=None, new_track=False):
         """Bring an audio file into an audio track at the playhead: WAV, MP3, M4A, FLAC, Ogg, AIFF, Windows
         Media Audio and more (see audioimport.py), at any sample rate.
 
@@ -1592,20 +1786,33 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             track.regions.append(region)
             track.sort_regions()
             index = next(i for i, r in enumerate(track.regions) if r is region)
-        where = ("the project's Recordings folder" if self.path else
-                 "Musician Forge's own recordings folder until the project is saved")
-        self.announce("Imported {}, {}, {}, {}, at {}. Musician Forge's copy is in {}.".format(
-            os.path.basename(path), audiotracks.describe_seconds(len(audio)), describe_rate(prepared.rate),
-            "stereo" if prepared.channels > 1 else "mono", self.describe_position(tick), where))
+        # short: it comes as the progress window closes and the focus goes back to the Tracks list (screen reader
+        # audit C4, 23 Oct 2026); the sample rate and where the copy is kept are in the log
+        log.info("Imported %s at %s; the copy is in %s", path, describe_rate(prepared.rate), file)
+        # and which track it went on: Import can make a new track for it (Guide walkthrough, 23 Oct 2026)
+        self.announce("Imported {} on {}{}, {}, at {}.".format(
+            os.path.basename(path), "the new track " if new_track else "", track.name,
+            audiotracks.describe_seconds(len(audio)), self.describe_position(tick)))
         return index
 
-    def import_audio_file(self, path, decoded=None, prepared=None):
-        """Import an audio file: onto the selected audio track, or onto a new audio track named after it."""
-        track = self.selected_track
+    def import_audio_file(self, path, decoded=None, prepared=None, new_track=False):
+        """Import an audio file: onto the selected audio track, or onto a new audio track named after it (always a
+        new one with new_track: Import file in the New track list)."""
+        track = None if new_track else self.selected_track
         if track is None or not track.is_audio:
+            if self.engine.recording:
+                raise ValueError("Stop recording before importing")
             if prepared is None:
                 prepared = self.prepare_import(path, decoded=decoded)   # first, so a bad file adds no track
-            track = self.add_audio_track(os.path.splitext(os.path.basename(path))[0], speak=False)
+            selected = self.selected_track_id
+            try:
+                with self.edit_group("import audio"):      # the new track and the recording: one undo step
+                    track = self.add_audio_track(os.path.splitext(os.path.basename(path))[0], speak=False)
+                    return self.import_audio(track.id, path, decoded=decoded, prepared=prepared, new_track=True)
+            except Exception:
+                if self.song.track_by_id(self.selected_track_id) is None:
+                    self.selected_track_id = selected
+                raise
         return self.import_audio(track.id, path, decoded=decoded, prepared=prepared)
 
     # -- MIDI files (0.9.1) ---------------------------------------------------
@@ -1668,8 +1875,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         made = []
         with self.edit("import MIDI file"):
             song = self.song
-            if empty and len(song.tracks) == 1 and not song.tracks[0].effects and not song.tracks[0].automation:
-                song.tracks = []          # a new project's empty Piano track makes way
+            if (empty and contents.tracks and len(song.tracks) == 1 and not song.tracks[0].effects
+                    and not song.tracks[0].automation):
+                song.tracks = []          # a new project's empty Piano track makes way (for tracks, not chords only)
             if use_timeline:
                 timeline, markers, moved = midiimport.build_timeline(contents)
                 song.timeline = timeline
@@ -1678,7 +1886,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 notes_said += moved
                 if contents.title and (not song.title or song.title == "Untitled"):
                     song.title = contents.title[:80]
-            if contents.chords and (use_timeline or not song.chords):
+            chords_taken = bool(contents.chords and (use_timeline or not song.chords))
+            if chords_taken:
                 song.chords = list(contents.chords)      # Musician Forge's own chord track, back as the chord track
             room = MAX_TRACKS - len(song.tracks)
             if len(contents.tracks) > room:
@@ -1704,13 +1913,20 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 start, end = regions.bar_span(song.timeline, track.notes[0].tick, max(n.end for n in track.notes))
                 regions.claim(track, start, end)
                 made.append(track)
-        self.selected_track_id = made[0].id if made else self.selected_track_id
+        if made:
+            self.selected_track_id = made[0].id
+        elif self.song.track_by_id(self.selected_track_id) is None:
+            self.selected_track_id = self.song.tracks[0].id if self.song.tracks else None
         self._playhead = 0
         self.engine.locate(0)
         self.notify("selection")
-        words = "Imported {}: {}, {} note{}".format(
-            os.path.basename(path), self._count_words(len(made), "track"), sum(len(t.notes) for t in made),
-            "" if sum(len(t.notes) for t in made) == 1 else "s")
+        if made or not chords_taken:
+            words = "Imported {}: {}, {} note{}".format(
+                os.path.basename(path), self._count_words(len(made), "track"), sum(len(t.notes) for t in made),
+                "" if sum(len(t.notes) for t in made) == 1 else "s")
+        else:        # only a chord track in the file (one Musician Forge exported with no notes yet)
+            words = "Imported {}: the chord track, {}".format(os.path.basename(path),
+                                                             self._count_words(len(contents.chords), "chord"))
         if use_timeline:
             tl = self.song.timeline
             words += ", {}, {}, {}, {}".format(
@@ -1768,9 +1984,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             del track.regions[index]
         self.announce("Recording deleted")
 
-    def update_region(self, track_id, index, tick=None, take=None, gain_db=None):
+    def update_region(self, track_id, index, tick=None, take=None, gain_db=None, speak=True):
         """Where a recording starts, which take plays, and its gain, as one undo step.
-        Returns the recording's place in the track's list afterwards."""
+        Returns the recording's place in the track's list afterwards. speak=False: a list shows (and the screen
+        reader reads) the recording's new words anyway."""
         if self.engine.recording:
             raise ValueError("Stop recording before changing a recording")
         if gain_db is not None:
@@ -1793,7 +2010,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 region.tick = int(tick)
                 track.sort_regions()
             new_index = next(i for i, r in enumerate(track.regions) if r is region)
-        self.announce(self.describe_region(track_id, new_index))
+        if speak:
+            self.announce(self.describe_region(track_id, new_index))
         return new_index
 
     def move_region(self, track_id, index, bar, beat=1.0):
@@ -1826,19 +2044,32 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             return []
         return track.regions if track.is_audio else track.note_regions
 
+    def _region(self, track_id, index):
+        """(track, region), or a plain ValueError when there is no such track or region (23 Oct 2026: these used
+        to fail with IndexError or AttributeError)."""
+        track = self.song.track_by_id(track_id)
+        if track is None:
+            raise ValueError("Choose a track first")
+        found = self.regions_of(track_id)
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            raise ValueError("There is no region here. Move to a region in the Regions list first.") from None
+        if not 0 <= index < len(found):
+            raise ValueError("That region is not there any more. Move to a region in the Regions list first.")
+        return track, found[index]
+
     def region_span(self, track_id, index):
         """(start tick, end tick) of a region or recording."""
-        track = self.song.track_by_id(track_id)
-        region = self.regions_of(track_id)[index]
+        track, region = self._region(track_id, index)
         if track.is_audio:
             return region.tick, region.end_tick(self.song.timeline)
         return region.start, region.end
 
     def region_name(self, track_id, index):
-        track = self.song.track_by_id(track_id)
+        track, region = self._region(track_id, index)
         if track.is_audio:
             return "Recording"
-        region = track.note_regions[index]
         if region.name:
             return region.name
         if region.player:
@@ -1855,12 +2086,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
         current: the region you are on in the Regions list; it ends with ", selected". In selection mode
         the word belongs to the regions marked with Space instead."""
-        track = self.song.track_by_id(track_id)
+        track, region = self._region(track_id, index)
         tl = self.song.timeline
         start, end = self.region_span(track_id, index)
         text = "{}{}, {}: {}".format("{}. ".format(index + 1) if number else "", self.region_name(track_id, index),
                                      self.describe_sections_between(start, end), tl.describe_span(start, end))
-        region = self.regions_of(track_id)[index]
         if track.is_audio:
             text += ", " + audiotracks.describe_seconds(region.frames)
             if len(region.takes) > 1:
@@ -1922,11 +2152,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.selected_tracks.clear()
         self.selected_regions.clear()
         if self.selecting:
-            self.announce("Selection on. Space selects or unselects the track or region you are on. "
-                          "Cut, copy, paste, duplicate and delete then work on everything you selected. "
-                          "Shift+F8 turns selection off.")
+            self.announce_state("Selection on", "Space selects or unselects the track or region you are on. "
+                                "Cut, copy, paste, duplicate and delete then work on everything you selected. "
+                                "Shift+F8 turns selection off.")
         else:
-            self.announce("Selection off")
+            self.announce_state("Selection off")
         self.notify("selection")
 
     def toggle_track_selected(self, track_id):
@@ -1976,7 +2206,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def regions_for_action(self, current=None):
         """The selected regions (in selection mode), or the region you are on."""
         if self.selecting and self.selected_regions:
-            return sorted(self.selected_regions)
+            count = len(self.regions_of(self.selected_track_id))
+            return sorted(i for i in self.selected_regions if 0 <= i < count)
         if current is None:
             current = self.region_at_playhead(self.selected_track_id)
         return [] if current is None else [current]
@@ -1987,14 +2218,17 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     # -- whole tracks ------------------------------------------------------
     def copy_tracks(self, track_ids, speak=True):
         if not track_ids:
-            raise ValueError("Choose a track first")
+            raise ValueError("Choose a track first" if self.song.tracks else NO_TRACK_YET)
         self.clipboard = {"kind": "tracks", "tracks": [copy.deepcopy(self.song.track_by_id(t)) for t in track_ids]}
+        self._clipboard_project = self._project_token
         if speak:
             self.announce("Copied {}".format(self._count_words(len(track_ids), "track")))
 
     def cut_tracks(self, track_ids):
-        if len(track_ids) >= len(self.song.tracks):
-            raise ValueError("A project keeps at least one track, so you can't cut them all. Copy them instead.")
+        # Cutting every track is allowed (since 23 Oct 2026 a project can have no tracks, as deleting them all already
+        # could; Control+Z brings them back). Until then a project kept at least one track here.
+        if not self.song.tracks:
+            raise ValueError(NO_TRACK_YET)
         self.copy_tracks(track_ids, speak=False)
         self._delete_tracks(track_ids, "cut")
         self.announce("Cut {}".format(self._count_words(len(track_ids), "track")))
@@ -2006,7 +2240,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("Stop recording before pasting")
         with self.edit("paste tracks"):
             index = self.song.index_of(self.selected_track_id) + 1 if self.selected_track_id else len(self.song.tracks)
-            added = self._insert_track_copies(self.clipboard["tracks"], index)
+            added = self._insert_track_copies(self.clipboard["tracks"], index,
+                                              same_project=self._clipboard_project == self._project_token)
         self.selected_track_id = added[0].id
         self.notify("selection")
         self.announce("Pasted {}".format(self._count_words(len(added), "track")))
@@ -2014,7 +2249,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def duplicate_tracks(self, track_ids):
         if not track_ids:
-            raise ValueError("Choose a track first")
+            raise ValueError("Choose a track first" if self.song.tracks else NO_TRACK_YET)
+        if self.engine.recording:
+            raise ValueError("Stop recording before duplicating tracks")
         with self.edit("duplicate tracks"):
             originals = [copy.deepcopy(self.song.track_by_id(t)) for t in track_ids]
             index = max(self.song.index_of(t) for t in track_ids) + 1
@@ -2042,21 +2279,36 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.selected_track_id = self.song.tracks[min(index, len(self.song.tracks) - 1)].id if self.song.tracks else None
         self.notify("selection")
 
-    def _insert_track_copies(self, tracks, index):
+    def _insert_track_copies(self, tracks, index, same_project=True):
+        """Copies of tracks, put in at index with new numbers. A rhythm player that follows a track copied with it
+        follows that track's copy; one that follows a track of another project (or one no longer here) follows
+        nothing (before, it kept the old number: a track that moved, or another project's track 2)."""
         if len(self.song.tracks) + len(tracks) > MAX_TRACKS:
             raise ValueError("A project can have up to {} tracks".format(MAX_TRACKS))
         added = []
+        new_ids = {}
         for offset, original in enumerate(tracks):
             track = copy.deepcopy(original)
-            track.id = self.song.next_track_id()
+            new_ids[original.id] = track.id = self.song.next_track_id()
             track.solo = False
             self.song.tracks.insert(index + offset, track)
             added.append(track)
+        for track in added:
+            for region in track.note_regions:
+                followed = region.player.get("follow_track") if region.player else None
+                if followed is None:
+                    continue
+                if followed in new_ids:
+                    region.player["follow_track"] = new_ids[followed]
+                elif not same_project or self.song.track_by_id(followed) is None:
+                    region.player["follow_track"] = None
         return added
 
     def set_tracks_mute(self, track_ids):
         """Mute every chosen track, or unmute them all if the first is already muted."""
-        tracks = [self.song.track_by_id(t) for t in track_ids]
+        tracks = [self._need_track(t) for t in track_ids]
+        if not tracks:
+            raise ValueError("Choose a track first" if self.song.tracks else NO_TRACK_YET)
         value = not tracks[0].mute
         with self.edit("mute"):
             for track in tracks:
@@ -2064,7 +2316,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.announce("{} {}".format("Muted" if value else "Unmuted", self._count_words(len(tracks), "track")))
 
     def set_tracks_solo(self, track_ids):
-        tracks = [self.song.track_by_id(t) for t in track_ids]
+        tracks = [self._need_track(t) for t in track_ids]
+        if not tracks:
+            raise ValueError("Choose a track first" if self.song.tracks else NO_TRACK_YET)
         value = not tracks[0].solo
         with self.edit("solo"):
             for track in tracks:
@@ -2077,10 +2331,14 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     # -- regions -------------------------------------------------------------
     def _need_regions(self, track_id, indices):
+        if self.song.track_by_id(track_id) is None:
+            self._need_track(track_id)
         if not indices:
             raise ValueError("There is no region here. Move to a region in the Regions list first.")
         if self.engine.recording:
             raise ValueError("Stop recording before changing regions")
+        for index in indices:
+            self._region(track_id, index)      # a plain message for a region that is not there (23 Oct 2026)
         return self.song.track_by_id(track_id)
 
     def copy_regions(self, track_id, indices, speak=True):
@@ -2320,13 +2578,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                                                 len(self.effects_of(track_id))))
         return target
 
-    def set_effect_on(self, track_id, index, on=None):
-        """Turn an effect on or off (None switches it). Off keeps its settings."""
+    def set_effect_on(self, track_id, index, on=None, speak=True):
+        """Turn an effect on or off (None switches it). Off keeps its settings. speak=False: the Effects list,
+        which has the focus, reads the effect's new words itself."""
         track = self._effect_track(track_id, index)
         value = (not track.effects[index].get("on", True)) if on is None else bool(on)
         with self.edit("turn effect {}".format("on" if value else "off")):
             self.song.track_by_id(track_id).effects[index]["on"] = value
-        self.announce(self.describe_effect(track_id, index, number=False))
+        if speak:
+            self.announce(self.describe_effect(track_id, index, number=False))
 
     def update_effect(self, track_id, index, params=None, preset=None, on=None):
         """The effect settings window's OK: every change as one undo step."""
@@ -2490,7 +2750,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         try:
             self.audio_input.ensure_open(1)
         except Exception as exc:  # noqa: BLE001
-            raise ValueError("The microphone could not be opened. {}".format(exc)) from None
+            raise ValueError(microphone_problem(exc)) from None
         self._measure_done = done
         self.engine.set_monitoring(False)
         self.engine.measure_delay()
@@ -2510,7 +2770,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if done is not None:
             done(result)
         else:
-            self.announce(result.describe())
+            self.announce(result.describe(), interrupt=False)     # whatever the screen reader is saying, finishes
 
     # ------------------------------------------------------------------
     # musical typing
@@ -2535,6 +2795,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             message = "{} is an audio track. Press R to record from the microphone.".format(track.name)
             if self.last_announcement != message:
                 self.announce(message)
+            return True
+        if track is None and km.is_note_key(char, mode=self.typing.mode):
+            if self.last_announcement != NO_TRACK_YET:      # said once, not at every key
+                self.announce(NO_TRACK_YET)
             return True
         notes = ()
         if track is not None:
@@ -2894,6 +3158,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def add_note(self, track_id, note):
         _validate_note(note)
+        self._need_track(track_id)
         with self.edit("add note"):
             track = self.song.track_by_id(track_id)
             track.notes.append(note)
@@ -2902,6 +3167,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def update_note(self, track_id, index, new_note):
         _validate_note(new_note)
+        self._need_track(track_id)
         with self.edit("edit note"):
             track = self.song.track_by_id(track_id)
             track.notes[index] = new_note
@@ -2912,6 +3178,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         indices = sorted(set(indices))
         if not indices:
             return
+        self._need_track(track_id)
         with self.edit("delete {} note{}".format(len(indices), "" if len(indices) == 1 else "s")):
             track = self.song.track_by_id(track_id)
             for i in reversed(indices):
@@ -2920,7 +3187,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def transpose_notes(self, track_id, indices, semitones):
         """Move notes up or down. Returns their new positions in the sorted list."""
-        track = self.song.track_by_id(track_id)
+        track = self._need_track(track_id)
         chosen = [track.notes[i] for i in sorted(set(indices))]
         if not chosen:
             return []
@@ -2965,14 +3232,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     # ------------------------------------------------------------------
     # export
     # ------------------------------------------------------------------
-    def export_midi(self, path):
+    def export_midi(self, path, speak=True):
         """The whole song as one MIDI file (Russell, 10 Oct 2026: one file, not a zip, so each track can be
         changed in the other program): every track with notes, rhythm players included, and the chord track."""
         if not path.lower().endswith((".mid", ".midi")):
             path += ".mid"
         size = midifile.export_midi(self.song, path, self.all_sounding_notes())
         log.info("Exported MIDI: %s (%d bytes)", path, size)
-        self.announce(self.midi_export_words(path))
+        if speak:
+            self.announce(self.midi_export_words(path))
         return path, size
 
     def midi_export_words(self, path):
@@ -2985,6 +3253,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             " and the chord track" if self.song.chords else "")
         if any(t.is_audio and t.regions for t in self.song.tracks):
             words += " Audio tracks are not in it, since a MIDI file holds notes only."
+        if midifile.ports_used(self.song, notes) > 1:
+            # (23 Oct 2026) a MIDI port has 16 channels; more instrument tracks than that go on further ports
+            words += (" More than 15 instrument tracks play, so from the 16th on they use a second MIDI port; a "
+                      "program that ignores MIDI ports plays them on the same channels as the first 15.")
         return words
 
     def export_tracks(self, path, sample_rate=48000, bits=24, progress=None, cancelled=None, tail=True,
@@ -3273,6 +3545,16 @@ def _validate_note(note):
         raise ValueError("That note is outside the playable range")
     if not 1 <= note.velocity <= 127:
         raise ValueError("Velocity must be from 1 to 127")
+
+
+def microphone_problem(exc):
+    """What went wrong opening the microphone, said once: audio.py's own words already begin "No microphone could be
+    opened", and "The microphone could not be opened." in front of them said it twice (Guide walkthrough, 23 Oct
+    2026)."""
+    text = str(exc).strip()
+    if text.lower().startswith(("no microphone", "the microphone")):
+        return text
+    return "The microphone could not be opened. {}".format(text)
 
 
 def describe_rate(rate):

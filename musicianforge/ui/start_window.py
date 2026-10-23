@@ -13,7 +13,7 @@ import logging
 import wx
 
 from .. import __version__, projects
-from .common import note_text, silence_name
+from .common import note_text, say_after, show_items, silence_name
 
 log = logging.getLogger("musicianforge.ui")
 
@@ -60,6 +60,13 @@ class StartFrame(wx.Frame):
         sizer.Add(wx.StaticText(panel, label=RECENT_LABEL), 0, wx.LEFT | wx.TOP, 8)
         self.recent_list = wx.ListBox(panel, style=wx.LB_SINGLE, size=(-1, 220))
         sizer.Add(self.recent_list, 1, wx.ALL | wx.EXPAND, 8)
+        # Enter and Delete on the list, as buttons too (the review, 23 Oct 2026); dimmed while the list is empty
+        list_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.open_recent_button = wx.Button(panel, label="Open")
+        self.remove_button = wx.Button(panel, label="Remove from list")
+        list_row.Add(self.open_recent_button, 0, wx.ALL, 4)
+        list_row.Add(self.remove_button, 0, wx.ALL, 4)
+        sizer.Add(list_row, 0, wx.LEFT | wx.RIGHT, 4)
         sizer.Add(note_text(panel, LIST_HINT, width=580), 0, wx.LEFT | wx.RIGHT, 8)   # the window is 620 wide
         last_row = wx.BoxSizer(wx.HORIZONTAL)
         self.help_button = wx.Button(panel, label="Help menu")
@@ -72,6 +79,8 @@ class StartFrame(wx.Frame):
         self.new_button.Bind(wx.EVT_BUTTON, lambda e: self.on_new())
         self.open_button.Bind(wx.EVT_BUTTON, lambda e: self.on_open(self.selected_path()))
         self.quit_button.Bind(wx.EVT_BUTTON, lambda e: self.on_quit())
+        self.open_recent_button.Bind(wx.EVT_BUTTON, lambda e: self.open_selected())
+        self.remove_button.Bind(wx.EVT_BUTTON, lambda e: self.remove_selected())
         self.help_button.Bind(wx.EVT_BUTTON, lambda e: self.on_help and self.on_help(self.help_button))
         self.recent_list.Bind(wx.EVT_KEY_DOWN, self.on_list_key)
         self.recent_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.open_selected())
@@ -82,10 +91,17 @@ class StartFrame(wx.Frame):
         self.refresh()
 
     # ------------------------------------------------------------------
-    def refresh(self):
+    def refresh(self, select=0):
+        """Fill the Recent projects list again, on item `select` (None: stay where it is). show_items moves the
+        list only once, so a screen reader reads one item, not the first and then the right one (screen reader
+        audit A5, 23 Oct 2026)."""
+        if select is None:
+            select = max(0, self.recent_list.GetSelection())
         self.paths = self.settings.recent_projects() if self.settings is not None else []
-        self.recent_list.Set([describe_recent(p) for p in self.paths] or [NO_RECENT])
-        self.recent_list.SetSelection(0)
+        items = [describe_recent(p) for p in self.paths] or [NO_RECENT]
+        show_items(self.recent_list, items, min(select, len(items) - 1))
+        self.open_recent_button.Enable(bool(self.paths))
+        self.remove_button.Enable(bool(self.paths))
 
     def present(self):
         """Show the start screen and put the keyboard focus somewhere useful."""
@@ -124,19 +140,25 @@ class StartFrame(wx.Frame):
         event.Skip()
 
     def remove_selected(self):
+        """Delete on the Recent projects list, or the Remove from list button: the project leaves the list (its file
+        is kept)."""
         path = self.selected_path()
         if path is None or self.settings is None:
             return
         index = self.recent_list.GetSelection()
         self.settings["recent_files"] = [p for p in self.settings["recent_files"] if p != path]
         self.settings.save()
-        self.refresh()
-        if self.paths:
-            self.recent_list.SetSelection(min(index, len(self.paths) - 1))
+        if not self.settings.recent_projects() and wx.Window.FindFocus() is self.remove_button:
+            self.new_button.SetFocus()     # the button is about to be dimmed: the focus goes somewhere useful first
+        self.refresh(select=index)                 # the next project takes its place, read once
+        if self.on_say is not None:                # after the list's own reading, not over it
+            say_after(self.on_say, "Removed {} from the list".format(projects.project_name(path)))
 
     def on_list_key(self, event):
         key = event.GetKeyCode()
-        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        if event.GetModifiers() != wx.MOD_NONE:
+            event.Skip()            # Alt+Enter, Shift+Delete and the like are not Enter or Delete (0.9.7)
+        elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.open_selected()
         elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
             self.remove_selected()

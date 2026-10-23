@@ -8,7 +8,7 @@ import logging
 import os
 
 from . import arrangement, chords, keyboard_map, onsets, player_pieces, players, regions, theory
-from .song import AUDIO_RATE, Instrument
+from .song import AUDIO_RATE, NO_TRACK_YET, Instrument
 
 log = logging.getLogger("musicianforge.session")
 
@@ -46,6 +46,7 @@ def for_each_selected_region(method):
                                  merge=method.__name__ in ("update_player", "update_piece"), merge_key=key):
                 # a Reforge plays its region once every region has its new performance (below)
                 result = method(self, track_id, index, *args, **(dict(kwargs, play=False) if reforging else kwargs))
+                turn_words = getattr(self, "turn_words", None)   # update_piece: what the editor's region said
                 # the others say nothing, and a Reforge plays only the region in the editor (the final review,
                 # 10 Oct 2026: each one took the playing over in turn, so the last region of the selection played)
                 quiet = dict(kwargs, speak=False)
@@ -61,6 +62,7 @@ def for_each_selected_region(method):
                         method(self, track_id, other, *args, **quiet)
                     except ValueError:
                         stayed += 1              # a variation its style does not have, hand-made steps...
+                self.turn_words = turn_words
                 # a Reforge of several says only "Regenerated performance", as one does (Russell, 21 Oct 2026)
                 if stayed:                       # said, so a change that missed some regions is never a surprise
                     self.announce("{} of the {} regions could not take that and stayed as {} {}".format(
@@ -87,6 +89,11 @@ def in_the_groove(settings, piece_key):
 
 class HandMadeSteps(ValueError):
     """Changing the variation would reset hand-made steps: the message says which, for the warning."""
+
+
+def _steps_have_hits(steps):
+    """True for hand-made steps with at least one hit (steps that sound; all of them taken away turn nothing on)."""
+    return isinstance(steps, dict) and any(bar for bar in steps.get("bars") or ())
 
 
 class MusicMixin:
@@ -275,7 +282,8 @@ class MusicMixin:
         track_id = self.selected_track_id if track_id is None else track_id
         track = self.song.track_by_id(track_id)
         if track is None:
-            raise ValueError("There is no track selected. Press Control+T to add one.")
+            raise ValueError(NO_TRACK_YET if not self.song.tracks else
+                             "There is no track selected. Press Control+T to add one.")
         players_here = [r for r in track.note_regions if r.player] if not track.is_audio else []
         if not players_here:
             raise ValueError("{} has no rhythm player yet, so New player region has nothing to play on. Press "
@@ -480,10 +488,10 @@ class MusicMixin:
 
     def piece_settings(self, track_id, index, piece_key):
         """Every setting of one piece, with "on" as it plays (player_pieces.piece_on: off when the groove has
-        nothing for it, unless turned on by hand)."""
+        nothing for it, unless turned on by hand; the Closed hi-hat at foot only is off: its hand is on the ride)."""
         settings = self.player_settings(track_id, index)
         full = player_pieces.piece_settings(settings, piece_key)
-        full["on"] = player_pieces.piece_on(settings, piece_key, in_the_groove(settings, piece_key))
+        full["on"] = player_pieces.hand_on(settings, piece_key, in_the_groove(settings, piece_key))
         return full
 
     def describe_pieces(self, track_id, index):
@@ -502,18 +510,156 @@ class MusicMixin:
     def describe_piece(self, track_id, index, piece_key):
         return dict(self.describe_pieces(track_id, index))[piece_key]
 
-    @for_each_selected_region
-    def update_piece(self, track_id, index, piece_key, speak=True, **changes):
-        """Change one piece's settings (one undo step; moving one slider several times in a row is one step).
-        Returns the piece's line, which is also said."""
-        track, region = self._player_region(track_id, index)
-        settings = players.clean_settings(region.player)
+    @staticmethod
+    def _turn_states(settings):
+        """{piece key: 'on', 'off' or 'foot only'} for the ride and the hi-hats (player_pieces.turn_state)."""
+        return {key: player_pieces.turn_state(settings, key, in_the_groove(settings, key))
+                for key in ("ride",) + player_pieces.HATS}
+
+    def _take_turns(self, before, settings, piece_key, changes):
+        """The ride and the hi-hats taking turns (player_pieces.TAKES_TURNS; every project, Russell, 23 Oct 2026),
+        on a drummer a real drummer plays: after a change to this piece (already in settings, before is the region's
+        settings before it), changes the others in settings. Returns what a ride with nothing of its own to play was
+        given ("the hi-hat's rhythm", "eighth notes") or None. Nothing happens unless the piece starts or stops
+        playing by hand (Space, Play this piece, a Pattern, hand-made steps), so an older region with the ride and the
+        hi-hats both on keeps them both until then."""
+        if settings["player"] != "anvil" or not player_pieces.takes_turns(settings["style"], piece_key):
+            return None
+        pieces = settings["pieces"]
+        hand = self._hand
+
+        def change(key, **values):
+            own = dict(pieces.get(key, {}))
+            for name, value in values.items():
+                if name == "on":
+                    self._store_on(settings, key, own, value)
+                elif value:
+                    own[name] = value
+                else:
+                    own.pop(name, None)
+            if own:
+                pieces[key] = own
+            else:
+                pieces.pop(key, None)
+
+        rhythm = None
+        if piece_key == "ride":
+            if (changes.get("on") and player_pieces.hand_on(settings, "ride", in_the_groove(settings, "ride"))
+                    and not player_pieces.hand_on(before, "ride", in_the_groove(before, "ride"))
+                    and not hand(settings, "ride")):
+                rhythm = self._give_the_ride_a_rhythm(settings)     # turned on with nothing of its own to play
+            if "on" in changes or hand(settings, "ride") != hand(before, "ride"):
+                change("ride", for_hats=False)              # turned on or off by hand: not the hi-hats' to give back
+            if hand(settings, "ride") and not hand(before, "ride"):
+                if any(hand(settings, key) for key in player_pieces.HATS):
+                    change("hat", foot_only=True)           # the hand leaves the hi-hats; the foot keeps playing
+            elif not hand(settings, "ride") and hand(before, "ride"):
+                change("hat", foot_only=False)              # the hand goes back to the hi-hats
+            return rhythm
+        if changes.get("on") and player_pieces.foot_only(settings):
+            change("hat", foot_only=False)                  # a hi-hat turned on: the hand comes back to the hi-hats
+            change(piece_key, on=True)                      # (kept only when it differs from what it does by itself)
+        if hand(settings, piece_key) and not hand(before, piece_key):
+            if hand(settings, "ride"):
+                change("ride", on=False, for_hats=True)
+        elif not hand(settings, piece_key) and hand(before, piece_key):
+            # the ride the hi-hats took over from comes back once the closed hi-hat stops (the open hi-hat with it,
+            # as when the ride is turned on)
+            if pieces.get("ride", {}).get("for_hats") and not hand(settings, "hat"):
+                change("ride", on=True, for_hats=False)
+                rhythm = self._give_the_ride_a_rhythm(settings)
+                if hand(settings, "open_hat"):
+                    change("hat", foot_only=True)
+        return rhythm
+
+    @staticmethod
+    def _hand(settings, piece_key):
+        """Whether a hand plays this piece (the ride and the hi-hats taking turns): it is on (player_pieces.hand_on)
+        and what it plays (its groove, pattern or steps) has its sounds in it, for the Closed hi-hat the hand's hi-hat:
+        jazz's Closed hi-hat is only the foot on two and four, so the ride and it play together, and a piece turned on
+        with nothing to play (hand-made steps all silent, say) takes no hand."""
+        if not player_pieces.hand_on(settings, piece_key, in_the_groove(settings, piece_key)):
+            return False
+        sounds = {"hat": (players.HAT,), "open_hat": (players.OPEN_HAT,)}.get(
+            piece_key, player_pieces.PIECE_BY_KEY[piece_key].voices)
+        full = player_pieces.piece_settings(settings, piece_key)
+        if full["steps"]:
+            return any(hit[2] in sounds for bar in full["steps"]["bars"] for hit in bar)
+        rows = player_pieces.drum_pattern_rows(settings["style"], settings["variation"], piece_key, full["pattern"],
+                                               players._DRUM_STYLES)
+        if rows is None:
+            rows = player_pieces.piece_rows(
+                player_pieces.style_table(settings["style"], settings["variation"], players._DRUM_STYLES),
+                player_pieces.PIECE_BY_KEY[piece_key])
+        return any(sound in rows for sound in sounds)
+
+    @staticmethod
+    def _give_the_ride_a_rhythm(settings):
+        """A ride turned on with nothing of its own to play (not in the groove, no other pattern, no steps; Russell's
+        tester, 23 Oct 2026: "Ride on, hi-hats off" and then nothing kept time) takes over the hand's hi-hat rhythm,
+        as a drummer moves the riding hand: the Closed hi-hat's hand-made steps when it has some, else its pattern
+        ("The hi-hat's rhythm" in the ride's Pattern list), eighth notes when the hi-hat has no hand rhythm either.
+        Returns what it was given, or None."""
+        ride = player_pieces.piece_settings(settings, "ride")
+        if ride["steps"] or ride["pattern"] not in ("style", "none") or (ride["pattern"] == "style"
+                                                                         and in_the_groove(settings, "ride")):
+            return None
+        hat = player_pieces.piece_settings(settings, "hat")
+        own = dict(settings["pieces"].get("ride", {}))
+        steps = hat["steps"] and {"bars": [[[step, velocity, players.RIDE] for step, velocity, sound in bar
+                                            if sound == players.HAT] for bar in hat["steps"]["bars"]]}
+        if steps and any(steps["bars"]):
+            own["steps"] = steps
+            given = "the hi-hat's steps"
+        else:
+            pattern = hat["pattern"] if hat["pattern"] not in ("none",) else "style"
+            own["pattern"] = player_pieces.HAT_RHYTHM + pattern
+            if player_pieces.hand_hat_row(settings["style"], settings["variation"], pattern,
+                                          players._DRUM_STYLES) is not None:
+                given = "the hi-hat's rhythm"
+            else:
+                own["pattern"] = "g:eighths"
+                given = "eighth notes"
+        MusicMixin._store_on(settings, "ride", own, True)   # (on by itself now, so "on" is not kept)
+        settings["pieces"]["ride"] = own
+        return given
+
+    def pieces_turned_off(self, track_id, index, piece_key, on=True, **changes):
+        """What turning this piece on (on True), or another change (pattern=..., steps=...), would stop the hand
+        playing in this region (the ride and the hi-hats taking turns): [piece key]. Nothing is changed."""
+        if not changes:
+            changes = {"on": on}
+        settings = self.player_settings(track_id, index)
+        after = self._apply_piece_change(settings, piece_key, changes)
+        return [key for key in player_pieces.takes_turns(settings["style"], piece_key)
+                if self._hand(settings, key) and not self._hand(after, key)]
+
+    @staticmethod
+    def _store_on(settings, piece_key, stored, on):
+        """Put a piece's on or off into its stored settings, kept only when it differs from what the piece does by
+        itself (so a piece turned back on follows its groove again when the variation changes)."""
+        stored["on"] = bool(on)
+        by_itself = dict(settings, pieces=dict(settings["pieces"], **{piece_key: {k: v for k, v in stored.items()
+                                                                                   if k != "on"}}))
+        if stored["on"] == player_pieces.piece_on(by_itself, piece_key, in_the_groove(settings, piece_key)):
+            stored.pop("on")
+
+    def _apply_piece_change(self, settings, piece_key, changes):
+        """The region's settings with this change to one piece made, the ride and the hi-hats taking turns included
+        (a copy; settings are left as they were). Sets self._last_rhythm to what a ride with nothing to play was
+        given (_take_turns)."""
+        settings = copy.deepcopy(settings)
+        before = copy.deepcopy(settings)
         piece = player_pieces.PIECE_BY_KEY.get(piece_key)
         if piece is None or piece not in player_pieces.pieces_for(settings["player"]):
             raise ValueError("{} has no such piece".format(players.PLAYERS[settings["player"]].name))
-        before = dict(settings["pieces"].get(piece_key, {}))
-        stored = dict(before)
+        stored = dict(settings["pieces"].get(piece_key, {}))
         defaults = player_pieces.defaults_for(piece)
+        # Hand-made steps for a piece turned off by hand turn it on (Russell, 23 Oct 2026): until then it stayed
+        # silent and read "Kick: off, hand-made". Made when the steps are set, so a project that already has a piece
+        # off with steps plays as it did until it is changed.
+        steps_turn_on = (_steps_have_hits(changes.get("steps")) and "on" not in changes and piece.kind != "part"
+                         and stored.get("on") is False)
         for key, value in changes.items():
             value = player_pieces.clean_value(piece, key, value, settings["player"])
             if value == defaults.get(key):
@@ -521,34 +667,52 @@ class MusicMixin:
             else:
                 stored[key] = value
         if "on" in changes:
-            # kept only when it differs from what the piece does by itself (so a piece turned back on follows its
-            # groove again when the variation changes)
-            stored["on"] = player_pieces.clean_value(piece, "on", changes["on"], settings["player"])
-            by_itself = dict(settings, pieces=dict(settings["pieces"], **{piece_key: {k: v for k, v in stored.items()
-                                                                                       if k != "on"}}))
-            if stored["on"] == player_pieces.piece_on(by_itself, piece_key, in_the_groove(settings, piece_key)):
-                stored.pop("on")
+            self._store_on(settings, piece_key, stored,
+                           player_pieces.clean_value(piece, "on", changes["on"], settings["player"]))
+        elif steps_turn_on:
+            self._store_on(settings, piece_key, stored, True)
         if stored:
             settings["pieces"][piece_key] = stored
         else:
             settings["pieces"].pop(piece_key, None)
+        self._last_rhythm = self._take_turns(before, settings, piece_key, changes)
+        return settings
+
+    @for_each_selected_region
+    def update_piece(self, track_id, index, piece_key, speak=True, **changes):
+        """Change one piece's settings (one undo step; moving one slider several times in a row is one step).
+        Returns the piece's line, which is also said. On an acoustic drummer the ride and the hi-hats take turns
+        in the same undo step (_take_turns; every project), and self.turn_words is what the windows say for it
+        ("Ride on, hi-hat foot only"), or None when no other piece changed."""
+        track, region = self._player_region(track_id, index)
+        settings = players.clean_settings(region.player)
+        states = self._turn_states(settings)
+        after = self._apply_piece_change(settings, piece_key, changes)
+        piece = player_pieces.PIECE_BY_KEY[piece_key]
         merge = len(changes) == 1 and next(iter(changes)) in PIECE_COALESCE
         label = "{} {}".format(piece.name if piece.kind != "part" else "part", next(iter(changes)) if len(changes) == 1
                                else "settings")
-        if stored != before:                                    # nothing changed: no undo step
+        if after["pieces"] != settings["pieces"]:                # nothing changed: no undo step
             # The change is made inside edit(), which then hands the new notes to the sound engine. (From 10 Oct
             # 2026, 3:50 PM until the final review that evening it was made just after, so a piece's change, the
             # kick turned off say, was not heard until some other change came along.)
             with self.edit(label, merge=merge, merge_key=(track_id, region.start, piece_key)):
-                settings["rules"] = players.RULES               # changed by hand: it plays by today's rules
-                self.song.track_by_id(track_id).note_regions[index].player = settings
+                after["rules"] = players.RULES                  # changed by hand: it plays by today's rules
+                self.song.track_by_id(track_id).note_regions[index].player = after
         text = self.describe_piece(track_id, index, piece_key)
+        self.turn_words = None
+        if piece.kind != "part":
+            now = self._turn_states(after)
+            self.turn_words = player_pieces.turns_words(piece_key, states, now, self._last_rhythm)
+            others = player_pieces.others_words(piece_key, states, now)
+            if others:                                          # "Ride: on, ... . Hi-hat foot only"
+                text += ". " + others[0].upper() + others[1:]
         if speak:
             self.announce(text)
         return text
 
     def toggle_piece(self, track_id, index, piece_key):
-        """Space in the Kit pieces list: a piece on or off."""
+        """Space in the Kit pieces list: a piece on or off (a Closed hi-hat at foot only: the hand back on it)."""
         on = self.piece_settings(track_id, index, piece_key)["on"]
         return self.update_piece(track_id, index, piece_key, on=not on)
 
@@ -575,7 +739,7 @@ class MusicMixin:
                                  for_steps=True)
         piece = player_pieces.PIECE_BY_KEY[piece_key]
         out = []
-        for bar in players._bars(tl, region.start, region.end)[:bars]:
+        for bar in players.whole_bars(tl, region.start, region.end)[:bars]:   # bar 1: the first whole one
             found = {}
             for note in result.notes:
                 if not bar.start <= note.tick < bar.end:
@@ -709,12 +873,52 @@ class MusicMixin:
         other = self.song.track_by_id(follow_id)
         if other is None:
             return "That track is not there any more"
-        for region in other.note_regions:
-            settings = players.clean_settings(region.player) if region.player else None
-            if settings and settings["follow"] == "track" and settings.get("follow_track") == track.id:
-                return ("{} already follows this track, and two players cannot follow each other. Change that "
-                        "one first.".format(other.name))
+        loop = self._follow_loop(follow_id, track.id)
+        if len(loop) == 1:
+            return ("{} already follows this track, and two players cannot follow each other. Change that "
+                    "one first.".format(other.name))
+        if loop:
+            # a longer loop (A follows B, B follows C, C would follow A) played forever: refused (the review,
+            # 23 Oct 2026; it was accepted and then stopped playback and export)
+            names = [self.song.track_by_id(tid).name for tid in loop]
+            links = ["{} follows {}".format(a, b) for a, b in zip(names, names[1:] + ["this track"])]
+            chain = ", ".join(links[:-1]) + " and " + links[-1]
+            return ("That would make a loop: {}. Players in a loop cannot follow each other. Change one of them "
+                    "first.".format(chain))
         return ""
+
+    def _followed_tracks(self, track):
+        """The ids of the tracks this track's rhythm players follow."""
+        found = []
+        for region in track.note_regions:
+            settings = players.clean_settings(region.player) if region.player else None
+            if settings and settings["follow"] == "track" and settings.get("follow_track") is not None:
+                if settings["follow_track"] not in found:
+                    found.append(settings["follow_track"])
+        return found
+
+    def _follow_loop(self, start_id, back_id):
+        """The chain of tracks from `start_id` that leads back to `back_id` by following ([start_id, ..., the one
+        that follows back_id]), or [] when following from there never comes back."""
+        seen = set()
+
+        def walk(tid, path):
+            if tid in seen:
+                return []
+            seen.add(tid)
+            current = self.song.track_by_id(tid)
+            if current is None or current.is_audio:
+                return []
+            followed = self._followed_tracks(current)
+            if back_id in followed:
+                return path + [tid]
+            for next_id in followed:
+                found = walk(next_id, path + [tid])
+                if found:
+                    return found
+            return []
+
+        return walk(start_id, [])
 
     # -- performances (cached) ----------------------------------------------
     def _section_starts(self, region):
@@ -735,24 +939,47 @@ class MusicMixin:
                 return found["intensity"]
         return None
 
-    def performance(self, track, region):
-        """A rhythm player region's notes (worked out once for each set of inputs)."""
+    def kit_levels(self, track):
+        """The kit-piece loudness a drummer on this track plays with ({piece key: percent}, only those not at 50):
+        the track's own (Track settings), in every project. An older project's tracks have none (every piece at 50),
+        so they play as they did."""
+        if track is None:
+            return {}
+        return player_pieces.clean_kit_levels(track.kit_levels)
+
+    def track_has_drummer(self, track_id):
+        """True when the track has a drummer (Anvil) rhythm player region."""
+        track = self.song.track_by_id(track_id)
+        if track is None or track.is_audio:
+            return False
+        for region in track.note_regions:
+            settings = players.clean_settings(region.player) if region.player else None
+            if settings and settings["player"] == "anvil":
+                return True
+        return False
+
+    def performance(self, track, region, chain=(), human=None):
+        """A rhythm player region's notes (worked out once for each set of inputs).
+        chain: the tracks whose players are being worked out and wait for this one (they are not followed back).
+        human: False for the notes on the grid, with no human feel (what another player follows)."""
         settings = players.clean_settings(region.player)
         span_chords = [c.to_list() for c in self.song.chords if c.tick < region.end]
-        hits = self._follow_hits(track, region, settings)
+        hits = self._follow_hits(track, region, settings, chain)
         sections = self._section_starts(region)
         coming = self._next_intensity(track, region) if settings["player"] == "anvil" else None
-        human = getattr(self, "human_feel", True)      # tests that check the grid itself turn it off
+        if human is None:
+            human = getattr(self, "human_feel", True)      # tests that check the grid itself turn it off
+        mix = self.kit_levels(track) if settings["player"] == "anvil" else {}
         key = json.dumps([settings, region.start, region.end, span_chords, self._timeline_key(), sections, coming,
-                          human, None if hits is None else [(h.tick, round(h.weight, 3)) for h in hits]], sort_keys=True,
-                         default=str)
+                          human, None if hits is None else [(h.tick, round(h.weight, 3)) for h in hits]]
+                         + ([mix] if mix else []), sort_keys=True, default=str)
         cache = self.__dict__.setdefault("_performances", {})
         found = cache.get(key)
         if found is None:
             if hits is None and settings["follow"] == "track":
                 settings = dict(settings, follow="chords")     # the followed track is gone: follow the chords
             found = players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords, hits,
-                                    sections, next_intensity=coming, humanize=human)
+                                    sections, next_intensity=coming, humanize=human, kit_levels=mix)
             if len(cache) > 256:
                 cache.clear()
             cache[key] = found
@@ -762,8 +989,8 @@ class MusicMixin:
         tl = self.song.timeline
         return json.dumps(tl.to_dict(), sort_keys=True)
 
-    def _follow_hits(self, track, region, settings):
-        """The followed track's hits in the region (None when not following a track)."""
+    def _follow_hits(self, track, region, settings, chain=()):
+        """The followed track's hits in the region (None when not following a track). chain: as for performance."""
         if settings["follow"] != "track":
             return None
         other = self.song.track_by_id(settings.get("follow_track"))
@@ -782,7 +1009,9 @@ class MusicMixin:
                         hits.append(players.Hit(tick, 0.5 * hit.loudness + 0.3 * hit.low + 0.2, hit.low))
             hits.sort(key=lambda h: h.tick)
             return hits
-        notes = self.sounding_notes(other, avoid=track.id)
+        # the followed player's notes on the grid (the review, 23 Oct 2026): with its human feel each note of a rolled
+        # chord was a hit of its own, a few milliseconds apart, and the follower played off the grid
+        notes = self.sounding_notes(other, avoid=set(chain) | {track.id}, human=False)
         return players.hits_from_notes(notes, region.start, region.end, tl)
 
     def _recording_hits(self, recording, sensitivity):
@@ -808,18 +1037,25 @@ class MusicMixin:
             cache[key] = found
         return found
 
-    def sounding_notes(self, track, avoid=None):
+    def sounding_notes(self, track, avoid=None, human=None):
         """What an instrument track really plays (loops repeated, rhythm players performed).
-        avoid: a track id whose players must not be followed back (stops a loop of followers)."""
+        avoid: a track id, or a set of them, whose players must not be followed back: the tracks waiting for this
+        one's notes. A player that would follow one of them follows the chords instead, so a loop of followers
+        (refused now, but a project file may hold one) plays instead of going round forever.
+        human: False for the rhythm players' notes on the grid, with no human feel (what another player follows)."""
+        chain = set() if avoid is None else ({avoid} if isinstance(avoid, int) else set(avoid))
+        feel = getattr(self, "human_feel", True) if human is None else human
+
         def perform_for(t, region):
             settings = players.clean_settings(region.player)
-            if settings and settings["follow"] == "track" and settings.get("follow_track") == avoid:
+            if settings and settings["follow"] == "track" and settings.get("follow_track") in chain:
                 settings = dict(settings, follow="chords")
                 return players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords,
                                        None, self._section_starts(region),
                                        next_intensity=self._next_intensity(t, region),
-                                       humanize=getattr(self, "human_feel", True)).notes
-            return self.performance(t, region).notes
+                                       humanize=feel,
+                                       kit_levels=self.kit_levels(t) if settings["player"] == "anvil" else None).notes
+            return self.performance(t, region, chain, human).notes
 
         return arrangement.sounding_notes(self.song, track, perform_for)
 
@@ -831,7 +1067,7 @@ class MusicMixin:
     # trimming and looping regions (every kind)
     # ------------------------------------------------------------------
     def region_loops(self, track_id, index):
-        return self.regions_of(track_id)[index].loops
+        return self._region(track_id, index)[1].loops      # a plain message when there is no such region
 
     def set_region_loops(self, track_id, index, loops):
         """How many times a region plays in a row (1 = once); 0 loops it until the next region."""

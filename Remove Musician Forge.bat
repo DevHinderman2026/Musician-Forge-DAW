@@ -18,10 +18,10 @@ if not exist "%MF_DATA%\" if not exist "%MF_OLD%\" (
   echo Your projects in Documents, Musician Forge Songs, were not touched.
   goto :done
 )
-rem Musician Forge must be closed: its own Python is in the folder being removed.
+rem Musician Forge must be closed: its own Python is in the folder being removed (Melody Forge's, for an older one).
 rem (exit code 7 means it is open; anything else, even PowerShell missing, goes on: Windows then refuses to remove
 rem the files in use, and the end says so)
-powershell -NoProfile -Command "if (Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:LOCALAPPDATA + '\MusicianForge\', 'OrdinalIgnoreCase') }) { exit 7 } else { exit 0 }" > nul 2>&1
+powershell -NoProfile -Command "if (Get-Process | Where-Object { $_.Path -and ($_.Path.StartsWith($env:LOCALAPPDATA + '\MusicianForge\', 'OrdinalIgnoreCase') -or $_.Path.StartsWith($env:LOCALAPPDATA + '\MelodyForge\', 'OrdinalIgnoreCase')) }) { exit 7 } else { exit 0 }" > nul 2>&1
 if "%errorlevel%"=="7" (
   echo Musician Forge is still open. Please close it, then run Remove Musician Forge again.
   goto :done
@@ -47,14 +47,23 @@ if exist "%MF_DATA%\" (
     rmdir /s /q "%MF_DATA%"
   )
 )
-if exist "%MF_OLD%\" rmdir /s /q "%MF_OLD%"
+rem The folder of Melody Forge, Musician Forge's name before 8 Oct 2026: its settings are kept too when asked.
+if exist "%MF_OLD%\" (
+  if defined MF_KEEP (
+    for /d %%D in ("%MF_OLD%\*") do rmdir /s /q "%%D"
+    for %%F in ("%MF_OLD%\*") do if /i not "%%~nxF"=="settings.json" del /f /q "%%F"
+  ) else (
+    rmdir /s /q "%MF_OLD%"
+  )
+)
 set "MF_LEFT="
 if defined MF_KEEP (
   for /d %%D in ("%MF_DATA%\*") do set "MF_LEFT=1"
+  for /d %%D in ("%MF_OLD%\*") do set "MF_LEFT=1"
 ) else (
   if exist "%MF_DATA%\" set "MF_LEFT=1"
+  if exist "%MF_OLD%\" set "MF_LEFT=1"
 )
-if exist "%MF_OLD%\" set "MF_LEFT=1"
 if defined MF_LEFT (
   echo Some files could not be removed, perhaps because a program is using them. Restart Windows, then run
   echo Remove Musician Forge again.

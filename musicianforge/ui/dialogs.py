@@ -7,13 +7,14 @@ import os
 
 import wx
 
-from .. import audiotracks, instruments, projects, theory
+from .. import audiotracks, instruments, player_pieces, projects, theory
 from ..exportcheck import FADE_SECONDS_DEFAULT, FADE_SECONDS_RANGE
 from ..quantize import DEFAULT_GRID, GRID_NAMES, grid_ticks
 from ..song import Note
 from ..timeline import (MAX_BPM, MAX_NUMERATOR, MIN_BPM, NOTE_LENGTHS, PPQ, TimelineError,
                         describe_length, format_number)
-from .common import (BORDER, Form, choice_ctrl, end_dialog, finish_dialog, note_text, show_error, slider_ctrl,
+from .common import (BORDER, Form, ask_values, choice_ctrl, enable_keeping_focus, end_dialog, finish_dialog,
+                     keep_enter_for_lists, note_text, say_after, says_after, show_error, show_items, slider_ctrl,
                      spin_ctrl, text_ctrl)
 
 log = logging.getLogger("musicianforge.ui")
@@ -120,6 +121,76 @@ class InstrumentDialog(wx.Dialog):
         return self.groups[self.families[f]][i]
 
 
+# The New track list (Russell, 23 Oct 2026: "when the user presses new track, the user can choose between a list of
+# items ... instrument audio recording import file and then rhythm"): (what it is, its words in the list).
+# Russell, 23 Oct 2026, 1:10 PM: Recording left the list ("that's not needed"); Import file is the one place to
+# import from (it left the File menu).
+TRACK_KINDS = (
+    ("instrument", "Instrument: play or write notes with an instrument sound"),
+    ("audio", "Audio: an empty audio track, for recording sound or adding audio files"),
+    ("import", "Import file: an audio file on a new track, or a MIDI file as new tracks"),
+    ("player", "Rhythm player: a player and its style, on a new track"),
+)
+
+
+class NewTrackDialog(wx.Dialog):
+    """New track (Control+T, the New track button, and at once in a new project): a list of the kinds of track.
+    Enter or a double-click on one chooses it, as does the Choose button; Escape and Cancel add nothing. Then that
+    kind's own window opens (the instrument list, the rhythm player and its style, Windows' Open window).
+
+    Enter is handled in the window's EVT_CHAR_HOOK: on Windows, a dialog's own navigation takes Enter before a
+    list's EVT_KEY_DOWN sees it."""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="New track")
+        body = wx.BoxSizer(wx.VERTICAL)
+        body.Add(wx.StaticText(self, label="Kind of track"))
+        self.list = wx.ListBox(self, choices=[words for _kind, words in TRACK_KINDS], style=wx.LB_SINGLE,
+                               size=(520, 120))
+        body.Add(self.list, 1, wx.EXPAND | wx.TOP, 4)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.choose_button = wx.Button(self, wx.ID_OK, label="&Choose")
+        self.cancel_button = wx.Button(self, wx.ID_CANCEL, label="Cancel")
+        for button in (self.choose_button, self.cancel_button):
+            row.Add(button, 0, wx.ALL, 3)
+        body.Add(row, 0, wx.TOP, 6)
+        body.Add(wx.StaticText(self, label="Enter chooses the selected kind. Escape adds nothing."), 0, wx.TOP, 6)
+        finish_dialog(self, body, buttons=0)
+        self.SetEscapeId(wx.ID_CANCEL)
+        self.choose_button.SetDefault()
+        self.list.SetSelection(0)
+        self.choose_button.Bind(wx.EVT_BUTTON, lambda e: self.choose())
+        self.cancel_button.Bind(wx.EVT_BUTTON, lambda e: end_dialog(self, wx.ID_CANCEL))
+        self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.choose())
+        self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
+        self.list.SetFocus()
+
+    def on_char_hook(self, event):
+        key = event.GetKeyCode()
+        if event.GetModifiers() == wx.MOD_NONE:
+            on_list = event.GetEventObject() is self.list or wx.Window.FindFocus() is self.list
+            if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and on_list:
+                self.choose()
+                return
+            if key == wx.WXK_ESCAPE:
+                end_dialog(self, wx.ID_CANCEL)
+                return
+        event.Skip()
+
+    def choose(self):
+        if self.get_kind() is not None:
+            end_dialog(self, wx.ID_OK)
+
+    def get_kind(self):
+        """"instrument", "audio", "import" or "player" (None when nothing is selected)."""
+        index = self.list.GetSelection()
+        return TRACK_KINDS[index][0] if 0 <= index < len(TRACK_KINDS) else None
+
+    def choose_kind(self, kind):
+        """Select a kind in the list (as arrowing to it does)."""
+        self.list.SetSelection([k for k, _words in TRACK_KINDS].index(kind))
+
+
 class TrackSettingsDialog(wx.Dialog):
     def __init__(self, parent, session, track):
         super().__init__(parent, title="Track settings: {}".format(track.name))
@@ -150,6 +221,18 @@ class TrackSettingsDialog(wx.Dialog):
         self.solo = wx.CheckBox(self, label="Solo")
         self.solo.SetValue(track.solo)
         form.add_wide(self.solo)
+        # Kit piece loudness (0.9.7; Russell, 23 Oct 2026: "adjusting the loudness of the ride, the hi-hat, that will
+        # all move to the track settings for that rhythm player specific track"): the drummer's own mix on this track,
+        # one slider per kit piece, on any track with a drummer, in every project (Russell, 23 Oct 2026, 4:52 AM: "for
+        # new and old projects"). It is how loud each piece plays, not how hard the drummer plays (Intensity).
+        self.kit_levels = {}
+        if not track.is_audio and session.track_has_drummer(track.id):
+            form.add_wide(wx.StaticText(self, label="Kit piece loudness (the drummer's mix on this track)"))
+            levels = player_pieces.clean_kit_levels(track.kit_levels)
+            for piece in player_pieces.DRUM_PIECES:
+                self.kit_levels[piece.key] = form.add(
+                    player_pieces.kit_level_label(piece), slider_ctrl,
+                    value=levels.get(piece.key, player_pieces.LEVEL_DEFAULT), min_value=0, max_value=100)
         finish_dialog(self, form.grid)
         if self.instrument_button is not None:
             self.instrument_button.Bind(wx.EVT_BUTTON, self.on_instrument)
@@ -169,6 +252,8 @@ class TrackSettingsDialog(wx.Dialog):
                   "mute": self.mute.GetValue(), "solo": self.solo.GetValue()}
         if self.is_audio:
             values.update(stereo=self.stereo.GetValue(), monitor=self.monitor.GetValue())
+        if self.kit_levels:
+            values["kit_levels"] = {key: slider.GetValue() for key, slider in self.kit_levels.items()}
         return values
 
 
@@ -265,6 +350,7 @@ class ChangesDialog(wx.Dialog):
         self.delete_button.Bind(wx.EVT_BUTTON, lambda e: self.delete())
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.edit())
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.refresh(0)
         self.list.SetFocus()
 
@@ -287,10 +373,8 @@ class ChangesDialog(wx.Dialog):
 
     def refresh(self, select=None):
         items = self._items()
-        self.list.Set([self._describe(i) for i in items])
-        if items:
-            index = min(select if select is not None else 0, len(items) - 1)
-            self.list.SetSelection(max(0, index))
+        index = max(0, min(select if select is not None else 0, len(items) - 1)) if items else None
+        show_items(self.list, [self._describe(i) for i in items], index)   # read once (screen reader audit B1)
 
     def _current_bar(self):
         tl = self.session.song.timeline
@@ -328,20 +412,19 @@ class ChangesDialog(wx.Dialog):
             s.set_key(*values)
 
     def _run_editor(self, item=None, index=None):
-        while True:
-            with self._open_editor(item) as dlg:
-                if dlg.ShowModal() != wx.ID_OK:
-                    return
-                try:
-                    values = dlg.get_values()
-                    if index == 0 and values[0] != 1:
-                        raise ValueError("The first change must stay at bar 1")
-                    self._apply(values, replacing=index)
-                except (ValueError, TimelineError) as exc:
-                    show_error(self, str(exc))
-                    continue
-                self.refresh(self._find(values))
-                return
+        # one window, shown again after a mistake with everything typed still in it (the review, 23 Oct 2026: a new
+        # window came back with the old values, so a tempo typed as "12o" at bar 3 had to be typed again)
+        def apply():
+            values = dlg.get_values()
+            if index == 0 and values[0] != 1:
+                raise ValueError("The first change must stay at bar 1")
+            self._apply(values, replacing=index)           # (TimelineError is a ValueError)
+            return values
+
+        with self._open_editor(item) as dlg:
+            values = ask_values(lambda d: d.ShowModal(), dlg, apply, on_error=lambda words: show_error(self, words))
+        if values is not None:
+            self.refresh(self._find(values))
 
     def _find(self, values):
         for i, item in enumerate(self._items()):
@@ -349,10 +432,12 @@ class ChangesDialog(wx.Dialog):
                 return i
         return 0
 
+    @says_after
     def add(self):
         self._run_editor(None, None)
         self.list.SetFocus()
 
+    @says_after
     def edit(self):
         index = self.list.GetSelection()
         if index == wx.NOT_FOUND:
@@ -360,6 +445,7 @@ class ChangesDialog(wx.Dialog):
         self._run_editor(self._items()[index], index)
         self.list.SetFocus()
 
+    @says_after
     def delete(self):
         index = self.list.GetSelection()
         if index == wx.NOT_FOUND:
@@ -375,7 +461,9 @@ class ChangesDialog(wx.Dialog):
 
     def on_key(self, event):
         key = event.GetKeyCode()
-        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        if event.GetModifiers() != wx.MOD_NONE:
+            event.Skip()            # Alt+Enter, Control+Delete and the like are not Enter or Delete (0.9.7)
+        elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.edit()
         elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
             self.delete()
@@ -429,6 +517,9 @@ class NoteDialog(wx.Dialog):
         index = self.length.GetSelection()
         if index < len(LENGTH_TICKS):
             self.ticks.SetValue(LENGTH_TICKS[index])
+        # the ticks count only with "Other, in ticks": dimmed otherwise, so what is typed there is not ignored
+        # without a word (the review, 23 Oct 2026)
+        self.ticks.Enable(index >= len(LENGTH_TICKS))
 
     def get_note(self):
         """The edited note; raises ValueError with a friendly message."""
@@ -530,7 +621,7 @@ class EventListDialog(wx.Dialog):
         help_text = ("Keys (each has a button too): Space selects or unselects the note you are on, Control+A selects "
                      "every note. Delete, Control plus Up or Down arrow (a semitone; add Shift for an octave), "
                      "Quantize and P (play) work on the selected notes, or on the note you are on when none is "
-                     "selected. Enter edits the note you are on, and Alt+A adds one (Insert too).")
+                     "selected. Enter edits the note you are on, and Alt+A adds one.")
         body.Add(note_text(self, help_text, width=560), 0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
         self.SetEscapeId(wx.ID_CANCEL)
@@ -543,6 +634,7 @@ class EventListDialog(wx.Dialog):
                             ("octave_up", lambda: self.transpose(12)), ("octave_down", lambda: self.transpose(-12))):
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self.on_note_button(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.list.Bind(wx.EVT_LISTBOX, self.on_select)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.edit())
         self.refresh([0])
@@ -578,13 +670,15 @@ class EventListDialog(wx.Dialog):
         mapping = self.real_indices()
         self.marked &= set(mapping)
         if notes:
-            self.list.Set([self.session.describe_note(n, self.track_id) + (", selected" if mapping[i] in self.marked
-                                                                           else "") for i, n in enumerate(notes)])
+            items = [self.session.describe_note(n, self.track_id) + (", selected" if mapping[i] in self.marked
+                                                                     else "") for i, n in enumerate(notes)]
         else:
-            self.list.Set(["No notes yet. Press Alt+A to add one, or record with the musical keyboard."])
+            items = ["No notes yet. Press Alt+A to add one, or record with the musical keyboard."]
         valid = [i for i in select if 0 <= i < len(notes)]
         here = valid[0] if valid else (0 if notes else wx.NOT_FOUND)
-        self.list.SetSelection(here if here != wx.NOT_FOUND else 0)
+        # only what changed, and the list moves once: Space or Control+A used to fill the whole list again, and the
+        # screen reader read it over what was said (screen reader audit B1, B2)
+        show_items(self.list, items, here if here != wx.NOT_FOUND else 0)
         if notes and here != wx.NOT_FOUND:
             self.list.EnsureVisible(here)
 
@@ -613,16 +707,20 @@ class EventListDialog(wx.Dialog):
         else:
             self.marked.add(real)
             word = "selected"
+        in_list = wx.Window.FindFocus() is self.list
         self.refresh([here])
         count = len(self.marked)
-        self.session.announce("{}. {} note{} selected".format(word.capitalize(), count, "" if count == 1 else "s"))
+        words = "{} note{} selected".format(count, "" if count == 1 else "s")
+        # Space in the list: the list reads the note again with or without ", selected", so only the count is
+        # added, after it (screen reader audit B2); from the Select button the list is not read
+        say_after(self.session.announce, words if in_list else "{}. {}".format(word.capitalize(), words))
 
     def mark_all(self):
         self.marked = set(self.real_indices())
         here = self.current()
         self.refresh([here] if here is not None else [])
         count = len(self.marked)
-        self.session.announce("{} note{} selected".format(count, "" if count == 1 else "s"))
+        say_after(self.session.announce, "{} note{} selected".format(count, "" if count == 1 else "s"))
 
     def on_note_button(self, action):
         """One of the buttons for the list's keys: the same as the key, on the note the list is on (or the selected
@@ -655,46 +753,47 @@ class EventListDialog(wx.Dialog):
         wanted = {id(note) for note in chosen}
         self.marked = {i for i, note in enumerate(self.track_notes) if id(note) in wanted}
 
+    @says_after
     def add(self):
-        while True:
-            with NoteDialog(self, self.session, self.track_id, title="Add note",
-                            at_tick=self.span[0] if self.span else None) as dlg:
-                if dlg.ShowModal() != wx.ID_OK:
-                    break
-                chosen = self._marked_notes()
-                try:
-                    index = self.session.add_note(self.track_id, dlg.get_note())
-                except ValueError as exc:
-                    show_error(self, str(exc))
-                    continue
-                self._mark_notes(chosen)
-                self.refresh(self._to_positions([index]))
-                break
+        def add_it():
+            chosen = self._marked_notes()
+            return chosen, self.session.add_note(self.track_id, dlg.get_note())
+
+        # one window, shown again after a mistake with everything typed still in it (the review, 23 Oct 2026)
+        with NoteDialog(self, self.session, self.track_id, title="Add note",
+                        at_tick=self.span[0] if self.span else None) as dlg:
+            done = ask_values(lambda d: d.ShowModal(), dlg, add_it, on_error=lambda words: show_error(self, words))
+        if done is not None:
+            chosen, index = done
+            self._mark_notes(chosen)
+            self.refresh(self._to_positions([index]))
         self.list.SetFocus()
 
+    @says_after
     def edit(self):
         here = self.current()                      # Enter edits the note you are on
         if here is None:
             return
         index = self._to_real([here])[0]
-        while True:
-            with NoteDialog(self, self.session, self.track_id, self.track_notes[index]) as dlg:
-                if dlg.ShowModal() != wx.ID_OK:
-                    break
-                chosen = [note for note in self._marked_notes() if note is not self.track_notes[index]]
-                was_marked = index in self.marked
-                try:
-                    new_index = self.session.update_note(self.track_id, index, dlg.get_note())
-                except ValueError as exc:
-                    show_error(self, str(exc))
-                    continue
-                self._mark_notes(chosen)
-                if was_marked:                        # the edited note stays selected, at its new place
-                    self.marked.add(new_index)
-                self.refresh(self._to_positions([new_index]))
-                break
+
+        def change_it():
+            chosen = [note for note in self._marked_notes() if note is not self.track_notes[index]]
+            was_marked = index in self.marked
+            return chosen, was_marked, self.session.update_note(self.track_id, index, dlg.get_note())
+
+        # one window, shown again after a mistake with everything typed still in it (the review, 23 Oct 2026)
+        with NoteDialog(self, self.session, self.track_id, self.track_notes[index]) as dlg:
+            done = ask_values(lambda d: d.ShowModal(), dlg, change_it,
+                              on_error=lambda words: show_error(self, words))
+        if done is not None:
+            chosen, was_marked, new_index = done
+            self._mark_notes(chosen)
+            if was_marked:                        # the edited note stays selected, at its new place
+                self.marked.add(new_index)
+            self.refresh(self._to_positions([new_index]))
         self.list.SetFocus()
 
+    @says_after
     def delete(self):
         chosen = self.selected()
         if not chosen:
@@ -713,16 +812,19 @@ class EventListDialog(wx.Dialog):
             if self.marked:
                 self.marked = set(moved_real)
             moved = self._to_positions(moved_real)
+            in_list = wx.Window.FindFocus() is self.list
             self.refresh(moved[:1])
             if len(moved) == 1 and fits:
                 note = self.notes[moved[0]]
-                self.session.announce(self.session.describe_note(note, self.track_id))
+                if not in_list:      # in the list, the screen reader reads the note's new line itself (audit B2)
+                    say_after(self.session.announce, self.session.describe_note(note, self.track_id))
                 self.session.audition_note(self.track_id, note)
             elif len(moved) > 1 and fits:
                 # several notes: said in words, since from a button the list is not read (the final review)
-                self.session.announce("{} notes {} {}".format(len(moved), "up" if semitones > 0 else "down",
-                                                              "an octave" if abs(semitones) == 12 else "a semitone"))
+                say_after(self.session.announce, "{} notes {} {}".format(
+                    len(moved), "up" if semitones > 0 else "down", "an octave" if abs(semitones) == 12 else "a semitone"))
 
+    @says_after
     def quantize(self):
         with QuantizeDialog(self, self.session.settings, allow_selection=True) as dlg:
             while True:
@@ -753,20 +855,24 @@ class EventListDialog(wx.Dialog):
         self.list.SetFocus()
 
     def on_key(self, event):
+        # each key with exactly the modifiers it is listed with: Alt+Enter is not Enter, Alt+Space is Windows'
+        # own window menu, Control+Alt+Up is not Control+Up (0.9.7)
         key = event.GetKeyCode()
-        ctrl = event.ControlDown()
-        shift = event.ShiftDown()
-        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        mods = event.GetModifiers()
+        plain = mods == wx.MOD_NONE
+        ctrl = mods in (wx.MOD_CONTROL, wx.MOD_CONTROL | wx.MOD_SHIFT)
+        shift = mods & wx.MOD_SHIFT
+        if plain and key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.edit()
-        elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
+        elif plain and key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
             self.delete()
-        elif key in (wx.WXK_INSERT, wx.WXK_NUMPAD_INSERT):
+        elif plain and key in (wx.WXK_INSERT, wx.WXK_NUMPAD_INSERT):
             self.add()
-        elif key == wx.WXK_SPACE and not ctrl:
+        elif plain and key == wx.WXK_SPACE:
             self.toggle_mark()                     # Space selects (Russell, 10 Oct 2026); P plays
-        elif key == ord("P") and not ctrl and not shift:
+        elif plain and key == ord("P"):
             self.play_selected()
-        elif ctrl and key == ord("A"):
+        elif mods == wx.MOD_CONTROL and key == ord("A"):
             self.mark_all()
         elif ctrl and key == wx.WXK_UP:
             self.transpose(12 if shift else 1)
@@ -846,7 +952,7 @@ class RecordingsDialog(wx.Dialog):
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
             "Enter edits the selected recording: where it starts, which take plays, and its gain. "
-            "Space plays from it, or stops. Alt+I imports an audio file (WAV, MP3, M4A and more) at the playhead (Insert too). "
+            "Space plays from it, or stops. Alt+I imports an audio file (WAV, MP3, M4A and more) at the playhead. "
             "Delete removes the recording."), width=520), 0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
         self.SetEscapeId(wx.ID_CANCEL)
@@ -855,6 +961,7 @@ class RecordingsDialog(wx.Dialog):
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.buttons["import"].Enable(import_file is not None)
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.edit))
         self.refresh(0)
         self.list.SetFocus()
@@ -863,6 +970,7 @@ class RecordingsDialog(wx.Dialog):
     def regions(self):
         return self.session.song.track_by_id(self.track_id).regions
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -877,14 +985,13 @@ class RecordingsDialog(wx.Dialog):
     def refresh(self, select=0):
         regions = self.regions
         if regions:
-            self.list.Set([self.session.describe_region(self.track_id, i) for i in range(len(regions))])
-            self.list.SetSelection(max(0, min(select, len(regions) - 1)))
+            show_items(self.list, [self.session.describe_region(self.track_id, i) for i in range(len(regions))],
+                       max(0, min(select, len(regions) - 1)))
         else:
-            self.list.Set(["No recordings yet. Press R in the main window to record from the microphone, "
-                           "or Alt+I to import an audio file."])
-            self.list.SetSelection(0)
+            show_items(self.list, ["No recordings yet. Press R in the main window to record from the microphone, "
+                                   "or Alt+I to import an audio file."], 0)
         for key in ("play", "edit", "delete"):
-            self.buttons[key].Enable(bool(regions))
+            enable_keeping_focus(self.buttons[key], bool(regions), self.list)
 
     def selected(self):
         """The selected recording's place in the list, or None if there are none."""
@@ -902,18 +1009,14 @@ class RecordingsDialog(wx.Dialog):
         index = self.selected()
         if index is None:
             return
-        while True:
-            with RecordingDialog(self, self.session, self.track_id, index) as dlg:
-                if self.run_modal(dlg) != wx.ID_OK:
-                    return
-                try:
-                    values = dlg.get_values()
-                    new_index = self.session.update_region(self.track_id, index, **values)
-                except ValueError as exc:
-                    show_error(self, str(exc))
-                    continue
+        # one window, shown again after a mistake with everything typed still in it (the review, 23 Oct 2026)
+        with RecordingDialog(self, self.session, self.track_id, index) as dlg:
+            new_index = ask_values(self.run_modal, dlg,
+                                   lambda: self.session.update_region(self.track_id, index, speak=False,
+                                                                     **dlg.get_values()),
+                                   on_error=lambda words: show_error(self, words))
+        if new_index is not None:
             self.refresh(new_index)
-            return
 
     def import_audio(self):
         if self.import_file is None:
@@ -934,13 +1037,15 @@ class RecordingsDialog(wx.Dialog):
     def on_key(self, event):
         key = event.GetKeyCode()
         action = None
-        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        if event.GetModifiers() != wx.MOD_NONE:
+            pass                                   # Alt+Enter and the like are not Enter (0.9.7)
+        elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             action = self.edit
         elif key in (wx.WXK_INSERT, wx.WXK_NUMPAD_INSERT):
             action = self.import_audio
         elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
             action = self.delete
-        elif key == wx.WXK_SPACE and event.GetModifiers() == wx.MOD_NONE:
+        elif key == wx.WXK_SPACE:
             action = self.play
         if action is None:
             event.Skip()
@@ -968,7 +1073,9 @@ class MidiImportDialog(wx.Dialog):
                                   "instrument; channel 10 becomes drums. Control+Z takes the "
                                   "whole import back.")))
         finish_dialog(self, form.grid)
-        self.timeline.SetFocus()
+        # it opens on what the file holds, so the screen reader reads that first; Tab goes on to the check box
+        # (screen reader audit D4, 23 Oct 2026)
+        self.summary.SetFocus()
 
     def get_values(self):
         return {"use_timeline": self.timeline.GetValue()}
@@ -1044,6 +1151,10 @@ class SaveProjectDialog(wx.Dialog):
             self.folder = chosen
             self.where.SetValue(chosen)
         self.name.SetFocus()
+        if chosen:      # the Saved in box is not where the focus goes, so its new folder is said (audit, small note)
+            from ..speech import speaker
+
+            say_after(speaker.speak, "Saved in {}".format(chosen))
 
     def get_path(self):
         """Where the project file goes; raises ValueError if the name is empty."""
@@ -1112,6 +1223,7 @@ class OpenProjectDialog(wx.Dialog):
         self.browse_button.Bind(wx.EVT_BUTTON, lambda e: self.browse_for_project())
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.open_selected())
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         (self.list if self.paths else self.browse_button).SetFocus()
 
     def selected_path(self):
@@ -1137,7 +1249,7 @@ class OpenProjectDialog(wx.Dialog):
         return self.chosen or self.selected_path()
 
     def on_key(self, event):
-        if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and event.GetModifiers() == wx.MOD_NONE:
             self.open_selected()
         else:
             event.Skip()
@@ -1200,8 +1312,9 @@ class ExportAudioDialog(wx.Dialog):
         track_row.Add(self.select_button, 0, wx.RIGHT, 6)
         track_row.Add(self.all_button, 0)
         form.add_wide(track_row)
-        self.size_label = wx.StaticText(self, label="")
-        form.add_wide(self.size_label)
+        # a read-only box Tab reaches, not words on the window that changed where no screen reader went (screen
+        # reader audit, 23 Oct 2026)
+        self.size_box = form.add("Estimated size", text_ctrl, value="", style=wx.TE_READONLY)
         finish_dialog(self, form.grid)
         for control in (self.format, self.rate, self.bits, self.what):
             control.Bind(wx.EVT_CHOICE, self.update_size)
@@ -1226,17 +1339,17 @@ class ExportAudioDialog(wx.Dialog):
         return ", ".join(parts)
 
     def refresh_tracks(self):
+        # show_items: the item you are on changes its words last, once, so it is not read twice (the review,
+        # 23 Oct 2026: every item's words were set again, the one you were on too)
         here = self.tracks.GetSelection()
-        for index, tid in enumerate(self.track_ids):
-            self.tracks.SetString(index, self.track_words(tid))
-        if here != wx.NOT_FOUND:
-            self.tracks.SetSelection(here)
+        show_items(self.tracks, [self.track_words(tid) for tid in self.track_ids],
+                   here if here != wx.NOT_FOUND else None)
 
     def on_track_key(self, event):
         key = event.GetKeyCode()
-        if key == wx.WXK_SPACE and not event.GetModifiers():
+        if key == wx.WXK_SPACE and event.GetModifiers() == wx.MOD_NONE:
             self.toggle_track()
-        elif key in (ord("A"), ord("a")) and event.ControlDown():
+        elif key in (ord("A"), ord("a")) and event.GetModifiers() == wx.MOD_CONTROL:
             self.choose_all()
         else:
             event.Skip()
@@ -1324,14 +1437,14 @@ class ExportAudioDialog(wx.Dialog):
         bits = self.BITS[self.bits.GetSelection()]
         megabytes = self.session.estimate_export_bytes(fmt, rate, bits, self.tail.GetValue() and not fading) / 1e6
         if what == "song":
-            self.size_label.SetLabel("Estimated file size: {:.1f} megabytes".format(megabytes))
+            self.size_box.ChangeValue("Estimated file size: {:.1f} megabytes".format(megabytes))
         else:
             count = len(self.tracks_to_export())
             if count == 1:
                 kind = "1 track, one WAV file"
             else:
                 kind = "{} tracks, one zip file".format(count)
-            self.size_label.SetLabel("Estimated size: {:.1f} megabytes ({})".format(megabytes * max(1, count), kind))
+            self.size_box.ChangeValue("Estimated size: {:.1f} megabytes ({})".format(megabytes * max(1, count), kind))
         self.Layout()
 
 
@@ -1503,12 +1616,23 @@ class AudioSettingsDialog(wx.Dialog):
     def run_test(self):
         if self.test_microphone is None:
             return
-        self.test_button.Enable(False)
+        # the words first, then the focus on them (the screen reader reads them), then the button is dimmed: dimmed
+        # while it had the focus, Windows sent the focus on to whatever came next (screen reader audit D1)
         self.test_result.SetValue("Listening for 3 seconds. Speak, sing or play something.")
+        self.test_result.SetFocus()
+        self.test_button.Enable(False)
         try:
             self.test_microphone(self.api.GetStringSelection(), self.chosen_microphone(), self.show_test_result)
         except (ValueError, RuntimeError) as exc:
             self.show_test_result(str(exc))
+            self._say(str(exc))   # the box has the focus, but its new words are not read by themselves
+
+    @staticmethod
+    def _say(words):
+        """A test or measurement that could not start (no microphone, say): said, after the result box's reading."""
+        from ..speech import speaker
+
+        say_after(speaker.speak, words)
 
     def show_test_result(self, message):
         try:
@@ -1529,13 +1653,15 @@ class AudioSettingsDialog(wx.Dialog):
     def run_measurement(self):
         if self.measure_delay is None:
             return
-        self.measure_button.Enable(False)
         self.measure_result.SetValue("Measuring: eight clicks, about five seconds. Keep the room quiet.")
+        self.measure_result.SetFocus()                 # as for the microphone test (audit D1)
+        self.measure_button.Enable(False)
         try:
             self.measure_delay(self.api.GetStringSelection(), self.chosen_microphone(), self.show_measurement)
         except (ValueError, RuntimeError) as exc:
             self.measure_result.SetValue(str(exc))
             self.measure_button.Enable(True)
+            self._say(str(exc))
 
     def show_measurement(self, result):
         """The measurement finished: show what was found, and fill in the adjustment if it is trustworthy."""
@@ -1692,7 +1818,7 @@ class SectionsDialog(wx.Dialog):
             row.Add(button, 0, wx.ALL, 3)
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
-            "Enter goes to the selected section. Alt+A adds a section after it (Insert too), Control+D copies it to the end of the song, "
+            "Enter goes to the selected section. Alt+A adds a section after it, Control+D copies it to the end of the song, "
             "Control+Up and Control+Down move it, F2 opens its settings, Delete removes it and its music. "
             "Sections have no limit.")), 0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
@@ -1702,10 +1828,12 @@ class SectionsDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.go_to))
         self.refresh(session.current_section_index())
         self.list.SetFocus()
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -1715,8 +1843,8 @@ class SectionsDialog(wx.Dialog):
 
     def refresh(self, select=0):
         song = self.session.song
-        self.list.Set(["{}. {}".format(i + 1, song.describe_section(i)) for i in range(len(song.sections))])
-        self.list.SetSelection(max(0, min(select, len(song.sections) - 1)))
+        show_items(self.list, ["{}. {}".format(i + 1, song.describe_section(i)) for i in range(len(song.sections))],
+                   max(0, min(select, len(song.sections) - 1)))
 
     def selected(self):
         index = self.list.GetSelection()
@@ -1725,7 +1853,8 @@ class SectionsDialog(wx.Dialog):
     def go_to(self):
         index = self.selected()
         self.went_to = index
-        self.session.go_to_section(index)
+        with self.session.pressed("window"):     # "Section 2, bar 9" once this window has closed (audit B4)
+            self.session.go_to_section(index)
         end_dialog(self, wx.ID_OK)
 
     def add(self):
@@ -1739,23 +1868,18 @@ class SectionsDialog(wx.Dialog):
 
     def settings(self):
         index = self.selected()
-        while True:
-            with SectionSettingsDialog(self, self.session, index) as dlg:
-                if self.run_modal(dlg) != wx.ID_OK:
-                    return
-                try:
-                    values = dlg.get_values()
-                except ValueError as exc:
-                    show_error(self, str(exc))
-                    continue
-            lost = self.session.notes_lost_if_shortened(index, values["length"])
-            if lost and not self.confirm("Shortening this section removes {} note{} in its last bars. "
-                                         "You can undo this with Control+Z. Continue?".format(
-                                             lost, "" if lost == 1 else "s")):
-                return
-            self.session.update_section(index, **values)
-            self.refresh(index)
+        # one window, shown again after a mistake with everything typed still in it (the review, 23 Oct 2026)
+        with SectionSettingsDialog(self, self.session, index) as dlg:
+            values = ask_values(self.run_modal, dlg, on_error=lambda words: show_error(self, words))
+        if values is None:
             return
+        lost = self.session.notes_lost_if_shortened(index, values["length"])
+        if lost and not self.confirm("Shortening this section removes {} note{} in its last bars. "
+                                     "You can undo this with Control+Z. Continue?".format(
+                                         lost, "" if lost == 1 else "s")):
+            return
+        self.session.update_section(index, **values)
+        self.refresh(index)
 
     def delete(self):
         index = self.selected()
@@ -1770,15 +1894,17 @@ class SectionsDialog(wx.Dialog):
 
     def on_key(self, event):
         key = event.GetKeyCode()
-        ctrl = event.ControlDown()
+        mods = event.GetModifiers()
+        plain = mods == wx.MOD_NONE           # each key with exactly its own modifiers: Alt+Enter is not Enter (0.9.7)
+        ctrl = mods == wx.MOD_CONTROL
         action = None
-        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        if plain and key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             action = self.go_to
-        elif key in (wx.WXK_INSERT, wx.WXK_NUMPAD_INSERT):
+        elif plain and key in (wx.WXK_INSERT, wx.WXK_NUMPAD_INSERT):
             action = self.add
-        elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
+        elif plain and key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
             action = self.delete
-        elif key == wx.WXK_F2:
+        elif plain and key == wx.WXK_F2:
             action = self.settings
         elif ctrl and key == ord("D"):
             action = self.duplicate

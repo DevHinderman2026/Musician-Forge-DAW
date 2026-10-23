@@ -217,7 +217,7 @@ MELODIC = {
                   ("Quarter-note pulse", "C...C...C...C..."),
                   ("Sixteenth pulse, accented on the beats", "CCCCCCCCCCCCCCCC"),
                   ("Syncopated pulse: three-three-two", "C..C..C.C..C..C.")],
-        "arpeggio": [("Broken chords flowing up and down", None),
+        "arpeggio": [("Broken chords flowing up, up and down, or in waves", None),
                      ("Slow arpeggio in quarter notes", "Y...Y...Y...Y...|H..............."),
                      ("Sixteenth-note arpeggio", "YYYYYYYYYYYYYYYY|H..............."),
                      ("Alberti bass: low, high, middle, high", "B.B.B.B.B.B.B.B.")],
@@ -235,7 +235,7 @@ MELODIC = {
                 ("Two pad chords a bar", "C.......C......."),
                 ("A swelling pad on every beat", "C...C...C...C..."),
                 ("A held pad with the next chord pushed in early", "C.............N.")],
-        "arp_up": [("Chord notes climbing in sixteenths", None),
+        "arp_up": [("Chord notes climbing in eighths, or sixteenths from Complexity 40", None),
                    ("Climbing in eighths", "Y.Y.Y.Y.Y.Y.Y.Y."),
                    ("Climbing in a three-three-two rhythm", "Y..Y..Y.Y..Y..Y."),
                    ("Sixteenths with a rest on each beat", "-YYY-YYY-YYY-YYY")],
@@ -319,15 +319,30 @@ def figure(player_key, style_key, variation):
     return table[min(len(table), int(variation)) - 1][1]
 
 
-def figure_events(text, steps, beat, arp_shape="up", step_map=None, beats=None):
+# Rules 3 (the review, 23 Oct 2026): where each sixteenth of a dotted beat (6/8, 9/8, 12/8, the long beat of 7/8)
+# reads a 4/4 beat's figure: its three eighths read the beat, the and, and the and again; the sixteenths between them
+# the e, the e again and the a. Before, the third eighth held the note before, so a figure in eighths lost a note in
+# every dotted beat, and one in sixteenths a sixteenth.
+DOTTED_PLACES = (0, 1, 2, 1, 2, 3)
+
+
+def figure_events(text, steps, beat, arp_shape="up", step_map=None, beats=None, pulses=None):
     """[(step, length in steps, accent, role)] for one bar from a figure (repeated or cut to the bar). step_map and
-    beats: the bar's meter (players._Bar.map and .beats), so a 16-step figure fits 3/4, 6/8 or 7/8 beat by beat."""
+    beats: the bar's meter (players._Bar.map and .beats), so a 16-step figure fits 3/4, 6/8 or 7/8 beat by beat.
+    pulses: rules 3, the bar's beats ((first sixteenth, length) each): a dotted beat reads DOTTED_PLACES."""
     events = []
     rows = text.split("|")
+    dotted = {}
+    for first, length in pulses or ():
+        if length == len(DOTTED_PLACES) and step_map is not None and first < len(step_map):
+            for t, place in enumerate(DOTTED_PLACES):
+                if first + t < steps:
+                    dotted[first + t] = step_map[first] - step_map[first] % 4 + place
     for row_number, row in enumerate(rows):
         if row and step_map is not None and len(row) == 16 and len(step_map) == steps:
-            cells = "".join(row[step_map[s]] if step_map[s] > step_map[s - 1] or s == 0 or row[step_map[s]] == "."
-                            else "." for s in range(steps))          # a cell met again in a dotted beat holds on
+            cells = "".join(row[dotted[s]] if s in dotted else
+                            (row[step_map[s]] if step_map[s] > step_map[s - 1] or s == 0 or row[step_map[s]] == "."
+                             else ".") for s in range(steps))          # a cell met again in a dotted beat holds on
         else:
             cells = (row * (steps // len(row) + 1))[:steps] if row else ""
         k = 0

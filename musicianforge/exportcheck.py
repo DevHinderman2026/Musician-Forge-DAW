@@ -115,11 +115,12 @@ def song_words(windows, song, loud_tracks=None):
         places_words(windows, song), over)
     named = _named(loud_tracks)
     if named:
-        changes = ", ".join("{} from volume {} to {}".format(t.name, t.volume, turned_down(t.volume, over))
-                            for t in named)
+        changes = ", ".join("{} from volume {} to {}".format(track_label(t, song), t.volume,
+                                                             turned_down(t.volume, over)) for t in named)
         words += " The loudest track{} there {} {}. Turning {} down about {} dB ({}) should fix it; export again to " \
                  "check.".format("s" if len(named) > 1 else "", "are" if len(named) > 1 else "is",
-                                 _list_words([t.name for t in named]), "them" if len(named) > 1 else "it", over,
+                                 _list_words([track_label(t, song) for t in named]),
+                                 "them" if len(named) > 1 else "it", over,
                                  changes)
     else:
         words += " Turning the loudest tracks down about {} dB should fix it; export again to check.".format(over)
@@ -132,11 +133,26 @@ def tracks_words(found, song):
     for track, windows in found[:MOST_TRACKS]:
         over = whole_db(decibels_over(max(loud for _s, _e, loud in windows)))
         parts.append("{} at {}, up to about {} dB too loud (volume {} to {} fixes it)".format(
-            track.name, places_words(windows, song), over, track.volume, turned_down(track.volume, over)))
+            track_label(track, song), places_words(windows, song), over, track.volume,
+            turned_down(track.volume, over)))
     more = len(found) - len(parts)
     if more:
         parts.append("{} more track{}".format(more, "" if more == 1 else "s"))
     return " Distortion: {}. Export again to check.".format("; ".join(parts))
+
+
+def track_label(track, song):
+    """A track's name, with its number when another track has the same name ("track 2, Piano"): after Control+D
+    every copy is called the same, and "Piano, Piano and Piano" could not be told apart (23 Oct 2026)."""
+    tracks = list(getattr(song, "tracks", []) or [])
+    name = track.name
+    key = str(name).strip().lower()
+    if sum(1 for t in tracks if str(t.name).strip().lower() == key) < 2:
+        return name
+    for number, t in enumerate(tracks, 1):
+        if t is track or t.id == getattr(track, "id", None):
+            return "track {}, {}".format(number, name)
+    return name
 
 
 def _named(loud_tracks):

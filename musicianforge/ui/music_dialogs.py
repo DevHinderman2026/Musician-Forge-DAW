@@ -12,7 +12,8 @@ from .. import chords, player_pieces, players, theory
 from .. import player_variations as pv
 from ..session_music import FOLLOW_CHOICES, FOLLOW_NAMES, HandMadeSteps
 from ..timeline import MAX_NUMERATOR
-from .common import (DecimalField, Form, ask_values, choice_ctrl, end_dialog, finish_dialog, fit_to_screen, note_text,
+from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, end_dialog, enter_for_lists,
+                     finish_dialog, fit_to_screen, keep_enter_for_lists, note_text, say_after, says_after,
                      set_note_text, show_error, show_items, silence_name, slider_ctrl, spin_ctrl)
 from .effects_dialogs import percent_label
 
@@ -77,7 +78,7 @@ class ChordTrackDialog(wx.Dialog):
             ("clear", "C&lear bars..."), ("close", "Close")))
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
-            "Enter edits the selected chord change, Alt+A adds one (Insert too), Delete removes one. Rhythm players for bass, "
+            "Enter edits the selected chord change, Alt+A adds one, Delete removes one. Rhythm players for bass, "
             "keys, synth and guitar play these chords. Where the chord track is empty they play the key's own "
             "chord."), width=520), 0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
@@ -87,6 +88,7 @@ class ChordTrackDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.edit))
         self.refresh(self._index_at_playhead())
         self.list.SetFocus()
@@ -99,6 +101,7 @@ class ChordTrackDialog(wx.Dialog):
                 index = i
         return index
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -109,13 +112,11 @@ class ChordTrackDialog(wx.Dialog):
     def refresh(self, select=0):
         count = len(self.session.song.chords)
         if count:
-            self.list.Set([self.session.describe_chord(i) for i in range(count)])
-            self.list.SetSelection(max(0, min(select, count - 1)))
+            show_items(self.list, [self.session.describe_chord(i) for i in range(count)], max(0, min(select, count - 1)))
         else:
-            self.list.Set(["No chord changes yet. Press Alt+A to add one, or Fill from a progression."])
-            self.list.SetSelection(0)
+            show_items(self.list, ["No chord changes yet. Press Alt+A to add one, or Fill from a progression."], 0)
         for key in ("edit", "delete"):
-            self.buttons[key].Enable(bool(count))
+            enable_keeping_focus(self.buttons[key], bool(count), self.list)
 
     def selected(self):
         if not self.session.song.chords:
@@ -298,16 +299,15 @@ class ChordStripsDialog(wx.Dialog):
     def refresh(self, select=None):
         here = self.list.GetSelection() if select is None else select
         items = [self.session.chord_strip_words(i) for i in range(8)]
-        if [self.list.GetString(i) for i in range(self.list.GetCount())] != items:
-            self.list.Set(items)
-        self.list.SetSelection(max(0, min(7, here if here != wx.NOT_FOUND else 0)))
+        show_items(self.list, items, max(0, min(7, here if here != wx.NOT_FOUND else 0)))   # read once (audit B1)
         own = bool(self.session.song.strips)
-        self.buttons["reset"].Enable(own)
+        enable_keeping_focus(self.buttons["reset"], own, self.list)        # audit B3
         set_note_text(self.note, "These are your own chords; they stay as they are when the key changes. Number keys 1 "
                                  "to 8 play their bass notes." if own else
                                  "These are the song key's chords; they follow key changes. Change one to make them "
                                  "your own. Number keys 1 to 8 play their bass notes.", width=460)
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -480,9 +480,10 @@ class ChordsFromTrackDialog(BarRangeDialog):
 # rhythm players
 # ----------------------------------------------------------------------
 class NewPlayerDialog(wx.Dialog):
-    """Choose a rhythm player, its style, where it goes and how long it plays."""
+    """Choose a rhythm player, its style, where it goes and how long it plays. new_track: from the New track list,
+    where it always goes on a new track (Where then offers nothing else)."""
 
-    def __init__(self, parent, session):
+    def __init__(self, parent, session, new_track=False):
         super().__init__(parent, title="New rhythm player")
         self.session = session
         self.order = [players.PLAYERS[k] for k in players.PLAYER_ORDER]
@@ -491,7 +492,7 @@ class NewPlayerDialog(wx.Dialog):
         self.style = form.add("Style", choice_ctrl, choices=[])
         self.about = form.add("About this style", wx.TextCtrl, value="", style=wx.TE_READONLY | wx.TE_MULTILINE,
                               size=(-1, 60))
-        track = session.song.track_by_id(session.selected_track_id)
+        track = None if new_track else session.song.track_by_id(session.selected_track_id)
         self.track_id = track.id if track is not None and not track.is_audio else None
         places = ["On a new track"]
         if self.track_id is not None:
@@ -719,14 +720,16 @@ class PlayerEditorDialog(wx.Dialog):
             self.swing_note.SetSelection(players.SWING_NOTES.index(settings["swing_note"]))
             self.follow.SetSelection(FOLLOW_CHOICES.index(settings["follow"]))
             self.candidates = self.session.follow_candidates(self.track_id, self.index)
-            if self.candidates:
-                self.follow_track.Set([label for _id, label in self.candidates])
-                ids = [c[0] for c in self.candidates]
-                self.follow_track.SetSelection(ids.index(settings["follow_track"])
-                                               if settings["follow_track"] in ids else 0)
-            else:
-                self.follow_track.Set(["No other track has notes or a recording in this region"])
-                self.follow_track.SetSelection(0)
+            # the list is made again only when its tracks changed: made again on every change, the list you were in
+            # was emptied and filled under you (the review, 23 Oct 2026)
+            ids = [c[0] for c in self.candidates]
+            labels = [label for _id, label in self.candidates] or [
+                "No other track has notes or a recording in this region"]
+            if [self.follow_track.GetString(i) for i in range(self.follow_track.GetCount())] != labels:
+                self.follow_track.Set(labels)
+            chosen = ids.index(settings["follow_track"]) if settings["follow_track"] in ids else 0
+            if self.follow_track.GetSelection() != chosen:
+                self.follow_track.SetSelection(chosen)
             following = settings["follow"] == "track"
             self.follow_track.Enable(following and bool(self.candidates))
             self.sliders["follow_amount"].Enable(following)
@@ -741,7 +744,9 @@ class PlayerEditorDialog(wx.Dialog):
             show_items(self.pieces, [words for _key, words in lines], min(here, len(lines) - 1))
             self.play_after.SetValue(settings.get("play_after_reforge", True))
             track = self.session.song.track_by_id(self.track_id)
-            self.patch.SetLabel("&Patch: {}...".format(track.instrument.name))
+            patch = "&Patch: {}...".format(track.instrument.name)
+            if self.patch.GetLabel() != patch:     # a new name only when it changed: the screen reader reads a new
+                self.patch.SetLabel(patch)         # name of the focused button (screen reader audit D3)
             self.summary.SetValue(self.session.player_summary(self.track_id, self.index))
         finally:
             self._filling = False
@@ -770,7 +775,8 @@ class PlayerEditorDialog(wx.Dialog):
     def _close(self, words=None, code=wx.ID_CANCEL):
         self._closed = True
         if words:
-            self.session.announce(words)
+            with self.session.pressed("window"):   # said once this window has closed, not under it (audit B4)
+                self.session.announce(words)
         end_dialog(self, code)
 
     # -- changes ---------------------------------------------------------------
@@ -791,7 +797,8 @@ class PlayerEditorDialog(wx.Dialog):
         self.change(style=self.player.styles[self.style.GetSelection()].key)
         settings = self.settings()
         if settings["variation"] != before:
-            self.session.announce("This style has {} variations, so it is on variation 1".format(
+            # after the Style list's own reading of the new style, not over it (screen reader audit D3)
+            say_after(self.session.announce, "This style has {} variations, so it is on variation 1".format(
                 players.variation_count(settings)))
 
     def go_to_variation(self, number, speak=True):
@@ -871,10 +878,15 @@ class PlayerEditorDialog(wx.Dialog):
             self.session.announce("The part cannot be turned off; mute the region instead (M in the Regions list)")
             return
         on = not self.session.piece_settings(self.track_id, self.index, piece)["on"]
+        in_list = wx.Window.FindFocus() is self.pieces
         self.session.update_piece(self.track_id, self.index, piece, speak=False, on=on)
         self.fill()
-        name = player_pieces.PIECE_BY_KEY[piece].name
-        self.session.announce("{} {}".format(name, "on" if on else "off"))      # short (Russell, 10 Oct 2026)
+        turns = getattr(self.session, "turn_words", None)
+        if turns:                   # the ride and the hi-hats take turns (0.9.7): "Ride on, hi-hat foot only"
+            say_after(self.session.announce, turns)
+        elif not in_list:       # the Pieces list reads the piece's line again, with on or off (screen reader audit B2)
+            name = player_pieces.PIECE_BY_KEY[piece].name
+            say_after(self.session.announce, "{} {}".format(name, "on" if on else "off"))   # short (10 Oct 2026)
 
     def open_piece(self):
         piece = self.selected_piece()
@@ -909,6 +921,10 @@ class PlayerEditorDialog(wx.Dialog):
             self._close("This region is no longer a rhythm player, so the editor closed")
 
     def on_char_hook(self, event):
+        # Enter on the Kit pieces list (or the part) opens its settings: taken here, before Windows' dialog navigation
+        # swallows it (Russell, 23 Oct 2026: Enter on a kit piece did nothing; common.enter_for_lists)
+        if enter_for_lists(event, ((self.pieces, self.on_pieces_key),)):
+            return
         key = event.GetKeyCode()
         if event.GetModifiers() == wx.MOD_CONTROL:
             if key == ord("R"):
@@ -942,7 +958,8 @@ class _RegionWindow:
         if self._still_there():
             return False
         self._closed = True
-        self.session.announce("This region is no longer a rhythm player, so the window closed")
+        with self.session.pressed("window"):       # said once this window has closed (audit B4)
+            self.session.announce("This region is no longer a rhythm player, so the window closed")
         end_dialog(self, wx.ID_CANCEL)
         return True
 
@@ -1034,9 +1051,16 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
             self._choice(form, "length", "Note length", player_pieces.LENGTHS)
             self._check(form, "root_only", "Play the root only")
             self._check(form, "passing", "Add passing notes into each chord change")
-        self.numbers["level"] = form.add(
-            "Loudness of this piece in percent (50 is as the style plays it, 100 the loudest, 0 silent)", slider_ctrl,
-            value=player_pieces.LEVEL_DEFAULT)
+        # A kit piece's loudness is the drummer track's (Track settings; Russell, 23 Oct 2026, in every project), so a
+        # kit piece's window has none, unless this region has one of its own from an older version (a region made
+        # before 0.9.7, or pasted from one): it still plays, on top of the track's, so the project sounds as it did,
+        # and the slider is here so it can be put back to 50. The part of the other players keeps its Loudness here
+        # always (Russell's choice).
+        self.own_loudness = self.part or full["level"] != player_pieces.LEVEL_DEFAULT
+        if self.own_loudness:
+            self.numbers["level"] = form.add(
+                "Loudness of this piece in percent (50 is as the style plays it, 100 the loudest, 0 silent)"
+                if self.part else player_pieces.REGION_LEVEL_LABEL, slider_ctrl, value=player_pieces.LEVEL_DEFAULT)
         self.steps_button = wx.Button(self, label="&Step pattern...")
         form.add_wide(self.steps_button)
         self.clear_button = wx.Button(self, label="&Back to the pattern (the hand-made steps go)")
@@ -1109,10 +1133,11 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
         try:
             about = self.session.describe_piece(self.track_id, self.index, self.piece.key)
             if full["steps"]:
-                about += (". Your steps set its rhythm and each step's loudness{}; Loudness now changes only what comes "
-                          "by itself (fills, and crashes where the region starts and after fills)".format(
+                about += (". Your steps set its rhythm and each step's loudness{}{}".format(
                               "" if self.part else ", so Pattern, Complexity, Time and Ghost notes are dimmed until "
-                                                   "Back to the pattern"))
+                                                   "Back to the pattern",
+                              "; Loudness now changes only what comes by itself (fills, and crashes where the region "
+                              "starts and after fills)" if self.own_loudness else ""))
             self.options = self.pattern_options()
             keys = [key for key, _words in self.options]
             if full["pattern"] not in keys:            # chosen from a list that has changed since (a new variation)
@@ -1165,6 +1190,9 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
             show_error(self, str(exc))
             return
         self.fill()
+        turns = getattr(self.session, "turn_words", None)
+        if turns:                   # Play this piece or a Pattern changed the ride or the hi-hats (0.9.7): said, briefly
+            self.session.announce(turns)
         # nothing more is said: the pattern list, choices, check boxes and number boxes are read by the screen reader
         # as they change, and the piece's whole line on top of that was too much (Russell, 10 Oct 2026)
 
@@ -1214,7 +1242,7 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
         self.sounds = player_pieces.sound_names(self.piece, self.player_key, self.kit, self.kit_notes)
         region = session.song.track_by_id(track_id).note_regions[index]
         self.region_start = region.start
-        layout = players._bars(session.song.timeline, region.start, region.end)
+        layout = players.whole_bars(session.song.timeline, region.start, region.end)   # bar 1: the first whole one
         self.region_bars = len(layout)
         self.bar_steps, self.beat_steps = layout[0].steps, layout[0].beat_steps
         name = "the part" if self.part else self.piece.name
@@ -1244,7 +1272,7 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
             "shows what the piece plays now. Changing a step makes the piece hand-made: Reforge keeps it, and the "
             "pattern repeats through the whole region. Crashes where the region starts and after fills still come by "
             "themselves. At the end of a phrase a fill still takes over the snare, claps and toms (the kick, hi-hats, "
-            "ride and shaker keep your steps): set Fills to 0 to hear only your steps.")))
+            "ride and shaker keep your steps): set Fill amount to 0 to hear only your steps.")))
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(form.grid, 0, wx.EXPAND)
         outer.Add(step_row, 0, wx.TOP, 6)
@@ -1325,7 +1353,10 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
         """Store the steps as the piece's hand-made steps (one undo step), then say the step that changed (and, the
         first time, that the pattern now repeats through the region)."""
         first_time = not self.hand_made
+        was_on = self.part or self.session.piece_settings(self.track_id, self.index, self.piece.key)["on"]
         self.session.set_piece_steps(self.track_id, self.index, self.piece.key, self.steps, speak=False)
+        # steps for the ride take the hand from the hi-hats, and the other way round (0.9.7: one hand, one cymbal)
+        turns = getattr(self.session, "turn_words", None)
         self.hand_made = True
         self.steps = self.session.piece_steps(self.track_id, self.index, self.piece.key)
         here = self.list.GetSelection()
@@ -1333,13 +1364,31 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
         if speak_index is not None:
             bar, step = self.positions()[speak_index]
             words = self.describe(bar, step)
+            extra = ""
             if first_time:
-                words += ". {} is hand-made now".format("The part" if self.part else self.piece.name)
+                extra = "{} is hand-made now".format("The part" if self.part else self.piece.name)
                 if self.region_bars > len(self.steps["bars"]):
-                    words += "; its {} bar{} repeat{} through the region's {} bars".format(
+                    extra += "; its {} bar{} repeat{} through the region's {} bars".format(
                         len(self.steps["bars"]), "" if len(self.steps["bars"]) == 1 else "s",
                         "s" if len(self.steps["bars"]) == 1 else "", self.region_bars)
-            self.session.announce(words)
+        else:
+            words = extra = ""
+        # a piece turned off by hand that is given steps is turned on (23 Oct 2026), said briefly: "Kick on", or
+        # "Ride on, hi-hat foot only" when the ride and the hi-hats take turns (0.9.7)
+        turn = ""
+        if turns:
+            turn = turns
+        elif not was_on and self.session.piece_settings(self.track_id, self.index, self.piece.key)["on"]:
+            turn = "{} on".format(self.piece.name)
+        extra = ". ".join(w for w in (extra, turn) if w)
+        # in the list, the screen reader reads the step's new line itself: only what it does not say, after it
+        # (screen reader audit B2); from a button, the step's words too
+        if speak_index is not None and wx.Window.FindFocus() is not self.list:
+            text = ". ".join(w for w in (words, extra) if w)
+        else:
+            text = extra
+        if text:
+            say_after(self.session.announce, text)
 
     def on_key(self, event):
         key, mods = event.GetKeyCode(), event.GetModifiers()

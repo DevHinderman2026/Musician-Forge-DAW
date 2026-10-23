@@ -208,19 +208,23 @@ def parse(data):
         return int(round(raw_tick * scale))
 
     key_texts = {}
+    late_key_texts = {}
     padded_end = 0
     own_file = False                                    # written by Musician Forge (its own text events)
     track_events = [_events(body, short) for body, short in tracks]
     # Each channel's instrument, bank, volume and pan, from every track in time order: a type 1 file often sets
     # them up in a track of their own, apart from the notes (the review of 9 Oct 2026).
+    # A file with more than 16 channels' worth of tracks puts them on several MIDI ports (a port meta event in each
+    # track, as Musician Forge's export does since 23 Oct 2026): the same channel on two ports is two instruments.
+    ports = [_port_of(events) for events in track_events]
     settings = {}
-    for events in track_events:
+    for port, events in zip(ports, track_events):
         for tick, kind, channel, values in events:
             if kind == 0xC0:
-                settings.setdefault(channel, {}).setdefault("program", []).append((at(tick), values[0]))
+                settings.setdefault((port, channel), {}).setdefault("program", []).append((at(tick), values[0]))
             elif kind == 0xB0 and values[0] in (0, 7, 10):
                 what = {0: "bank", 7: "volume", 10: "pan"}[values[0]]
-                settings.setdefault(channel, {}).setdefault(what, []).append((at(tick), values[1]))
+                settings.setdefault((port, channel), {}).setdefault(what, []).append((at(tick), values[1]))
     for changes in settings.values():
         for key in changes:
             changes[key].sort(key=lambda change: change[0])          # stable: at the same moment, the later track
@@ -268,7 +272,14 @@ def parse(data):
                 elif meta == 0x06:
                     contents.markers.append((t, _text(payload)))
                 elif meta == 0x01 and _text(payload).startswith(KEY_TEXT_PREFIX):
-                    key_texts[t] = _text(payload)[len(KEY_TEXT_PREFIX):]
+                    words = _text(payload)[len(KEY_TEXT_PREFIX):]
+                    placed, words = key_text_place(words)
+                    if placed is None:
+                        key_texts[t] = words
+                    else:
+                        # a key change after the last note: its exact key is written earlier, saying where it
+                        # belongs (see midifile.song_to_midi_bytes); one written at its own place wins
+                        late_key_texts.setdefault(at(placed), words)
                 elif meta == 0x03 and number == 0 and t == 0 and not contents.title:
                     contents.title = _text(payload)
                 continue
@@ -312,7 +323,7 @@ def parse(data):
             if len([c for c in by_channel if by_channel[c]["notes"]]) > 1 or not name:
                 label = "drums" if channel == DRUM_CHANNEL else "channel {}".format(channel + 1)
                 name = "{}, {}".format(name, label) if name else "MIDI track {}, {}".format(number + 1, label)
-            changes = settings.get(channel, {})
+            changes = settings.get((ports[number], channel), {})
             first = state["first_note"]
             program = _at_first_note(changes.get("program"), first)
             if program is None and changes.get("program"):
@@ -328,6 +339,8 @@ def parse(data):
     contents.time_signatures = _last_at_each_tick(contents.time_signatures)
     contents.keys = _last_at_each_tick(contents.keys)
     # Musician Forge's own export writes the exact key (a mode, say) in a text event beside each key signature
+    for tick, words in late_key_texts.items():
+        key_texts.setdefault(tick, words)
     contents.keys = [(tick, sharps, minor, key_texts.get(tick)) for tick, sharps, minor in contents.keys]
     for note_track in contents.tracks:
         contents.end_tick = max([contents.end_tick] + [n.end for n in note_track.notes])
@@ -440,9 +453,34 @@ def key_from_signature(sharps, minor):
     return major_tonic, "Major"
 
 
-def key_text(tonic, scale):
-    """The text event Musician Forge's export writes beside a key signature: the exact key, mode and all."""
-    return "{}tonic={} scale={}".format(KEY_TEXT_PREFIX, int(tonic) % 12, scale)
+def key_text(tonic, scale, at=None):
+    """The text event Musician Forge's export writes beside a key signature: the exact key, mode and all.
+    at: the tick of the key signature it belongs to, when the text has to be written somewhere else (a key change
+    after the last note, 23 Oct 2026): "at=7680 tonic=2 scale=Dorian"."""
+    where = "at={} ".format(int(at)) if at is not None else ""
+    return "{}{}tonic={} scale={}".format(KEY_TEXT_PREFIX, where, int(tonic) % 12, scale)
+
+
+def key_text_place(words):
+    """(tick or None, the rest) of the words after KEY_TEXT_PREFIX: "at=7680 tonic=2 scale=Dorian" says which key
+    signature it belongs to."""
+    if words.startswith("at="):
+        first, _space, rest = words.partition(" ")
+        try:
+            tick = int(first[3:])
+        except ValueError:
+            return None, words
+        if tick >= 0:
+            return tick, rest
+    return None, words
+
+
+def _port_of(events):
+    """The MIDI port a track says it plays on (a port meta event, 0x21), or 0."""
+    for _tick, kind, _channel, values in events:
+        if kind == "meta" and values[0] == 0x21 and len(values[1]) >= 1:
+            return values[1][0]
+    return 0
 
 
 def instrument_from_text(text):

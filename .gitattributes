@@ -1,0 +1,5 @@
+# Windows runs the .bat files, and cmd misreads a batch file with Unix line endings (a label or a block can be
+# skipped): they reach testers with Windows line endings (CRLF) whatever computer committed them, also in GitHub's
+# Download ZIP. Python files keep Unix line endings (LF).
+*.bat text eol=crlf
+*.py text eol=lf

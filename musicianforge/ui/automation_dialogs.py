@@ -6,7 +6,8 @@ control is reached with Tab, buttons have underlined letters, and every change i
 
 import wx
 
-from .common import DecimalField, Form, ask_values, choice_ctrl, finish_dialog, note_text, show_error, spin_ctrl
+from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
+                     keep_enter_for_lists, note_text, says_after, show_error, show_items, spin_ctrl)
 
 
 def _buttons(dialog, specs):
@@ -20,8 +21,10 @@ def _buttons(dialog, specs):
 
 
 class _ListWindow(wx.Dialog):
-    """A list with buttons under it; keys: Enter, Insert, Delete, Space."""
+    """A list with buttons under it; keys: Enter, Insert, Delete, Space. What a command says comes after the list
+    is filled again (says_after)."""
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -37,6 +40,7 @@ class _ListWindow(wx.Dialog):
             else:
                 self._run(action)
         self.list.Bind(wx.EVT_KEY_DOWN, on_key)
+        keep_enter_for_lists(self, (self.list, on_key))   # Enter reaches the list (common.enter_for_lists)
 
     def selected(self, count):
         if not count:
@@ -65,7 +69,7 @@ class AutomationDialog(_ListWindow):
             ("remove", "&Delete lane"), ("close", "Close")))
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
-            "Enter lists a lane's points, Alt+A adds a lane (Insert too), Space turns one on or off, Delete removes one. "
+            "Enter lists a lane's points, Alt+A adds a lane, Space turns one on or off, Delete removes one. "
             "Once a lane has points it sets that value for the whole song; turned off, the track's own "
             "setting is used. Write automation (Control+Shift+W) records lanes as you change settings while "
             "the song plays."), width=540), 0, wx.TOP, 8)
@@ -87,13 +91,12 @@ class AutomationDialog(_ListWindow):
     def refresh(self, select=0):
         count = self.count()
         if count:
-            self.list.Set([self.session.describe_lane(self.track_id, i) for i in range(count)])
-            self.list.SetSelection(max(0, min(select, count - 1)))
+            show_items(self.list, [self.session.describe_lane(self.track_id, i) for i in range(count)],
+                       max(0, min(select, count - 1)))
         else:
-            self.list.Set(["No automation yet. Press Alt+A to add a lane, for example Volume."])
-            self.list.SetSelection(0)
+            show_items(self.list, ["No automation yet. Press Alt+A to add a lane, for example Volume."], 0)
         for key in ("points", "toggle", "remove"):
-            self.buttons[key].Enable(bool(count))
+            enable_keeping_focus(self.buttons[key], bool(count), self.list)
 
     def add(self):
         targets = self.session.automation_targets(self.track_id)
@@ -172,7 +175,7 @@ class LanePointsDialog(_ListWindow):
             ("play", "&Play from this point"), ("clear", "C&lear bars..."), ("close", "Close")))
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
-            "Enter edits a point, Alt+A adds one at the playhead (Insert too), Delete removes one, Space plays from it. "
+            "Enter edits a point, Alt+A adds one at the playhead, Delete removes one, Space plays from it. "
             "Each point either glides to the next one or holds its value until the next one."), width=560),
                  0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
@@ -202,13 +205,12 @@ class LanePointsDialog(_ListWindow):
     def refresh(self, select=0):
         count = len(self.points_list())
         if count:
-            self.list.Set([self.session.describe_point(self.track_id, self.lane_index, i) for i in range(count)])
-            self.list.SetSelection(max(0, min(select, count - 1)))
+            show_items(self.list, [self.session.describe_point(self.track_id, self.lane_index, i)
+                                   for i in range(count)], max(0, min(select, count - 1)))
         else:
-            self.list.Set(["No points yet. Press Alt+A to add one at the playhead."])
-            self.list.SetSelection(0)
+            show_items(self.list, ["No points yet. Press Alt+A to add one at the playhead."], 0)
         for key in ("edit", "delete", "play"):
-            self.buttons[key].Enable(bool(count))
+            enable_keeping_focus(self.buttons[key], bool(count), self.list)
 
     def add(self):
         tick = self.session.position_tick()

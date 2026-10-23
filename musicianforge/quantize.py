@@ -35,13 +35,22 @@ def quantize_tick(tick, grid, timeline, strength=1.0):
     bar = timeline.tick_to_bar(tick)
     bar_start, bar_end = timeline.bar_to_tick(bar), timeline.bar_to_tick(bar + 1)
     offset = tick - bar_start
-    target = bar_start + int(round(offset / float(grid))) * grid
-    if target > bar_end:
-        # a grid that does not divide the bar (a half note in 7/8): after its last line in the bar, the next
-        # line is the next bar's first beat (before the review of 9 Oct 2026 the note went past it)
-        last = bar_start + (offset // grid) * grid
-        target = bar_end if bar_end - tick <= tick - last else last
+    # the grid line at or before the note and the one after it; in a bar the grid does not divide (a quarter note
+    # in 7/8, a half note in 7/8), the line after the last one is the next bar's first beat, and the nearer of the
+    # two wins (before the review of 23 Oct 2026 a note just before that beat was rounded back to the last line)
+    last = bar_start + (offset // grid) * grid
+    following = min(last + grid, bar_end)
+    target = last if tick - last <= following - tick else following
     return int(round(tick + (target - tick) * float(strength)))
+
+
+def notes_in_region(notes, start, end, grid, timeline):
+    """The indexes of the notes Quantize takes for "the region you are on": every note in the region, and a note played
+    a little early, just before it, that snaps into it. (Until 23 Oct 2026 a note in the region's last half grid line
+    was left out, so in 7/8 a note near the end of the bar did not move: a tester's run of the 0.9.7 features.)"""
+    half = grid / 2.0
+    return [i for i, n in enumerate(notes)
+            if start <= n.tick < end or (start - half <= n.tick < start and quantize_tick(n.tick, grid, timeline) >= start)]
 
 
 def quantize_notes(notes, grid, timeline, strength=1.0, quantize_lengths=False):

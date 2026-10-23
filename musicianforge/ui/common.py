@@ -5,6 +5,7 @@ after its text label. Windows (and so NVDA, JAWS and Narrator) uses the label
 just before a control as that control's name.
 """
 
+import functools
 import logging
 
 import wx
@@ -12,6 +13,61 @@ import wx
 BORDER = 8
 
 log = logging.getLogger("musicianforge.ui")
+
+
+SAY_AFTER_MS = 200   # long enough for the screen reader to start on what the focus or a window change made it read
+_waiting = [None]    # the words say_after is holding back, if any
+
+
+def say_after(say, text, delay_ms=SAY_AFTER_MS):
+    """Say `text` a moment from now, after what the screen reader reads anyway, without interrupting it (the F6
+    pattern; Russell, 23 Oct 2026). For words that follow a focus move, a window opening or closing, a list being
+    filled again, or a control the screen reader is reading: said at once, a screen reader reads that change and
+    cuts our words off, or our words cut off its reading of the control. say(text, interrupt) is session.announce or
+    a speaker's speak. While no event loop runs (the automated tests), it is said at once, still without
+    interrupting. Newer words replace words still waiting: keys pressed quickly (F6, an arrow in a list) say only
+    where they ended, never a stale step after it."""
+    if not text:
+        return None
+    waiting = _waiting[0]
+    _waiting[0] = None
+    if waiting is not None:
+        try:
+            waiting.Stop()
+        except Exception:  # noqa: BLE001 - already said
+            pass
+    app_class = getattr(wx, "App", None)
+    running = getattr(app_class, "IsMainLoopRunning", None)
+    try:
+        later = bool(running()) if running is not None else False
+    except Exception:  # noqa: BLE001
+        later = False
+    if later:
+        _waiting[0] = wx.CallLater(delay_ms, say, text, False)     # (Stop() on it takes the words back)
+        return _waiting[0]
+    say(text, False)
+    return None
+
+
+def enable_keeping_focus(control, enable, focus_instead):
+    """Enable or dim `control`. Dimming the control that has the focus makes Windows move the focus on by itself, to
+    whatever comes next, and the screen reader reads that (screen reader audit B3, 23 Oct 2026): the focus goes to
+    `focus_instead` (usually the window's list) first."""
+    if not enable and wx.Window.FindFocus() is control and focus_instead is not None:
+        focus_instead.SetFocus()
+    control.Enable(enable)
+
+
+def says_after(method):
+    """For a list window's commands (Add, Edit, Delete and their keys): what the session says while one runs comes a
+    moment later, queued (Session.pressed "list"), after the screen reader has read the list filled again and the
+    item it lands on. Said at once, the list's reading cut it off (screen reader audit B1, 23 Oct 2026). The window
+    needs a .session."""
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        with self.session.pressed("list"):
+            return method(self, *args, **kwargs)
+    return run
 
 
 def silence_name(window):
@@ -141,12 +197,25 @@ class NumberField(wx.TextCtrl):
         new = max(self.min_value, min(self.max_value, current + step))
         super().SetValue(str(new))
         self.SetInsertionPointEnd()
-        try:
-            from ..speech import speaker
+        say_step(self, str(new))
 
-            speaker.speak(str(new))
-        except Exception:  # noqa: BLE001 - speaking is a courtesy here
+
+def say_step(field, words):
+    """A number box's new value after an arrow key: a moment later and queued, after the screen reader's own reading
+    of the box (said at once, it cut that off; screen reader audit D5, main window review 23 Oct 2026). Only the
+    newest value is said: a step still waiting is taken back when the next key comes."""
+    waiting = getattr(field, "_step_words", None)
+    if waiting is not None:
+        try:
+            waiting.Stop()
+        except Exception:  # noqa: BLE001 - already said
             pass
+    try:
+        from ..speech import speaker
+
+        field._step_words = say_after(speaker.speak, words)
+    except Exception:  # noqa: BLE001 - speaking is a courtesy here
+        field._step_words = None
 
 
 class DecimalField(wx.TextCtrl):
@@ -219,13 +288,7 @@ class DecimalField(wx.TextCtrl):
         new = max(self.min_value, min(self.max_value, round(current + steps * self.step, 6)))
         self.ChangeValue(self._text(new))
         self.SetInsertionPointEnd()
-        spoken = self._text(new) + (" " + self.unit if self.unit else "")
-        try:
-            from ..speech import speaker
-
-            speaker.speak(spoken)
-        except Exception:  # noqa: BLE001 - speaking is a courtesy here
-            pass
+        say_step(self, self._text(new) + (" " + self.unit if self.unit else ""))
         if self.on_change is not None:
             self.on_change(self.GetValue())
 
@@ -290,21 +353,37 @@ def show_error(parent, message, title="Musician Forge"):
     wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, parent)
 
 
-def ask_values(run_modal, dialog, get_values=None):
+def ask_values(run_modal, dialog, get_values=None, on_error=None):
     """Show a dialog (with run_modal) until what was typed in it makes sense: get_values() (the dialog's own by
     default) raises ValueError in words, and the dialog comes back with everything still in it. Returns the values,
-    or None if it was cancelled. (Before the review of 9 Oct 2026 a mistyped number closed the window.)"""
+    or None if it was cancelled. (Before the review of 9 Oct 2026 a mistyped number closed the window.)
+    on_error(words): how the mistake is shown (a message box over the dialog by default)."""
     get_values = get_values or dialog.get_values
     while run_modal(dialog) == wx.ID_OK:
         try:
             return get_values()
         except ValueError as exc:
-            show_error(dialog, str(exc))
+            if on_error is not None:
+                on_error(str(exc))
+            else:
+                show_error(dialog, str(exc))
     return None
 
 
 def show_info(parent, message, title="Musician Forge"):
     wx.MessageBox(message, title, wx.OK | wx.ICON_INFORMATION, parent)
+
+
+def focused_window(default=None):
+    """The window the keyboard focus is in (a list window open over the project window, say), or `default`."""
+    focus = wx.Window.FindFocus()
+    if focus is None:
+        return default
+    try:
+        window = focus.GetTopLevelParent()
+    except Exception:  # noqa: BLE001
+        return default
+    return window if window is not None else default
 
 
 def ask_yes_no(parent, message, title="Musician Forge"):
@@ -317,6 +396,38 @@ def ask_yes_no_cancel(parent, message, title="Musician Forge"):
     with wx.MessageDialog(parent, message, title, wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION) as dlg:
         result = dlg.ShowModal()
     return {wx.ID_YES: "yes", wx.ID_NO: "no"}.get(result, "cancel")
+
+
+ENTER_KEYS = (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)
+
+
+def enter_for_lists(event, pairs):
+    """For a window's EVT_CHAR_HOOK: Enter (no Control, Alt or Shift) while one of the lists in `pairs` has the focus
+    goes to that list's own key handler, here, first: pairs is ((list, its EVT_KEY_DOWN handler), ...). Returns True
+    when the handler took it (the hook must then not Skip).
+
+    In a dialog, Windows' own keyboard navigation takes Enter (to press a default button) before a list's EVT_KEY_DOWN
+    ever sees it, so Enter on a list did nothing: Enter on a recent project in the start window (10 Oct 2026), on a
+    kit piece in the rhythm player editor (Russell, 23 Oct 2026), and in the lists of the chord track, tempo, time
+    signature and key changes, event list, recordings, sections, effects and automation windows. EVT_CHAR_HOOK comes
+    before that navigation."""
+    if event.GetKeyCode() not in ENTER_KEYS or event.GetModifiers() != wx.MOD_NONE:
+        return False
+    focused = wx.Window.FindFocus()
+    for ctrl, handler in pairs:
+        if focused is ctrl:
+            event.Skip(False)
+            handler(event)
+            return not event.GetSkipped()
+    return False
+
+
+def keep_enter_for_lists(window, *pairs):
+    """Give a window with no EVT_CHAR_HOOK of its own one that hands Enter to its lists (enter_for_lists)."""
+    def hook(event):
+        if not enter_for_lists(event, pairs):
+            event.Skip()
+    window.Bind(wx.EVT_CHAR_HOOK, hook)
 
 
 NAVIGATION_KEYS = {wx.WXK_UP: -1, wx.WXK_DOWN: 1, wx.WXK_NUMPAD_UP: -1, wx.WXK_NUMPAD_DOWN: 1,

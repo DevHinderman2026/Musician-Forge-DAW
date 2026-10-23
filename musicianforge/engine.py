@@ -295,6 +295,11 @@ def _uncovered(start, end, covered):
     return [(a, b) for a, b in parts if b > a]
 
 
+# A channel's own reverb and chorus rest once the channel and its reverb have been quieter than this (-120 dB)
+# for this long (Engine._rest_quiet_effects).
+EFFECTS_REST_LEVEL = 1e-6
+EFFECTS_REST_SECONDS = 1.0
+
 FADE_FRAMES = 64   # recordings fade in and out over 1.3 ms where they start, stop or are cut, so nothing clicks
 
 
@@ -311,6 +316,8 @@ class AudioTape:
         self.start = int(start_sample)   # nothing before this song sample is kept (the count-in)
         self.first = None                # song sample of the first kept frame
         self.chunks = []
+        self.frames = 0                  # frames kept so far, silence put in for a gap included
+        self._late = None                # (index in chunks, frames) of a piece that came late (see add)
 
     def add(self, heard_sample, data):
         if self.first is None:
@@ -321,7 +328,34 @@ class AudioTape:
                 data = data[skip:]
                 heard_sample += skip
             self.first = int(round(heard_sample))
-        self.chunks.append(np.array(data, dtype=np.float32, copy=True))
+        else:
+            self._check_gap(heard_sample, len(data))
+        chunk = np.array(data, dtype=np.float32, copy=True)
+        self.chunks.append(chunk)
+        self.frames += len(chunk)
+
+    def _check_gap(self, heard_sample, frames):
+        """When the microphone stops sending sound for a moment (Windows taking it away, a busy computer), the
+        sound after the gap belongs later than the sound before it ended. Until 23 Oct 2026 the take simply
+        carried on from the first piece's place, so everything after a gap played early. Now a gap of more than
+        half a piece is filled with silence. A piece's time can be a little off either way (it is measured
+        when the sound card hands it over), so one late piece is not enough: the gap is filled, before the
+        first late piece, only when the next piece is late too, and only by as much as both are late.
+        Pieces are never moved earlier."""
+        late = heard_sample - (self.first + self.frames)
+        if late <= max(1, frames // 2):
+            self._late = None
+            return
+        if self._late is None:
+            self._late = (len(self.chunks), late)
+            return
+        index, first_late = self._late
+        self._late = None
+        gap = int(round(min(late, first_late)))
+        if gap > 0:
+            channels = self.chunks[0].shape[1:] if self.chunks else ()
+            self.chunks.insert(index, np.zeros((gap,) + tuple(channels), dtype=np.float32))
+            self.frames += gap
 
     def finish(self):
         """(song sample of the first frame, audio shaped (frames, channels))."""
@@ -379,8 +413,22 @@ class Engine:
         # synthesizer's built-in reverb and chorus
         self.channel_count = int(getattr(synth, "channels", 128))
         self._planar = np.zeros((2 * self.channel_count, 0), dtype=np.float32)
-        self._fx = np.zeros((4, 0), dtype=np.float32)
+        # Since 23 Oct 2026 each channel has its own reverb and chorus (four rows per channel; see
+        # fluid.FluidSynth.effects_on), so they go through the track's effects, volume and pan with the rest of
+        # its sound. A synthesizer without them has one reverb and chorus (four rows), added as they are.
+        groups = int(getattr(synth, "fx_groups", 1) or 1)
+        self._own_fx = groups >= self.channel_count and hasattr(synth, "effects_on")
+        self._fx_rows = 4 * groups if self._own_fx else 4
+        self._fx = np.zeros((self._fx_rows, 0), dtype=np.float32)
+        self._fx_channels = set()     # channels whose reverb and chorus are on (only ever added to, see below)
+        self._fx_order = np.zeros(0, dtype=np.int64)     # those channels, in order
+        self._fx_quiet = np.zeros(0, dtype=np.int64)     # frames each has been silent (_rest_quiet_effects)
+        self._fx_live = None          # the ones running now: see _live_effects
+        self._fx_version = None       # the synthesizer's effects_version that _fx_live was made for
+        if self._own_fx:
+            synth.effects_on(())
         self._gains = np.ones(2 * self.channel_count)       # each row's gain at the end of the last block
+        self._gain_owner = {}                               # channel -> the track whose gains self._gains holds
         self._chains = {}                                   # track id -> effects.Chain
         self._context = effects.Context()
         self.automation = None                              # automation.Player (version 0.9), or None
@@ -389,6 +437,7 @@ class Engine:
         self._probe = None
         self._pending_fonts = []      # SoundFonts waiting for the song to stop before they load
         self._deferred = {}           # channel -> instrument whose samples load when the song stops
+        self._previews = {}           # channel -> a previewed instrument waiting in self._deferred
 
         # audio input: the microphone (the input stream calls input_chunk from its own thread)
         self.inputs = queue.SimpleQueue()
@@ -539,7 +588,7 @@ class Engine:
         if self._planar.shape[1] < frames:
             size = max(frames, 1024)
             self._planar = np.zeros((2 * self.channel_count, size), dtype=np.float32)
-            self._fx = np.zeros((4, size), dtype=np.float32)
+            self._fx = np.zeros((self._fx_rows, size), dtype=np.float32)
         return self._buffer
 
     def _process(self, frames, now, dac_delay):
@@ -550,7 +599,11 @@ class Engine:
         out = self._out(frames)
         out.fill(0.0)
         self._planar[:, :frames] = 0.0
-        self._fx[:, :frames] = 0.0
+        if self._fx_live is not None:
+            # only running units' rows are written (FluidSynth adds to them); a resting unit's rows stay at zero
+            self._fx[self._fx_live[4], :frames] = 0.0
+        elif not self._own_fx:
+            self._fx[:, :frames] = 0.0
         block_start = self.position
         new_clicks = []
         if self.playing:
@@ -684,11 +737,20 @@ class Engine:
         """Add every channel to `out`: through its track's effects, then its volume and pan.
 
         Gains move in a straight line across the block when they change (a fader or an automation
-        step never clicks). Channels that belong to no track (the instrument preview) play as they are."""
+        step never clicks). Channels that belong to no track (the instrument preview) play as they are.
+        Each channel's own reverb and chorus are part of its sound (23 Oct 2026): they go through the
+        track's effects, volume and pan too."""
         planar = self._planar[:, :frames]
         fx = self._fx[:, :frames]
-        out[:, 0] += fx[0] + fx[2]
-        out[:, 1] += fx[1] + fx[3]
+        if self._own_fx:
+            live = self._live_effects()
+            if live is not None and len(live[3]):
+                dry, reverb, chorus, index, _rows = live
+                planar[dry] += fx[reverb] + fx[chorus]
+                self._rest_quiet_effects(planar[dry], frames, index)
+        else:
+            out[:, 0] += fx[0] + fx[2]
+            out[:, 1] += fx[1] + fx[3]
         data = self.data
         start_gains = self._gains
         end_gains = np.ones_like(start_gains)
@@ -704,6 +766,15 @@ class Engine:
             left, right = track_gains(mix.kind, volume, pan)
             end_gains[2 * channel] = left
             end_gains[2 * channel + 1] = right
+        # A channel's first block for a track starts at that track's gains (23 Oct 2026): every export (a fresh
+        # engine) used to start at full level and take a block (85 ms) to come down to the track's volume.
+        owners = {channel: mix.track_id for channel, mix in data.mix.items()}
+        if owners != self._gain_owner:
+            start_gains = start_gains.copy()
+            for channel, track_id in owners.items():
+                if self._gain_owner.get(channel) != track_id:
+                    start_gains[2 * channel:2 * channel + 2] = end_gains[2 * channel:2 * channel + 2]
+            self._gain_owner = owners
         processed = []
         if self._chains:
             bpm = data.timeline.tempo_at_tick(max(0.0, data.sample_to_tick(self.position)))
@@ -737,6 +808,65 @@ class Engine:
         out[:, 0] += left
         out[:, 1] += right
         self._gains = end_gains
+
+    def _rest_quiet_effects(self, rows, frames, index):
+        """Rest the reverb and chorus of channels that have been silent (their own sound and their reverb's) for a
+        second: a running unit costs as much silent as busy (about a third of a percent of the processor each,
+        23 Oct 2026). The synthesizer wakes a unit with the channel's next note, before it sounds (fluid.py).
+        rows: the running channels' left and right, reverb and chorus included; index: where they are in
+        _fx_order."""
+        peaks = np.abs(rows).max(axis=1).reshape(-1, 2).max(axis=1)
+        quiet = np.where(peaks < EFFECTS_REST_LEVEL, self._fx_quiet[index] + frames, 0)
+        self._fx_quiet[index] = quiet
+        ready = quiet >= EFFECTS_REST_SECONDS * self.sample_rate
+        if ready.any():
+            tired = self._fx_order[index[ready]]
+            self.synth.sleep_effects(tired.tolist())
+            self._fx[np.stack([4 * tired + i for i in range(4)], axis=1).reshape(-1)] = 0.0   # nothing left there
+
+    def _live_effects(self):
+        """(dry rows, reverb rows, chorus rows, places in _fx_order, all four fx rows) of the channels whose reverb
+        and chorus are running now (not resting), or None. Remade only when the synthesizer's units change."""
+        version = getattr(self.synth, "effects_version", None)
+        if self._fx_live is not None and version == self._fx_version:
+            return self._fx_live
+        self._fx_version = version
+        groups = max(1, int(getattr(self.synth, "fx_groups", 1)))
+        running = self.synth.effects_units_on()
+        index = np.array([i for i, c in enumerate(self._fx_order.tolist()) if c % groups in running], dtype=np.int64)
+        if self._fx_live is not None:
+            woken = np.setdiff1d(index, self._fx_live[3])
+            self._fx_quiet[woken] = 0          # a channel woken by a note starts counting its silence afresh
+        ch = self._fx_order[index]
+        dry = np.stack([2 * ch, 2 * ch + 1], axis=1).reshape(-1)          # left, right of each channel
+        reverb = np.stack([4 * ch, 4 * ch + 1], axis=1).reshape(-1)
+        rows = np.stack([4 * ch + i for i in range(4)], axis=1).reshape(-1)
+        self._fx_live = (dry, reverb, reverb + 2, index, rows)
+        return self._fx_live
+
+    def _update_effect_units(self, channels):
+        """Turn on the reverb and chorus of these channels (the tracks' instruments and the instrument preview).
+        Units are only ever added while the engine runs: a unit turned off would keep the end of its reverb
+        and play it the next time it is turned on. Cheap: it runs when the song changes, not every block."""
+        if not self._own_fx:
+            return
+        channels = {int(c) for c in channels if 0 <= int(c) < self.channel_count}
+        if channels <= self._fx_channels:
+            return
+        added = channels - self._fx_channels
+        self._fx_channels |= channels
+        self.synth.effects_on(self._fx_channels)
+        # a new unit has nothing in it yet: it rests until its channel's first note wakes it, so a song with many
+        # tracks does not run a reverb for every one of them from the start
+        self.synth.sleep_effects(sorted(added))
+        quiet = dict(zip(self._fx_order.tolist(), self._fx_quiet.tolist()))
+        self._fx_order = np.array(sorted(self._fx_channels), dtype=np.int64)
+        self._fx_quiet = np.array([quiet.get(c, 0) for c in self._fx_order.tolist()], dtype=np.int64)
+        self._fx_live = None
+        self._live_effects()
+        if self._fx.shape[1]:
+            ch = self._fx_order
+            self._fx[np.stack([4 * ch + i for i in range(4)], axis=1).reshape(-1)] = 0.0
 
     def _sync_chains(self, new):
         """After new playback data: every track gets the effects it has now; a track whose effects
@@ -773,8 +903,9 @@ class Engine:
         if self._deferred and not self.playing:
             deferred, self._deferred = self._deferred, {}
             for channel, setup in deferred.items():
-                if self._applied.get(channel) == setup:
+                if self._applied.get(channel) == setup or self._previews.get(channel) == setup:
                     self.synth.set_instrument(channel, setup.bank, setup.program, setup.drum)
+            self._previews.clear()
         while True:
             try:
                 cmd = self.commands.get_nowait()
@@ -828,7 +959,19 @@ class Engine:
                     self._monitor.clear()
             elif kind == "instrument":
                 _, channel, bank, program, drum = cmd
-                self.synth.set_instrument(channel, bank, program, drum)
+                self._update_effect_units((channel,))
+                setup = ChannelSetup(bank, program, drum, 127, 64)
+                if self.playing and self._would_stall(setup):
+                    # previewing a guitar pack while the song plays would load its samples (about 400 megabytes)
+                    # inside this audio block and stall the song: the stand-in plays until the song stops, as
+                    # for a track (23 Oct 2026)
+                    self.synth.set_instrument(channel, 0, 30, False)
+                    self._deferred[channel] = setup
+                    self._previews[channel] = setup
+                else:
+                    self.synth.set_instrument(channel, bank, program, drum)
+                    self._deferred.pop(channel, None)
+                    self._previews.pop(channel, None)
                 self._applied.pop(channel, None)
             elif kind == "region":
                 _, self._loop_ticks, self._end_tick, self._mute_from_tick = cmd
@@ -906,9 +1049,15 @@ class Engine:
         else:
             self.position = new.tick_to_sample(old.sample_to_tick(self.position))
         self.data = new
+        if self.recorder is not None:
+            # the track being recorded moved in the list (its channel is its place): keep taking its notes
+            channel = new.channel_of_track.get(self.recorder.track_id)
+            if channel is not None:
+                self.recorder.channel = channel
         self.automation = new.automation
         self._region_to_samples()
         self._sync_chains(new)
+        self._update_effect_units(new.setups)
         for channel, setup in new.setups.items():
             if self._applied.get(channel) != setup:
                 prev = self._applied.get(channel)
@@ -1205,6 +1354,20 @@ class Engine:
         self._arp_last = pitch
         return pitch
 
+    def _arp_bar_end(self, tick):
+        """Where the bar holding `tick` ends (the arpeggio starts again from each bar's downbeat)."""
+        timeline = self.data.timeline
+        return timeline.bar_to_tick(timeline.tick_to_bar(int(math.floor(tick))) + 1)
+
+    def _arp_grid_from(self, tick, step):
+        """The first arpeggio step at or after `tick`, counted from the start of its bar (the review, 23 Oct 2026:
+        counted from the song's start, in 7/8 or 5/8 the notes drifted off the downbeats bar after bar)."""
+        timeline = self.data.timeline
+        bar = timeline.tick_to_bar(int(math.floor(tick)))
+        first = timeline.bar_to_tick(bar)
+        found = first + math.ceil((tick - first) / step - 1e-6) * step
+        return min(found, timeline.bar_to_tick(bar + 1))
+
     def _arp_grid_events(self, start, end):
         """Arpeggio notes between song samples start and end, exactly on the beat grid."""
         if not self._arp_active():
@@ -1216,7 +1379,7 @@ class Engine:
         data = self.data
         step = self._arp.step_ticks
         if self._arp_held and self._arp_next is None:
-            self._arp_next = math.ceil(data.sample_to_tick(start) / step - 1e-6) * step
+            self._arp_next = self._arp_grid_from(data.sample_to_tick(start), step)
         events = []
         while True:
             off_at = data.tick_to_sample(self._arp_off_at) if self._arp_note is not None else None
@@ -1234,7 +1397,7 @@ class Engine:
                 events.append((max(0, on_at - start), 0, ("arp_off",) + self._arp_note + (tick,)))
                 self._arp_note = None
             pitch = self._arp_pick()
-            self._arp_next = tick + step
+            self._arp_next = min(tick + step, self._arp_bar_end(tick))
             if pitch is None:
                 continue
             events.append((max(0, on_at - start), 1, ("arp_on", self._arp_channel, pitch, self._arp_velocity, tick)))

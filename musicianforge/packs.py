@@ -13,6 +13,7 @@ This module uses only the standard library, so the installer can use it before M
 Python environment exists.
 """
 
+import logging
 import os
 import time
 import urllib.request
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 
 from . import paths, sevenzip
 
+log = logging.getLogger("musicianforge.packs")
 USER_AGENT = "MusicianForge (guitar pack download)"
 
 
@@ -173,8 +175,11 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
         say("{} is ready.".format(pack.name))
         return target
     finally:
-        if os.path.exists(archive):
-            os.remove(archive)
+        try:
+            if os.path.exists(archive):
+                os.remove(archive)
+        except OSError as exc:   # an antivirus program checking it: the pack is ready anyway (or the real error shows)
+            log.warning("The downloaded %s could not be removed: %r", archive, exc)
         if work_dir is None:
             try:
                 os.rmdir(work)

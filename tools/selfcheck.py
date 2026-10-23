@@ -14,8 +14,10 @@ import traceback
 PROGRAM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROGRAM_DIR)
 
-REPORT = os.path.join(PROGRAM_DIR, "logs", "selfcheck_log.txt")
-TRACE = os.path.join(PROGRAM_DIR, "logs", "selfcheck_trace.txt")   # every call into FluidSynth, written first
+# the installer says where its logs are (Musician Forge's own data folder when its folder cannot be written to)
+LOGS_DIR = os.environ.get("MUSICIANFORGE_LOGS_DIR") or os.path.join(PROGRAM_DIR, "logs")
+REPORT = os.path.join(LOGS_DIR, "selfcheck_log.txt")
+TRACE = os.path.join(LOGS_DIR, "selfcheck_trace.txt")   # every call into FluidSynth, written first
 results = []
 
 

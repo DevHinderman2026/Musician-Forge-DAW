@@ -7,7 +7,8 @@ label is created right before it, every control is reached with Tab, and changes
 import wx
 
 from .. import effects
-from .common import DecimalField, Form, ask_values, choice_ctrl, finish_dialog, note_text, show_error, slider_ctrl
+from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
+                     keep_enter_for_lists, note_text, says_after, show_error, show_items, slider_ctrl)
 
 OWN_SETTINGS = "Your own settings"
 
@@ -36,7 +37,7 @@ class EffectsDialog(wx.Dialog):
             row.Add(button, 0, wx.ALL, 3)
         body.Add(row, 0, wx.TOP, 6)
         body.Add(note_text(self, (
-            "Enter opens the selected effect's settings. Alt+A adds an effect (Insert too), Delete removes one, Space turns it "
+            "Enter opens the selected effect's settings. Alt+A adds an effect, Delete removes one, Space turns it "
             "on or off, Control+Up and Control+Down move it. Effects work on the track's sound before its volume "
             "and pan.")), 0, wx.TOP, 8)
         finish_dialog(self, body, buttons=0)
@@ -46,6 +47,7 @@ class EffectsDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
+        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.settings))
         self.refresh(0)
         self.list.SetFocus()
@@ -54,6 +56,7 @@ class EffectsDialog(wx.Dialog):
     def effects(self):
         return self.session.effects_of(self.track_id)
 
+    @says_after
     def _run(self, action):
         try:
             action()
@@ -64,14 +67,14 @@ class EffectsDialog(wx.Dialog):
     def refresh(self, select=0):
         items = self.effects
         if items:
-            self.list.Set([self.session.describe_effect(self.track_id, i) for i in range(len(items))])
-            self.list.SetSelection(max(0, min(select, len(items) - 1)))
+            show_items(self.list, [self.session.describe_effect(self.track_id, i) for i in range(len(items))],
+                       max(0, min(select, len(items) - 1)))
         else:
-            self.list.Set(["No effects yet. Press Alt+A, or the Add effect button, to add one."])
-            self.list.SetSelection(0)
+            show_items(self.list, ["No effects yet. Press Alt+A, or the Add effect button, to add one."], 0)
+        # a button dimmed while it has the focus would send the focus on by itself (screen reader audit B3)
         for key in ("settings", "toggle", "up", "down", "remove"):
-            self.buttons[key].Enable(bool(items))
-        self.buttons["add"].Enable(len(items) < effects.MAX_EFFECTS)
+            enable_keeping_focus(self.buttons[key], bool(items), self.list)
+        enable_keeping_focus(self.buttons["add"], len(items) < effects.MAX_EFFECTS, self.list)
 
     def selected(self):
         if not self.effects:
@@ -106,7 +109,8 @@ class EffectsDialog(wx.Dialog):
     def toggle(self):
         index = self.selected()
         if index is not None:
-            self.session.set_effect_on(self.track_id, index)
+            # in the list, the effect's line is read again with "on" or "off": not said twice (audit B2)
+            self.session.set_effect_on(self.track_id, index, speak=wx.Window.FindFocus() is not self.list)
             self.refresh(index)
 
     def move(self, delta):

@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.6 before its first release.
+For people trying Musician Forge 0.9.7 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -19,8 +19,8 @@ On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the 
 
 ## Before you start: Python
 
-- Install Python 3.10 or newer, 64-bit, from python.org (Downloads, Windows). In the installer's first screen, tick "Add python.exe to PATH", then choose Install Now.
-- The Microsoft Store's Python does not work: it quietly moves the files Musician Forge makes into a private folder. If it is the only Python on the computer, the installer says so and stops; install the python.org one as above (both can stay installed).
+- Install 64-bit Python 3.14 (or 3.13 or 3.12) from python.org (Downloads, Windows). In the installer's first screen, tick "Add python.exe to PATH", then choose Install Now. Python 3.15 does not work yet: wxPython, which Musician Forge's windows use, has no build for it; 3.14 can be installed beside it. On an ARM64 PC, choose the x64 (AMD64) installer.
+- The Microsoft Store's Python does not work: it quietly moves the files Musician Forge makes into a private folder. If it is the only Python on the computer (or no suitable Python is found), the installer offers to install Python 3.14 from python.org for you: press Y. It installs for your Windows user only and needs no administrator rights. If you press N, or it can't, it tells you how to install it yourself (both can stay installed).
 
 ## What you need
 
@@ -33,11 +33,11 @@ On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the 
 ## Installing
 
 1. Unzip the Musician Forge folder wherever you like, for example in Documents.
-2. Open the folder in File Explorer, select "Install or Update Musician Forge" and press Enter (or double-click it). If Windows asks whether to run it, choose Run (or More info, then Run anyway).
+2. Open the folder in File Explorer, select "Install or Update Musician Forge" and press Enter (or double-click it). If it says to choose Extract All, the files are still inside the zip: extract them first. If Windows asks whether to run it, choose Run (or More info, then Run anyway).
 3. A console window reads out each step, "Step 1 of 7" to "Step 7 of 7". It ends with a self check that plays a test note silently and says whether everything works. Press any key to close the window.
 4. The two guitar packs (steps 5 and 6) are the biggest downloads and take a few minutes. If they are very slow, let them run; or close the window and run Install or Update again later, which picks up where it stopped. Without them Musician Forge still works: a stand-in guitar plays, and the packs download by themselves the next time Musician Forge starts with the internet, saying when each is ready.
-5. Run "Start Musician Forge" the same way. It opens on the start screen: choose New project.
-6. Press F1 at any time for every keyboard shortcut.
+5. Run "Start Musician Forge" the same way (if it says the last Install or Update did not finish, run Install or Update again). It opens on the start screen: choose New project. A new project starts with no tracks, and the New track list opens by itself: press Enter on Instrument, choose Grand Piano and press Enter, so the steps below have a piano track to play.
+6. In a project, press F1 for every keyboard shortcut (on the start screen, use the Help menu button).
 
 To update to a newer test version, put its files in the same folder and run "Install or Update Musician Forge" again. Your projects are kept (they are in Documents, Musician Forge Songs).
 
@@ -53,7 +53,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Press F6 a few times, then Shift+F6.
 
-**What to expect:** Each jump says where you are, for example "Track group, 11 buttons, 3 check boxes", and the jumps go round in a circle.
+**What to expect:** Each jump says where you are, for example "Track group, 9 buttons, 3 check boxes", and the jumps go round in a circle.
 
 ### Step 1.3: Jump straight to an area
 
@@ -63,7 +63,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 1.4: The Tracks list
 
-**What to check:** Arrow up and down the Tracks list.
+**What to check:** Add a second track (Control+T, then Instrument, or Audio), then arrow up and down the Tracks list.
 
 **What to expect:** The track you are on ends with ", selected", read once.
 
@@ -85,7 +85,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Press B a few times while on the Musical keyboard.
 
-**What to expect:** It says each layout (piano, scale, chord strips and the rest), and the keys play that layout.
+**What to expect:** It says each layout (piano, scale and chord strips), and the keys play that layout.
 
 ## Part 3: Effects (10 minutes)
 
@@ -97,7 +97,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 3.2: Change it while the song plays
 
-**What to check:** Press Enter on the effect to open its settings. Play the song with the Play button (Transport group) and move the Mix slider.
+**What to check:** Press Enter on the effect to open its settings. Press Alt+P (Play or stop the song) in the settings window and move the Mix slider.
 
 **What to expect:** You hear the change at once.
 
@@ -111,7 +111,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 4.2: Add the players
 
-**What to check:** Press Control+Shift+R and add Anvil (drums), style Rock. Then add Bellows (bass) and Hammer (guitar) the same way.
+**What to check:** Press Control+Shift+R (or Control+T, then Rhythm player) and add Anvil (drums), style Rock. Then add Bellows (bass), style Driving eighths, and Hammer (guitar), style Rock strum, the same way.
 
 **What to expect:** Each player gets its own track and region, and they play the chords together.
 
@@ -131,13 +131,13 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** In the drummer's Kit pieces list, arrow through the pieces. Press Space on the Kick. Then press Enter on a piece to open its settings and try When a crash comes, every 4 bars, on the Crash cymbals.
 
-**What to expect:** In a rock groove the Ride, Crash cymbals, Toms and Congas say "off" (the groove doesn't use them). Space on the Kick says "Kick off" and the groove's kicks stop. The crash plays every 4 bars.
+**What to expect:** In a rock groove the Clap or rim, Toms ("off, in fills only"), Crash cymbals, Ride, Congas and bongos, and Shaker, tambourine, cowbell and claves say "off" (the groove doesn't use them). Space on the Kick says "Kick off" and the groove's kicks stop. The crash plays every 4 bars.
 
 ### Step 4.6: The Step pattern
 
 **What to check:** In the Snare's settings, open Step pattern (Alt+S). Arrow through the steps, press Space to turn one on or off, and Page Up to make one louder.
 
-**What to expect:** You hear only that change.
+**What to expect:** You hear that change. The Step pattern holds up to 4 bars, which repeat through the region (it says so), so in an 8-bar region bars 5 to 8 play the same steps as bars 1 to 4.
 
 ### Step 4.7: Changing the variation after making steps
 
@@ -147,7 +147,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 4.8: Follow
 
-**What to check:** In the drummer's editor, set Follow to follow the bass track.
+**What to check:** In the drummer's editor, set Follow to "Another track", then set Track to follow to the bass track.
 
 **What to expect:** The kick follows the bass's strongest notes.
 
@@ -169,7 +169,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 6.1: A volume fade with points
 
-**What to check:** On a track, press Control+Shift+U. Press Alt+A to add a lane and choose Volume. In the points list, Alt+A adds a point: add one at bar 1 with 100 and one at bar 5 with 20. Play from bar 1.
+**What to check:** On a track, press Control+Shift+U. Press Alt+A to add a lane and choose Volume. Press Enter on the Volume lane (or the Points button, Alt+P) to open its points list. In the points list, Alt+A adds a point: add one at bar 1 with 100 and one at bar 5 with 20. Play from bar 1.
 
 **What to expect:** A smooth fade.
 
@@ -183,7 +183,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 7.1: Import a file
 
-**What to check:** Press Control+Shift+I (or File menu, Import audio or MIDI file) and import an audio file (MP3, M4A, WAV and more) or a MIDI file.
+**What to check:** Press Control+T, choose Import file (or press Control+Shift+I) and import an audio file (MP3, M4A, WAV and more) or a MIDI file.
 
 **What to expect:** It says what it made and where. A long file shows its progress, and Escape cancels.
 
@@ -219,7 +219,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 7.7: Your own chord strips
 
-**What to check:** Press Control+Shift+J, change a chord strip (Enter), then press B until the chord strips layout and play that key.
+**What to check:** Press Control+Shift+J, change a chord strip (Enter), close the window, press Control+2 to go to the Musical keyboard, then press B until the chord strips layout and play that key.
 
 **What to expect:** Your chord plays.
 
@@ -311,6 +311,110 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** It opens and plays as before.
 
+## New in 0.9.7
+
+### Step V.1: A new project starts with no tracks
+
+**What to check:** On the start screen, choose New project, give it a title and press Enter. When the New track list opens, press Escape.
+
+**What to expect:** The New track list opens by itself once the project window shows. Its list is called "Kind of track" and starts on Instrument. After Escape the project has no tracks: the Tracks list reads "No tracks yet. Press Control+T to add one."
+
+### Step V.2: Getting around with no tracks
+
+**What to check:** In the empty project, press F6 a few times, press R, play a few letter keys on the Musical keyboard (Control+2), and press Track settings, Effects and Delete track.
+
+**What to expect:** Nothing crashes. R, the letter keys and those buttons say "There is no track yet. Press Control+T to add one." (the letter keys say it once, not on every key). Space still plays and stops, and the Song group's buttons still open.
+
+### Step V.3: New track: Instrument, Audio, Import file
+
+**What to check:** Press Control+T, press Enter on Instrument, choose Grand Piano and press Enter. Then Tab to the New track button, press Space, arrow to Audio and press Enter. Open the list once more, choose Import file and pick a short WAV or MP3 file.
+
+**What to expect:** Each makes a new track: "Added 1. Grand Piano", then the audio track, then a track named after the imported file ("Imported ... on the new track ..."). Escape or Cancel in any of these windows adds nothing.
+
+### Step V.4: New track: Rhythm player
+
+**What to check:** Press Control+T, arrow to Rhythm player and press Enter. Choose Anvil, a rock style, and press Enter.
+
+**What to expect:** The New rhythm player window offers only "On a new track", and a new drummer track with its region appears. Control+Shift+R still offers the selected track too.
+
+### Step V.5: Kit-piece loudness in Track settings
+
+**What to check:** On the drummer's track, press Track settings (or Alt+Enter on the track). Tab past Mute and Solo to the kit sliders. Move Kick loudness to 0 and Ride loudness up, press Enter and play. Then open a project made with 0.9.6 that has a drummer, play it, and open its drummer track's Track settings.
+
+**What to expect:** Ten sliders, one for each kit piece, each at 50. With Kick at 0 no kick plays at all, fills included. Control+Z takes it back in one step. The 0.9.6 project has the sliders too, all at 50, and sounds exactly as it did.
+
+### Step V.6: Enter on a kit piece
+
+**What to check:** Press Enter on the drummer's region in the Regions list. Tab to Kit pieces, arrow to Kick and press Enter. Press Escape. Try the same with an electronic drummer (house or trap).
+
+**What to expect:** Enter opens the Kick's window, for every drummer. It has no Loudness slider (that is in Track settings now), unless the region comes from an older project that set the piece's own loudness. Escape goes back to Kit pieces.
+
+### Step V.7: The ride and the hi-hats take turns
+
+**What to check:** In a rock drummer's Kit pieces, arrow to Ride and press Space, and play. Press Space on the Ride again. Then press Space on Closed hi-hat while the ride is on. Try a jazz drummer and a house drummer too.
+
+**What to expect:** Space on the Ride says "Ride on with the hi-hat's rhythm, hi-hat foot only": the ride keeps time and the hi-hat's foot pedal keeps playing on two and four ("Closed hi-hat: foot only"). Space again says "Ride off, hi-hats on". On a metal or hard rock drummer, Space on the Ride says "... hi-hats off" (or "hi-hat off") instead, with no foot: "Closed hi-hat: off". Turning the hi-hat on while the ride plays turns the ride off. In jazz the foot hi-hat keeps playing under the ride. On house or trap, the Ride just turns on and the hi-hats keep playing. Each change is one Control+Z.
+
+### Step V.8: Steps turn a piece back on
+
+**What to check:** Turn the Kick off with Space. Press Enter on it, open Step pattern (Alt+S), arrow to step 2 and press Space. Press Escape twice.
+
+**What to expect:** The step turns on, and it says the Kick is hand-made now and "Kick on". The Kit pieces list then reads "Kick: on, hand-made".
+
+### Step V.9: Enter in the lists
+
+**What to check:** Press Enter in each of these: Tempo changes, Time signature changes, Key changes, the Event list (on a note), Recordings (on a recording), Sections, the Chord track, Effects, and Automation (then Enter again on a point). Then try Alt+Enter in one of them.
+
+**What to expect:** Enter opens the edit window for the line you are on (in Sections it goes to that section). Alt+Enter does not.
+
+### Step V.10: Buttons are no longer cut off
+
+**What to check:** Tab to the Metronome check box and press Space. Press Control+K. Press the Go to start, Forward and Stop buttons. Press F6 twice quickly.
+
+**What to expect:** You hear "Metronome check box checked" with nothing cutting it off, and no window title read after it. Control+K says "Metronome on". After each button its result comes a moment later, after the button's name, not over it. F6 twice says only the area you land on. If the window title or the whole window is ever read after a button, please note which button.
+
+### Step V.11: Edit windows keep what you typed
+
+**What to check:** In Tempo changes, press Enter, type 12o as the tempo and press Enter.
+
+**What to expect:** It says what is wrong, and the same window comes back with everything you typed still in it, so you only fix the one mistake.
+
+### Step V.12: F2, the Select buttons and the start screen's buttons
+
+**What to check:** In the Regions list press F2 on a region, type a name and press Enter. Tab to the Edit group and press Select or unselect, then Select all. Then press Control+W, and on the start screen Tab past Recent projects to Open and Remove from list.
+
+**What to expect:** F2 renames the region, not the track. Select all selects every track (or every region, if the Regions list was the last one you were in). Open opens the project; Remove from list takes it off the list (the file is kept) and says so.
+
+### Step V.13: Holding keys, and a stuck note
+
+**What to check:** Hold Space for two seconds. Hold B on the Musical keyboard. Then hold a letter key, press Alt, release the key, and press Escape twice.
+
+**What to expect:** Holding Space plays (or stops) once; holding B changes the layout once. The held note stops when the menu opens or at the latest with Escape, and the key plays again afterwards.
+
+### Step V.14: Sliders and volume
+
+**What to check:** In Track settings, Tab to Volume and press Up arrow, then Page Up. Then set a track's volume to 0 and play: listen for its reverb. Export a song whose first note is at bar 1, beat 1.
+
+**What to expect:** Up and Page Up raise the volume (please tell us if they lower it). A track at volume 0 is completely silent, reverb included, and its reverb fades with it. The export's first note is no louder than the rest.
+
+### Step V.15: Quantize in 7/8
+
+**What to check:** Make a project in 7/8 and record a few notes slightly off the beat, one just before the end of bar 1. In the Regions list press Quantize, choose Quarter note and press Enter.
+
+**What to expect:** Every note in the region moves, the last one to the start of the next bar if that is nearer, and it says how many notes it quantized.
+
+### Step V.16: An older project sounds the same
+
+**What to check:** Open one of your projects made with 0.9.6 or earlier and play it all the way through.
+
+**What to expect:** The rhythm players play the same notes as before, except that the drummer's ride and hi-hats now stop for each fill (Step V.17). Apart from that, only the reverb is a little drier on tracks below full volume, because the reverb now follows each track's volume.
+
+### Step V.17: Fills take both hands
+
+**What to check:** Add a rock drummer, turn its Ride on (Space in Kit pieces), set Fills to 100 and play. Try metal and jazz too, and a rock drummer with the ride off.
+
+**What to expect:** In each fill, the ride (or the hi-hats) stops when the fill starts, and comes back with the crash on the next bar; only the kick and, where the drummer has one, the hi-hat foot keep playing under the fill. No fill has a cymbal ticking along on top of the toms.
+
 ## New in 0.9.6
 
 ### Step N.1: Fills on a steady count
@@ -335,7 +439,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Open a rock drummer's Kit pieces list. Play the region with Fill amount up. Then turn the Kick off with Space.
 
-**What to expect:** The Ride, Crash cymbals, Toms and Congas say "off" (not in the groove), yet the fills still use the toms and the region still starts with a crash. With the Kick off, the groove's kicks stop and the fills' kicks stay.
+**What to expect:** The Clap or rim, Toms ("off, in fills only"), Crash cymbals, Ride, Congas and bongos, and Shaker, tambourine, cowbell and claves say "off" (not in the groove), yet the fills still use the toms and the region still starts with a crash. With the Kick off, the groove's kicks stop and the fills' kicks stay.
 
 ### Step N.5: Fast hi-hats
 
@@ -353,15 +457,15 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Tab to the Menus group and open a menu with its button.
 
-**What to expect:** Each item is read with a comma before its shortcut, for example "Tempo changes..., Control+Shift+T".
+**What to expect:** Each item is read with a comma before its shortcut, for example "Add a section after this one, Control+Shift+N".
 
 ## Added in 0.9.4 and 0.9.5
 
 ### Step E.1: Selecting notes in the event list
 
-**What to check:** In a region's event list (Control+L), press Space on two notes, then Control+Up. Then press Control+Q.
+**What to check:** Press Enter on a region of notes to open its event list (Control+L opens the whole track's), press Space on two notes, then Control+Up. Then press Alt+Q (Quantize).
 
-**What to expect:** Both notes move. Quantize offers the region you are on, the selected track or all tracks.
+**What to expect:** Both notes move. Quantize offers Selected notes, Whole track or All tracks.
 
 ### Step E.2: Exporting tracks on their own
 
@@ -377,13 +481,13 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step E.4: A kit without a sound
 
-**What to check:** Give a rock drummer the Forge Trap Kit and set its Crash cymbals to the splash.
+**What to check:** Set a rock drummer's Crash cymbals to the splash (Which cymbal), then change its Patch to the Forge Trap Kit, which has no splash.
 
 **What to expect:** The splash plays on the crash; it does not go silent.
 
 ### Step E.5: Fills and Complexity
 
-**What to check:** In a drummer's region, set Fill amount to 100 and move Fill complexity high and low. Open the Ride's settings and move its Complexity to 100 and to 0. Reforge a few times.
+**What to check:** In a jazz drummer's region (the jazz grooves keep time on the ride), set Fill amount to 100 and move Fill complexity high and low. Open the Ride's settings and move its Complexity to 100 and to 0. Reforge a few times.
 
 **What to expect:** Bigger and smaller fills; a busier and a sparser ride; the fills change with each Reforge.
 
@@ -413,7 +517,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step E.10: The ride in fast songs
 
-**What to check:** Set the song's tempo to 130 and open the Ride's settings. Play it.
+**What to check:** In a jazz drummer's region, open the Ride's settings and look through the Pattern list. Then set the song's tempo to 130, look again, and play the region.
 
 **What to expect:** The Pattern list has no sixteenth notes, and the ride plays eighth notes.
 
@@ -446,10 +550,10 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.6
+## Known limits in 0.9.7
 
 - Musician Forge needs Python until the 1.0 installer.
-- The guitar packs play from B1 to D6 (key 35 to 86): drop D, drop C and B standard work; lower notes are silent.
+- The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.
 - Rhythm players following a recording work best with clear, separate hits (picked or strummed guitar, piano, drums); slow pads and legato lines have few clear starts.
 - In the Step pattern, a step can hold several sounds, but Left and Right keep only one of them (Control+Z brings the others back).
 - Low-latency hearing yourself needs Windows 10 or later and a sound driver that offers it; Musician Forge says when it does not.

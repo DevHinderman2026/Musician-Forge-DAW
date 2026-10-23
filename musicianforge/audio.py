@@ -53,6 +53,17 @@ def wasapi_settings(sd, auto_convert=False, raw=False):
     return extra, asked
 
 
+def close_quietly(stream):
+    """Close a stream that opened but could not start (a device that is busy, say), so it does not keep the
+    device. Nothing to do for None."""
+    if stream is None:
+        return
+    try:
+        stream.close()
+    except Exception:  # noqa: BLE001 - it is being given up on anyway
+        log.debug("A stream that did not start could not be closed either", exc_info=True)
+
+
 def _sd():
     import sounddevice  # imported lazily so the rest of Musician Forge works without it
 
@@ -133,12 +144,14 @@ class AudioOutput:
                     extra = sd.WasapiSettings(exclusive=False, auto_convert=auto_convert)
                 elif auto_convert:
                     break
+                stream = None
                 try:
                     stream = sd.OutputStream(samplerate=SAMPLE_RATE, channels=2, dtype="float32",
                                              blocksize=int(block_frames), device=index, latency="low",
                                              callback=self._callback, extra_settings=extra)
                     stream.start()
                 except Exception as exc:  # noqa: BLE001
+                    close_quietly(stream)      # opened but would not start: it would hold the device (23 Oct 2026)
                     errors.append("{} / {}{}: {}".format(api, sd.query_devices(index)["name"],
                                                           " (auto convert)" if auto_convert else "", exc))
                     continue
@@ -289,12 +302,14 @@ class AudioInput:
                     extra, raw = wasapi_settings(sd, auto_convert, want_raw)
                 elif auto_convert:
                     break
+                stream = None
                 try:
                     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=device_channels, dtype="float32",
                                             blocksize=self.block_frames, device=index, latency="low",
                                             callback=self._callback, extra_settings=extra)
                     stream.start()
                 except Exception as exc:  # noqa: BLE001
+                    close_quietly(stream)      # opened but would not start: it would hold the microphone
                     errors.append("{} / {}{}{}: {}".format(api, sd.query_devices(index)["name"],
                                                             " (auto convert)" if auto_convert else "",
                                                             " (raw)" if raw else "", exc))

@@ -169,6 +169,18 @@ def _declare(lib):
         func = getattr(lib, name)
         func.restype = restype
         func.argtypes = argtypes
+    # Each channel's own reverb and chorus (FluidSynth 2.2 and later; see FluidSynth.effects_on). An older
+    # FluidSynth lacks them and keeps one reverb and chorus for every channel, as before.
+    optional = {
+        "fluid_synth_count_effects_groups": (ci, [vp]),
+        "fluid_synth_reverb_on": (ci, [vp, ci, ci]),
+        "fluid_synth_chorus_on": (ci, [vp, ci, ci]),
+    }
+    for name, (restype, argtypes) in optional.items():
+        func = getattr(lib, name, None)
+        if func is not None:
+            func.restype = restype
+            func.argtypes = argtypes
 
 
 def version():
@@ -209,7 +221,9 @@ class FluidSynth:
 
     Every MIDI channel has its own stereo output (FluidSynth's "audio groups"), so each
     track's sound can go through its own effects, volume and pan (see render_channels).
-    FluidSynth's built-in reverb and chorus come out separately and are added to the mix.
+    FluidSynth's built-in reverb and chorus come out separately. Since 23 Oct 2026 every channel also has its own
+    reverb and chorus (FluidSynth's "effects groups"), so they can follow the track's volume, pan and effects
+    (see effects_on and engine.Engine._mix_channels).
 
     Not thread-safe by design: Musician Forge calls it only from the audio
     thread (or from one thread during an export).
@@ -238,6 +252,16 @@ class FluidSynth:
         self._set_int("synth.cpu-cores", 1)
         self._set_int("synth.audio-channels", self.outputs)    # one stereo output per MIDI channel
         self._set_int("synth.audio-groups", self.outputs)
+        # One reverb and chorus per channel (23 Oct 2026). Before, one reverb and chorus took every channel's
+        # sound at full level, so a track at volume 0 still played its reverb, a fade left the reverb behind,
+        # pan did not move it, and the track's effects did not touch it. FluidSynth's reverb and chorus are
+        # linear, so one unit per channel added together sounds exactly like the single shared one. A unit
+        # costs time even when silent, so only the channels that need one have it on (effects_on).
+        lib = self._lib
+        self._own_effects = (hasattr(lib, "fluid_synth_count_effects_groups")
+                             and hasattr(lib, "fluid_synth_reverb_on") and hasattr(lib, "fluid_synth_chorus_on"))
+        if self._own_effects and (reverb or chorus):
+            self._set_int("synth.effects-groups", min(128, self.channels))
         # load an instrument's samples only when a track uses it: the guitar packs are large
         self._set_int("synth.dynamic-sample-loading", 1 if dynamic_samples else 0)
         self._t("new_fluid_synth")
@@ -252,9 +276,20 @@ class FluidSynth:
         self._preset_fonts = None     # (bank, program) -> id of the SoundFont that has it
         self._kept = set()            # guitar pack instruments whose samples stay loaded (see _keep_loaded)
         self._key_maps = {}           # channel -> {drum note its kit lacks: the note played instead} (drummap.py)
+        self._kit_keys = {}           # SoundFont id -> {(bank, program): notes it has a sound for} (sf2keys.py)
         self._buffer = np.zeros((0, 2), dtype=np.float32)
         self._targets = {}            # id of a planar buffer -> (its rows' addresses, its fx rows' addresses)
         self._scratch = None          # planar buffers for render()
+        self.fx_groups = 1            # reverb and chorus units: channel c uses unit c % fx_groups
+        if self._own_effects:
+            self.fx_groups = max(1, int(self._lib.fluid_synth_count_effects_groups(self._synth)))
+        self._reverb, self._chorus = bool(reverb), bool(chorus)
+        self._fx_on = set(range(self.fx_groups))     # units that are on (FluidSynth starts with all of them on)
+        self._fx_wanted = set(self._fx_on)            # units the engine wants (see effects_on)
+        self._asleep = set()                          # of those, units resting while silent (see sleep_effects)
+        self.effects_version = 0                      # counts changes of the units running (Engine._live_effects)
+        self._fx_null = None          # a unit that is off leaves its unprocessed send in its rows: they are skipped
+        self._fx_wide = None          # rows for every unit, for a caller that passes fewer (see render_channels)
 
     # -- settings ---------------------------------------------------------
     def _t(self, text):
@@ -295,6 +330,9 @@ class FluidSynth:
             self.sfont_id = sfid
             self.soundfont_path = path
         self.fonts.append((sfid, path))
+        # which notes each kit has a sound for, read now (23 Oct 2026): picking a drum kit reads it on the audio
+        # thread, where reading the file the first time would hold up the sound
+        self._kit_keys[sfid] = sf2keys.preset_keys(path)
         self._preset_fonts = None
         return sfid
 
@@ -370,8 +408,12 @@ class FluidSynth:
 
     def kit_notes(self, sfid, bank, program):
         """The notes a kit has a sound for, read from its SoundFont (everything, if that cannot be read)."""
-        path = dict(self.fonts).get(sfid)
-        notes = sf2keys.preset_keys(path).get((bank - self.bank_offsets.get(sfid, 0), program)) if path else None
+        kit_keys = self.__dict__.setdefault("_kit_keys", {})
+        keys = kit_keys.get(sfid)
+        if keys is None:          # (a SoundFont load_soundfont did not read: read now, once)
+            path = dict(self.fonts).get(sfid)
+            keys = kit_keys[sfid] = sf2keys.preset_keys(path) if path else {}
+        notes = keys.get((bank - self.bank_offsets.get(sfid, 0), program))
         return notes if notes else frozenset(range(128))
 
     def _keep_loaded(self, bank, program):
@@ -407,6 +449,8 @@ class FluidSynth:
         if velocity <= 0:
             self._lib.fluid_synth_noteoff(self._synth, channel, key)
         else:
+            if getattr(self, "_asleep", None):
+                self._wake(channel)          # its reverb and chorus run again before the note sounds
             self._lib.fluid_synth_noteon(self._synth, channel, key, min(127, int(velocity)))
 
     def noteoff(self, channel, key):
@@ -436,15 +480,83 @@ class FluidSynth:
     def set_gain(self, gain):
         self._lib.fluid_synth_set_gain(self._synth, float(gain))
 
+    # -- each channel's own reverb and chorus (23 Oct 2026) --------------
+    @property
+    def fx_rows(self):
+        """Rows render_channels fills when `fx` has a row for every unit: 4 per unit (reverb left, right,
+        chorus left, right), unit u in rows 4u to 4u + 3."""
+        return 4 * self.fx_groups
+
+    def effects_on(self, channels):
+        """Turn the reverb and chorus on for these channels' units and off for every other unit (only units
+        that can make a sound need to run). A unit turned off keeps what it held; turned on again, that plays
+        out (the engine only ever adds units while it runs, see Engine._update_effect_units)."""
+        if self.fx_groups <= 1:
+            return
+        self._fx_wanted = {int(c) % self.fx_groups for c in channels}
+        self._asleep &= self._fx_wanted
+        self._run_units(self._fx_wanted - self._asleep)
+
+    def sleep_effects(self, channels):
+        """Rest the reverb and chorus of these channels: they have been silent long enough that nothing is left in
+        them (Engine._rest_quiet_effects). A unit costs as much silent as busy, so a song with many tracks would
+        otherwise spend most of its time on reverbs of tracks not playing. The next note on the channel wakes it
+        (noteon), before that note sounds."""
+        if self.fx_groups <= 1:
+            return
+        units = {int(c) % self.fx_groups for c in channels} & self._fx_wanted
+        if units - self._asleep:
+            self._asleep |= units
+            self._run_units(self._fx_wanted - self._asleep)
+
+    def _wake(self, channel):
+        unit = int(channel) % self.fx_groups
+        if unit in self._asleep:
+            self._asleep.discard(unit)
+            self._run_units(self._fx_wanted - self._asleep)
+
+    def _run_units(self, running):
+        if running == self._fx_on:
+            return
+        for unit in range(self.fx_groups):
+            on = unit in running
+            if on != (unit in self._fx_on):
+                self._t("effects unit {} {}".format(unit, "on" if on else "off"))
+                if self._reverb:
+                    self._lib.fluid_synth_reverb_on(self._synth, unit, 1 if on else 0)
+                if self._chorus:
+                    self._lib.fluid_synth_chorus_on(self._synth, unit, 1 if on else 0)
+        self._fx_on = set(running)
+        self.effects_version += 1
+        off = [r for u in range(self.fx_groups) if u not in running for r in range(4 * u, 4 * u + 4)]
+        self._fx_null = np.array(off, dtype=np.int64) if off else None
+
+    def effects_units_on(self):
+        """The units whose reverb and chorus are running now."""
+        return set(self._fx_on)
+
     # -- audio ------------------------------------------------------------
     def render_channels(self, frames, planar, offset, fx):
         """Mix `frames` frames of every channel into its own rows of `planar`, from column `offset`.
 
         planar: C-contiguous float32 shaped (2 * channels, length): rows 2c and 2c + 1 are
-        channel c's left and right. fx: float32 shaped (4, length) for the built-in reverb and
-        chorus (left, right, left, right). The sound is added to what is already there."""
+        channel c's left and right. fx: float32 for the built-in reverb and chorus, either shaped
+        (fx_rows, length), each unit in its own four rows (reverb left, right, chorus left, right; the rows of
+        a unit that is off are left alone), or (4, length) for every unit added together.
+        The sound is added to what is already there."""
         frames = int(frames)
         if frames <= 0:
+            return
+        if 0 < fx.shape[0] < self.fx_rows and self._fx_null is not None:
+            # every unit added together into fewer rows: a unit that is off must not add its unprocessed send
+            if self._fx_wide is None or self._fx_wide.shape[1] < frames:
+                self._fx_wide = np.zeros((self.fx_rows, max(frames, 1024)), dtype=np.float32)
+            wide = self._fx_wide
+            wide[:, :frames] = 0.0
+            self.render_channels(frames, planar, offset, wide)
+            n = fx.shape[0]
+            for r in range(n):
+                fx[r, offset:offset + frames] += wide[r::n, :frames].sum(axis=0)
             return
         key = (planar.ctypes.data, fx.ctypes.data, planar.shape, fx.shape)
         target = self._targets.get(key)
@@ -461,6 +573,8 @@ class FluidSynth:
         shift = np.uint64(int(offset) * 4)
         out_ptrs = rows + shift
         fx_ptrs = fx_rows + shift
+        if self._fx_null is not None and len(fx_ptrs) == self.fx_rows:
+            fx_ptrs[self._fx_null] = 0      # no pointer: FluidSynth skips the rows of units that are off
         if self._trace is not None:
             self._t("process frames={} nfx={} nout={}".format(frames, len(fx_ptrs), len(out_ptrs)))
         result = self._lib.fluid_synth_process(self._synth, frames, len(fx_ptrs), fx_ptrs.ctypes.data,

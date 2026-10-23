@@ -60,8 +60,9 @@ rhythm player, plays them, and they can be played by hand on the musical keyboar
 | sounddevice and PortAudio | Talking to the sound card | MIT |
 | accessible_output2 | Speaking through NVDA | MIT |
 | NVDA Controller Client | The link to NVDA | LGPL 2.1 |
-| pywin32 and comtypes | Speaking through JAWS and Windows | PSF License and MIT |
-| Windows Media Foundation | M4A export, with the AAC encoder built into Windows | Part of Windows |
+| pywin32 | Speaking through JAWS and the Windows voice | PSF License |
+| comtypes | The Check Accessibility tool | MIT |
+| Windows Media Foundation | M4A export, with the AAC encoder built into Windows, and reading MP3, M4A and WMA files on import | Part of Windows |
 
 ## Musician Forge's own sounds
 

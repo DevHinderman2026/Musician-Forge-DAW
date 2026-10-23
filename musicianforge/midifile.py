@@ -140,7 +140,19 @@ def _track_bytes(events, end_tick=None):
 
 
 def _text(value):
-    return value.encode("latin-1", "replace")[:127]
+    """Words for a name or text event. Windows' own letters (cp1252) first, so a curly apostrophe or a dash survives
+    (23 Oct 2026: "Don’t Stop" came back as "Don?t Stop"); a letter it lacks goes as Latin-1, or as "?"."""
+    out = bytearray()
+    for char in str(value):
+        for encoding in ("cp1252", "latin-1"):
+            try:
+                out += char.encode(encoding)
+                break
+            except UnicodeEncodeError:
+                continue
+        else:
+            out += b"?"
+    return bytes(out[:127])
 
 
 # ----------------------------------------------------------------------
@@ -150,19 +162,36 @@ def tempo_microseconds(bpm):
     return int(round(60_000_000 / float(bpm)))
 
 
-def channel_for_tracks(song):
-    """MIDI channel for each track id: drums on channel 10, others share the rest."""
-    channels = {}
+def midi_places(song, notes_by_track=None):
+    """{track id: (MIDI port, channel)} for each instrument track that plays notes: drums on channel 10, the others
+    on the other 15 channels. Since 23 Oct 2026 a track without notes takes no channel (it used to, so an empty
+    track could take a channel another track then shared), and from the 16th instrument track on the tracks go on
+    a second MIDI port (a third from the 31st, and so on), so no two share a channel on one port. A program that
+    ignores ports plays them on the channels of the first 15 (see ports_used)."""
+    places = {}
     melodic_index = 0
     for track in song.tracks:
         if getattr(track, "is_audio", False):
             continue  # recordings cannot go into a MIDI file
+        if not (notes_by_track or {}).get(track.id, track.notes):
+            continue
         if is_kit(track.instrument):
-            channels[track.id] = DRUM_CHANNEL
+            places[track.id] = (0, DRUM_CHANNEL)
         else:
-            channels[track.id] = MELODIC_CHANNELS[melodic_index % len(MELODIC_CHANNELS)]
+            places[track.id] = (melodic_index // len(MELODIC_CHANNELS),
+                                MELODIC_CHANNELS[melodic_index % len(MELODIC_CHANNELS)])
             melodic_index += 1
-    return channels
+    return places
+
+
+def channel_for_tracks(song, notes_by_track=None):
+    """MIDI channel for each track id that plays notes (see midi_places)."""
+    return {tid: channel for tid, (_port, channel) in midi_places(song, notes_by_track).items()}
+
+
+def ports_used(song, notes_by_track=None):
+    """How many MIDI ports an export of the song uses (more than 1: more than 15 instrument tracks play notes)."""
+    return 1 + max((port for port, _channel in midi_places(song, notes_by_track).values()), default=0)
 
 
 def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
@@ -175,6 +204,7 @@ def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
         clocks = 24 * 4 // ts.denominator
         conductor.append((tick, 1, _meta(0x58, bytes([ts.numerator, dd, max(1, clocks), 8]))))
     key_texts = []
+    exact_keys = []
     for key in tl.keys:
         tick = tl.bar_to_tick(key.bar)
         sf = theory.key_accidentals(key.tonic, key.scale)
@@ -184,6 +214,7 @@ def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
         # track of music, not here: this track holds only what other programs put on their tempo, signature and
         # marker tracks (Russell, 10 Oct 2026: a text here gave another program an extra, empty track at the top)
         key_texts.append((tick, 2, _meta(0x01, _text(midiimport.key_text(key.tonic, key.scale)))))
+        exact_keys.append((tick, key.tonic, key.scale))
     for tempo in tl.tempos:
         tick = tl.position_to_tick(tempo.bar, tempo.beat)
         conductor.append((tick, 3, _meta(0x51, tempo_microseconds(tempo.bpm).to_bytes(3, "big"))))
@@ -194,7 +225,9 @@ def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
     end = song.song_end_tick() if hasattr(song, "song_end_tick") else None
     chunks = [_track_bytes(conductor, end)]
 
-    channels = channel_for_tracks(song)
+    places = midi_places(song, notes_by_track)
+    channels = {tid: channel for tid, (_port, channel) in places.items()}
+    several_ports = any(port for port, _channel in places.values())
     played = {t.id: (notes_by_track or {}).get(t.id, t.notes) for t in song.tracks if t.id in channels}
     # the exact keys ride along in the track that plays longest, so they never make a track longer than its music
     host = max((tid for tid in played if played[tid]), key=lambda tid: max(n.tick + n.length for n in played[tid]),
@@ -203,14 +236,21 @@ def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
         conductor.extend(key_texts)
         chunks[0] = _track_bytes(conductor, end)
     for track in song.tracks:
-        if track.id not in channels:
+        if getattr(track, "is_audio", False):
             continue  # audio tracks
-        ch = channels[track.id]
         events = [(0, 0, _meta(0x03, _text(track.name)))]
         inst = track.instrument
         program, gm_name = general_midi(inst)
         events.append((0, 0, _meta(0x04, _text(gm_name))))
         events.append((0, 0, _meta(0x01, _text(instrument_text(inst.bank, inst.program)))))
+        if track.id not in channels:
+            # no notes: its name and instrument only. It takes no channel, so it cannot change the instrument,
+            # volume or pan of a track that plays (23 Oct 2026)
+            chunks.append(_track_bytes(events))
+            continue
+        port, ch = places[track.id]
+        if several_ports:
+            events.append((0, 0, _meta(0x21, bytes([port]))))            # MIDI port: 16 channels per port
         if not is_kit(inst):
             events.append((0, 1, bytes([0xB0 | ch, 0, 0])))            # General MIDI's own bank
             events.append((0, 2, bytes([0xB0 | ch, 32, 0])))
@@ -235,14 +275,23 @@ def song_to_midi_bytes(song, notes_by_track=None, include_chords=True):
             events.append((note.tick, 7, bytes([0x90 | ch, note.pitch, note.velocity])))
             track_end = max(track_end, note.tick + note.length)
         if track.id == host:
-            events.extend(e for e in key_texts if e[0] < track_end or e[0] == 0)
+            for (tick, order, raw), (_t, tonic, scale) in zip(key_texts, exact_keys):
+                if tick < track_end or tick == 0:
+                    events.append((tick, order, raw))
+                else:
+                    # a key change after the last note (23 Oct 2026: its mode was lost): written before the music
+                    # ends, so the track is no longer than its music, saying which key signature it belongs to
+                    events.append((max(0, track_end - 1), order,
+                                   _meta(0x01, _text(midiimport.key_text(tonic, scale, at=tick)))))
         if any(e[0] < 0 for e in events):
             raise MidiFileError("Track '{}' has notes before the start of the song".format(track.name))
         chunks.append(_track_bytes(events))
 
     if include_chords and getattr(song, "chords", None):
         # no note after the music ends (Russell, 10 Oct 2026: a chord where the song ended played on its own)
-        chunks.append(chord_track_events(song, set(channels.values()), music_end(song, notes_by_track) or end))
+        port_zero = {ch for port, ch in places.values() if port == 0}
+        chunks.append(chord_track_events(song, port_zero, music_end(song, notes_by_track) or end,
+                                         port=0 if several_ports else None))
     header = struct.pack(">HHH", 1, len(chunks), PPQ)
     return _chunk(b"MThd", header) + b"".join(_chunk(b"MTrk", c) for c in chunks)
 
@@ -251,7 +300,7 @@ CHORD_TRACK_NAME = midiimport.CHORD_TRACK_NAME
 CHORD_TEXT_PREFIX = midiimport.CHORD_TEXT_PREFIX
 
 
-def chord_track_events(song, used_channels, end=None):
+def chord_track_events(song, used_channels, end=None, port=None):
     """The chord track as a MIDI track of its own (Russell, 10 Oct 2026). MIDI has no chord events, so each
     chord is held as notes (the bass note low, the chord above middle C) and named in a lyric event, which
     other programs show beside the notes; a text event beside it lets Musician Forge's own import bring
@@ -264,6 +313,8 @@ def chord_track_events(song, used_channels, end=None):
     ch = free[-1] if free else None
     flats = False
     events = [(0, 0, _meta(0x03, _text(CHORD_TRACK_NAME)))]
+    if port is not None:
+        events.append((0, 0, _meta(0x21, bytes([port]))))           # the export uses several MIDI ports
     if ch is not None:
         events.append((0, 0, _meta(0x04, _text(GM_NAMES[0]))))
         events.append((0, 3, bytes([0xC0 | ch, 0])))                  # a piano, if someone turns it up

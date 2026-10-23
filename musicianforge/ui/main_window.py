@@ -45,16 +45,16 @@ from contextlib import contextmanager
 import wx
 
 from .. import (APP_NAME, __version__, arpeggiator, audio, audioimport, audiotracks, keyboard_map, midiimport, paths,
-               projects, theory)
+               projects, quantize, theory)
 from ..outputwatch import OutputWatch
-from ..song import Instrument, SongFileError
+from ..song import MAX_TRACKS, NO_TRACK_YET, Instrument, SongFileError
 from ..session import default_song_file_name
 from ..timeline import TimelineError, format_number
-from .common import (ask_yes_no, ask_yes_no_cancel, fit_to_screen, list_target, show_error, show_info,
-                     show_items, silence_name)
+from .common import (SAY_AFTER_MS, ask_yes_no, ask_yes_no_cancel, fit_to_screen, focused_window, list_target,
+                     say_after, show_error, show_info, show_items, silence_name)
 from .dialogs import (AudioSettingsDialog, ChangesDialog, EventListDialog, ExportAudioDialog, GoToBarDialog,
-                      InstrumentDialog, MidiImportDialog, NewSongDialog, OpenProjectDialog, PreferencesDialog,
-                      QuantizeDialog,
+                      InstrumentDialog, MidiImportDialog, NewSongDialog, NewTrackDialog, OpenProjectDialog,
+                      PreferencesDialog, QuantizeDialog,
                       RecordingDialog, RecordingsDialog, SaveProjectDialog, SectionsDialog, SectionSettingsDialog,
                       TextInputDialog, TextViewDialog, TrackSettingsDialog)
 from .effects_dialogs import EffectsDialog
@@ -71,7 +71,8 @@ ZIP_WILDCARD = "Zip files (*.zip)|*.zip"
 MIDI_EXTENSIONS = ("mid", "midi", "rmi", "kar")
 MIDI_WILDCARD = "MIDI files (*.mid;*.midi;*.rmi;*.kar)|*.mid;*.midi;*.rmi;*.kar"
 IMPORT_TITLE = "Import audio or MIDI file"
-RECOVERY_DELAY_MS = 3000   # the crash-recovery copy follows the changes this long after the last one
+RECOVERY_DELAY_MS = 3000
+WINDOW_SAY_MS = 600         # what is said after a window opens or closes waits this long (common.say_after)   # the crash-recovery copy follows the changes this long after the last one
 
 
 def import_wildcard():
@@ -92,6 +93,7 @@ def is_midi_file(path):
     return start[:4] == b"MThd" or (start[:4] == b"RIFF" and start[8:12] == b"RMID")
 MICROPHONE_TEST_MS = 3000
 NO_REGIONS = "No regions on this track yet. Record, import or paste to make one."
+NO_TRACKS = "No tracks yet. Press Control+T to add one."    # the Tracks list's only line in a project with none
 KEYBOARD_SCALE_CHOICES = ["Follow the song's key"] + list(theory.SCALE_NAMES)
 OCTAVE_CHOICES = ["{} (the A key plays C {})".format(o, o) for o in keyboard_map.OCTAVES]
 ARP_OCTAVE_CHOICES = ["1 octave"] + ["{} octaves".format(n) for n in range(2, arpeggiator.MAX_OCTAVES + 1)]
@@ -116,6 +118,25 @@ def _install_keyboard_accessible(panel):
         panel.SetAccessible(KeyboardAccessible(panel))
     except Exception:  # noqa: BLE001
         log.exception("Could not attach accessibility information to the keyboard area")
+
+
+def is_auto_repeat(event):
+    """True when Windows sent this key down again because the key is held (auto-repeat), False for a fresh press, None
+    when wxPython cannot tell (wxKeyEvent.IsAutoRepeat is in wxWidgets 3.1.6 and later, on Windows)."""
+    try:
+        return bool(event.IsAutoRepeat())
+    except (AttributeError, NotImplementedError):
+        return None
+
+
+# Keys that switch something on and off, or jump: holding one down must not flip it back and forth with every
+# auto-repeat (Space played and stopped about 30 times a second). The keys that step (comma, period, Z, X, C, V) repeat.
+NO_REPEAT_KEYS = (wx.WXK_SPACE, ord("R"), wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_ESCAPE)
+
+DIGIT_KEYS = {ord(str(n)): str(n) for n in range(10)}
+DIGIT_KEYS.update({getattr(wx, "WXK_NUMPAD{}".format(n)): str(n) for n in range(10)
+                   if hasattr(wx, "WXK_NUMPAD{}".format(n))})
+TYPE_AHEAD_SECONDS = 1.0
 
 
 def is_typing_control(control):
@@ -166,6 +187,14 @@ class KeyboardPanel(wx.Panel):
             return
         char = self.char_of(event)
         handled = False
+        repeat = is_auto_repeat(event)
+        if char == "b" and repeat:
+            return              # holding B switches the layout once, not round and round
+        if char and char in self.session._held and repeat is False:
+            # A fresh press of a key still counted as held: its key-up was lost (released while a menu was open,
+            # where Windows keeps it). Let go of the old note so this press plays, instead of being taken for
+            # auto-repeat and staying silent.
+            self.session.key_up(char, time.perf_counter())
         if char:
             try:
                 handled = self.session.key_down(char, time.perf_counter())
@@ -245,6 +274,7 @@ class MainFrame(wx.Frame):
         self.test_mode = test_mode
         self.start_frame = None
         self._quitting = False
+        self._first_track_wanted = False   # a new project made from the start screen: New track opens once shown
         self._last_status_bar = ""
         self._last_status_text = ""
         self.buttons = {}
@@ -257,6 +287,10 @@ class MainFrame(wx.Frame):
         self.SetStatusText("Ready")
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        # A key held on the musical keyboard while a menu opens or another window comes up: Windows never sends its
+        # release here, so the note would hang. Let go of every key then.
+        self.Bind(wx.EVT_MENU_OPEN, self.on_menu_open)
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_timer, self.timer)
         self.autosave_timer = wx.Timer(self)
@@ -272,6 +306,7 @@ class MainFrame(wx.Frame):
             self.timer.Start(100)
             self.autosave_timer.Start(120000)   # (the output watch is started by app.py once the sound is open)
         session.listeners.append(self.on_session_change)
+        session.say_later = self._say_later  # what a pressed control or a window change says comes a moment later
         self.refresh_all()
         self.track_list.SetFocus()
 
@@ -317,7 +352,7 @@ class MainFrame(wx.Frame):
         """The Show keyboard controls button, then the controls it reveals. Every one is reachable with Tab,
         and each also has a key on the musical keyboard or a shortcut."""
         self.controls_button = wx.Button(panel, label="Show keyboard controls")
-        self.controls_button.Bind(wx.EVT_BUTTON, lambda e: self._after(self.safe(self.toggle_keyboard_controls)))
+        self.controls_button.Bind(wx.EVT_BUTTON, lambda e: self._press("button", self.toggle_keyboard_controls))
         sizer.Add(self.controls_button, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         box = wx.StaticBox(panel, label="Keyboard controls")
         self.controls_sizer = wx.StaticBoxSizer(box, wx.VERTICAL)
@@ -345,7 +380,7 @@ class MainFrame(wx.Frame):
         self.strips_button = wx.Button(box, label="Customize chord strips...")
         grid.Add(self.strips_button, 0)
         grid.Add((0, 0))
-        self.strips_button.Bind(wx.EVT_BUTTON, lambda e: self._after(self.safe(self.chord_strips)))
+        self.strips_button.Bind(wx.EVT_BUTTON, lambda e: self._press("button", self.chord_strips))
         self.controls_sizer.Add(grid, 0, wx.ALL, 4)
         sizer.Add(self.controls_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 8)
 
@@ -363,15 +398,16 @@ class MainFrame(wx.Frame):
         for choice, handler in handlers.items():
             choice.Bind(wx.EVT_CHOICE, lambda e, c=choice, h=handler: self._on_keyboard_choice(c, h))
         self.arp_check.Bind(wx.EVT_CHECKBOX,
-                            lambda e: self._after(self.safe(lambda: s.set_arpeggiator(on=self.arp_check.GetValue()))))
+                            lambda e: self._press("check", lambda: s.set_arpeggiator(on=self.arp_check.GetValue())))
         shown = bool(s.settings["keyboard_controls_shown"]) if s.settings is not None else False
         self._show_keyboard_controls(shown)
 
     def _on_keyboard_choice(self, choice, handler):
         index = choice.GetSelection()
-        if index != wx.NOT_FOUND:
-            self.safe(handler, index)
-        self._after(None)
+        with self.session.pressed("check"):          # the screen reader reads the new choice itself
+            if index != wx.NOT_FOUND:
+                self.safe(handler, index)
+            self._after(None)
 
     def _show_keyboard_controls(self, shown):
         self.body_sizer.Show(self.controls_sizer, shown, recursive=True)
@@ -446,9 +482,10 @@ class MainFrame(wx.Frame):
         self.metronome_check = self._check(box, row, "Metronome", self.toggle_metronome)
         self.all_sections_check = self._check(box, row, "All sections", s.toggle_all_sections)
         box, row = self._group(panel, sizer, "Track")
+        # New track opens a list of the kinds of track (Russell, 23 Oct 2026: "That will be way better than trying
+        # to locate it by using tab all the time"), so the New audio track and New rhythm player buttons went;
+        # Control+U and Control+Shift+R still make them straight away
         self._button(box, row, "New track", self.new_track)
-        self._button(box, row, "New audio track", self.new_audio_track)
-        self._button(box, row, "New rhythm player", self.new_player)
         self._button(box, row, "Instrument", self.change_instrument)
         self._button(box, row, "Track settings", self.track_settings)
         self._button(box, row, "Effects", self.track_effects)
@@ -464,6 +501,10 @@ class MainFrame(wx.Frame):
         self._button(box, row, "Undo", s.undo)
         self._button(box, row, "Redo", s.redo)
         self.select_check = self._check(box, row, "Select", self.toggle_selecting)
+        # Space and Control+A in the Tracks and Regions lists, as buttons too (the review, 23 Oct 2026): they act on
+        # the list you were in last, like Cut, Copy and Paste
+        self._button(box, row, "Select or unselect", self.select_or_unselect)
+        self._button(box, row, "Select all", lambda: self.select_all(self.last_list))
         self._button(box, row, "Cut", lambda: self.edit_action("cut"))
         self._button(box, row, "Copy", lambda: self.edit_action("copy"))
         self._button(box, row, "Paste", lambda: self.edit_action("paste"))
@@ -495,9 +536,10 @@ class MainFrame(wx.Frame):
 
     # -- help ----------------------------------------------------------------
     def help_items(self):
-        """What the Help menu button offers (the Help menu in the menu bar has the same pages)."""
-        return [("Keyboard shortcuts (F1)", self.show_shortcuts),
-                ("Musical keyboard layouts (Shift+F1)", self.show_layouts),
+        """What the Help menu button offers (the Help menu in the menu bar has the same pages). Its shortcuts are said
+        after a comma, as in the other buttons of the Menus group (spoken_menu_label), not in brackets (0.9.7)."""
+        return [(self.spoken_menu_label("Keyboard shortcuts\tF1"), self.show_shortcuts),
+                (self.spoken_menu_label("Musical keyboard layouts\tShift+F1"), self.show_layouts),
                 ("Quick start guide", lambda: self.show_doc("quick_start")),
                 ("What's new", lambda: self.show_doc("whats_new")),
                 ("Credits", lambda: self.show_doc("credits")),
@@ -598,7 +640,7 @@ class MainFrame(wx.Frame):
     def _button(self, box, row, label, handler):
         # buttons live inside their group box, so screen readers report the group
         button = wx.Button(box, label=label)
-        button.Bind(wx.EVT_BUTTON, lambda e, h=handler: self._after(self.safe(h)))
+        button.Bind(wx.EVT_BUTTON, lambda e, h=handler: self._press("button", h))
         row.Add(button, 0, wx.ALL, 3)
         self.buttons[label] = button
         self._group_controls(box).append(button)
@@ -606,7 +648,7 @@ class MainFrame(wx.Frame):
 
     def _check(self, box, row, label, handler):
         check = wx.CheckBox(box, label=label)
-        check.Bind(wx.EVT_CHECKBOX, lambda e, h=handler: self._after(self.safe(h)))
+        check.Bind(wx.EVT_CHECKBOX, lambda e, h=handler: self._press("check", h))
         row.Add(check, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 3)
         self._group_controls(box).append(check)
         return check
@@ -620,8 +662,9 @@ class MainFrame(wx.Frame):
         tid = s.selected_track_id
         areas = []
         tracks = len(s.song.tracks)
-        areas.append(("Tracks", self.track_list if tracks else None,
-                      "Tracks, {}".format(s._count_words(tracks, "track")), [self.track_list]))
+        # with no tracks yet the list is still a place to go: its one line says how to add one
+        areas.append(("Tracks", self.track_list, "Tracks, {}".format(s._count_words(tracks, "track")),
+                      [self.track_list]))
         regions = len(s.regions_of(tid)) if tid is not None else 0
         track = s.song.track_by_id(tid) if tid is not None else None
         noun = "recording" if track is not None and track.is_audio else "region"
@@ -635,10 +678,11 @@ class MainFrame(wx.Frame):
         if self.keyboard_controls_shown():
             areas.append(("Keyboard controls", self.layout_choice,
                           "Keyboard controls, {} settings".format(len(settings)),
-                          [self.controls_button] + settings))
+                          [self.controls_button] + settings + [self.strips_button]))
         else:
             areas.append(("Keyboard controls", self.controls_button,
-                          "Keyboard controls are hidden. Space shows them.", [self.controls_button] + settings))
+                          "Keyboard controls are hidden. Space shows them.",
+                          [self.controls_button] + settings + [self.strips_button]))
         for title, _box, controls in self.groups:
             usable = [c for c in controls if c.IsShown() and c.IsEnabled()]
             buttons = sum(1 for c in usable if not isinstance(c, wx.CheckBox))
@@ -682,10 +726,29 @@ class MainFrame(wx.Frame):
         that got the focus; nothing is said while recording."""
         if self.session.engine.recording:
             return
-        if self.test_mode:
-            self.session.announce(words, interrupt=False)
-        else:
-            wx.CallLater(200, self.session.announce, words, False)
+        # one at a time: F6 twice quickly said the area it passed through as well, after the one it landed in
+        # (main window review, 23 Oct 2026); the newer words replace the waiting ones
+        waiting = getattr(self, "_area_words", None)
+        if waiting is not None:
+            try:
+                waiting.Stop()
+            except Exception:  # noqa: BLE001 - already said, or gone
+                pass
+        self._area_words = say_after(self.session.announce, words)
+
+    def _say_later(self, say, text):
+        """Session.announce while a control is pressed or a window changes (Session.pressed): a moment later and
+        queued, longer after a window opens or closes (the screen reader reads its title and focus first)."""
+        delay = WINDOW_SAY_MS if self.session._pressed == "window" else SAY_AFTER_MS
+        say_after(say, text, delay)
+
+    def _press(self, kind, handler):
+        """A button ("button") or check box ("check") of the window was pressed: run its command. The screen reader
+        is reading the control (its name, "pressed", or its new state), so what the command says comes after that,
+        and a check box's own state is not said a second time (Session.pressed). Nothing here moves the focus to
+        the window or changes its title: test_gui_screen_reader presses every one of them to make sure."""
+        with self.session.pressed(kind):
+            self._after(self.safe(handler))
 
     def _after(self, _result):
         self.refresh_controls()
@@ -728,9 +791,6 @@ class MainFrame(wx.Frame):
         m.AppendSeparator()
         self._item(m, "&Export audio (WAV or M4A)...", self.export_audio, "Ctrl+E")
         self._item(m, "Export &MIDI file...", self.export_midi, "Ctrl+Shift+E")
-        self._item(m, "&Import audio or MIDI file (WAV, MP3, M4A, FLAC, MIDI and more)...", self.import_file,
-                   "Ctrl+Shift+I")
-        self._item(m, "Import MI&DI file...", self.import_midi_file)
         m.AppendSeparator()
         self._item(m, "Song &title...", self.song_title)
         m.AppendSeparator()
@@ -764,11 +824,16 @@ class MainFrame(wx.Frame):
         bar.Append(m, "&Region")
 
         m = wx.Menu()
-        self._item(m, "&Rename track...", self.rename_track, "F2")
+        # F2 renames the region in the Regions list: the window's F2 comes before the list's own keys on Windows, so
+        # it decides (the review, 23 Oct 2026: F2 in the Regions list renamed the track)
+        self._item(m, "&Rename track or region...", self.rename_for_focus, "F2")
         bar.Append(m, "&Track")
         self._shortcut(self.new_track, "Ctrl+T")
         self._shortcut(self.new_audio_track, "Ctrl+U")
         self._shortcut(self.new_player, "Ctrl+Shift+R")
+        # importing lives in the New track list (Import file); the File menu's two Import items went (Russell, 23 Oct
+        # 2026); Control+Shift+I stays as a shortcut: an audio file onto the selected audio track, or a MIDI file
+        self._shortcut(self.import_file, "Ctrl+Shift+I")
         self._shortcut(self.settings_for_focus, "Alt+Enter")       # region settings in the Regions list
         self._shortcut(self.change_instrument, "Ctrl+I")
         self._shortcut(self.track_effects, "Ctrl+F")
@@ -808,12 +873,12 @@ class MainFrame(wx.Frame):
                    lambda: self.jump(1))
         self._item(m, "Go to the pre&vious area (Shift+F6)", lambda: self.jump(-1))
         m.AppendSeparator()
-        self._item(m, "Switch &layout: piano, scale or chord strips (B)", self.session.toggle_layout)
+        self._item(m, "Switch &layout: piano, scale or chord strips (B)", lambda: self.keyboard_key("b"))
         self._item(m, "&Arpeggiator on or off", self.session.toggle_arpeggiator, "Ctrl+Shift+P")
-        self._item(m, "Octave down (Z)", lambda: self.session.key_down("z"))
-        self._item(m, "Octave up (X)", lambda: self.session.key_down("x"))
-        self._item(m, "Velocity down (C)", lambda: self.session.key_down("c"))
-        self._item(m, "Velocity up (V)", lambda: self.session.key_down("v"))
+        self._item(m, "Octave down (Z)", lambda: self.keyboard_key("z"))
+        self._item(m, "Octave up (X)", lambda: self.keyboard_key("x"))
+        self._item(m, "Velocity down (C)", lambda: self.keyboard_key("c"))
+        self._item(m, "Velocity up (V)", lambda: self.keyboard_key("v"))
         self._item(m, "Speak keyboard settings and c&hords", self.speak_keyboard, "Ctrl+J")
         self._item(m, "Customize chord stri&ps...", self.chord_strips, "Ctrl+Shift+J")
         m.AppendSeparator()
@@ -870,6 +935,13 @@ class MainFrame(wx.Frame):
             m.AppendSubMenu(sub, titles[key])
             self.keyboard_menu_items[key] = items
 
+    def keyboard_key(self, char):
+        """The Keyboard menu's Switch layout, Octave and Velocity items: as the B, Z, X, C and V keys, and the
+        keyboard controls and the Status area show the change (Status kept the old octave or velocity)."""
+        self.session.key_down(char)
+        self.refresh_controls()
+        self.refresh_status_text()
+
     def choose_keyboard_setting(self, key, index):
         """A Keyboard menu submenu item: the same as choosing it in the keyboard controls, and it is said (a menu
         closes without reading the new value)."""
@@ -891,6 +963,7 @@ class MainFrame(wx.Frame):
             s.announce("Arpeggiator {}: {}{}".format(words, name, "" if s.arp["on"] else
                                                      ". The arpeggiator is off; Control+Shift+P turns it on"))
         self.refresh_controls()
+        self.refresh_status_text()
 
     def keyboard_setting_indexes(self):
         """{setting: the index of its current choice} (None for the layout on a drum kit, which has only drums)."""
@@ -916,7 +989,9 @@ class MainFrame(wx.Frame):
             self.refresh_menus()
             return result if result is not None else True
         except (ValueError, TimelineError, SongFileError) as exc:
-            self.session.announce(str(exc))
+            # only the message box: the screen reader reads it, and the same words said first were cut off by it
+            # or said twice (screen reader audit, 23 Oct 2026)
+            log.info("Refused: %s", exc)
             show_error(parent, str(exc))
         except Exception as exc:  # noqa: BLE001
             log.exception("Action failed: %s", getattr(func, "__name__", func))
@@ -924,9 +999,16 @@ class MainFrame(wx.Frame):
                                "(musicianforge.log).".format(exc))
         return False
 
+    def ask_here(self, message):
+        """A Yes/No question from a list window (Effects, Sections and so on): it belongs to that window, not to the
+        project window behind it, so the screen reader goes back to the list after it (screen reader audit B5)."""
+        return ask_yes_no(focused_window(self), message)
+
     def show_modal(self, dialog):
-        """All dialogs open through here (tests replace this)."""
-        return dialog.ShowModal()
+        """All dialogs open through here (tests replace this). While one is open, what is said in it is said as usual:
+        the button that opened it is no longer being read (Session.pressed)."""
+        with self.session.pressed(None):
+            return dialog.ShowModal()
 
     def ask_values(self, dialog, get_values):
         """Show a dialog until what was typed in it makes sense: get_values() raises ValueError in words, and the
@@ -958,8 +1040,10 @@ class MainFrame(wx.Frame):
         if mods == wx.MOD_NONE and key in (ord("R"), wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and is_typing_control(focused):
             event.Skip()  # in a list you choose from (R jumps to "Random") or a box you type in
             return
+        if mods == wx.MOD_NONE and key in NO_REPEAT_KEYS and is_auto_repeat(event):
+            return    # a held Space, R, Enter or Escape acts once
         if mods == wx.MOD_NONE and key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and focused is self.region_list:
-            event.Skip()  # Enter opens the region
+            self.on_region_key(event)  # Enter opens the region: here, before Windows' navigation can take it
             return
         if mods == wx.MOD_NONE and key == ord("R") and focused is self.region_list and self._on_player_region():
             self.safe(self.reforge_region)  # R on a rhythm player region reforges it (elsewhere R records)
@@ -998,6 +1082,8 @@ class MainFrame(wx.Frame):
         tid = self.session.selected_track_id
         s = self.session
         target = list_target(self.track_list, key) if mods in (wx.MOD_NONE, wx.MOD_SHIFT) else None
+        if target is None and mods == wx.MOD_NONE:
+            target = self.type_ahead_target(self.track_list, key)
         if target is not None:
             # Musician Forge moves the list itself, so ", selected" is on the track before the screen reader
             # reads it (and it is read once)
@@ -1025,10 +1111,38 @@ class MainFrame(wx.Frame):
         self.safe(action)
         self.refresh_controls()
 
+    def type_ahead_target(self, ctrl, key):
+        """Typing an item's number in the Tracks or Regions list (2, or 1 then 2 quickly for 12): the item it moves to,
+        or None for any other key. Musician Forge moves the list itself, as with the arrows, so the item is read once
+        with its words; Windows' own type-ahead moved the list first and the item was read twice (", selected" was
+        added after it was read)."""
+        digit = DIGIT_KEYS.get(key)
+        if digit is None:
+            return None
+        now = time.monotonic()
+        typed, when, where = getattr(self, "_typed", ("", 0.0, None))
+        typed = typed + digit if where is ctrl and now - when < TYPE_AHEAD_SECONDS else digit
+        items = [ctrl.GetString(i) for i in range(ctrl.GetCount())]
+        if len(typed) > 1 and not any(text.startswith(typed) for text in items):
+            typed = digit                      # no item has that number: start again from this digit
+        self._typed = (typed, now, ctrl)
+        current = ctrl.GetSelection()
+        matches = [i for i, text in enumerate(items) if text.startswith(typed + ".")] if len(typed) > 1 else []
+        if not matches:
+            matches = [i for i, text in enumerate(items) if text.startswith(typed)]
+        if not matches:
+            return current if current >= 0 else None      # nothing has that number: stay (the key is used)
+        if len(typed) == 1:                    # the same digit again: the next item that starts with it (1, 10, 11)
+            later = [i for i in matches if i > current]
+            return later[0] if later else matches[0]
+        return matches[0]
+
     def on_region_key(self, event):
         key = event.GetKeyCode()
         mods = event.GetModifiers()
         target = list_target(self.region_list, key) if mods in (wx.MOD_NONE, wx.MOD_SHIFT) else None
+        if target is None and mods == wx.MOD_NONE and self.session.selected_track_id is not None:
+            target = self.type_ahead_target(self.region_list, key)
         if target is not None:
             if target != self.region_list.GetSelection():         # as in the Tracks list: read once, with its words
                 self.refresh_regions(select=target)
@@ -1099,6 +1213,15 @@ class MainFrame(wx.Frame):
         self.last_list = which
         event.Skip()
 
+    def on_menu_open(self, event):
+        self.session.release_all_keys()
+        event.Skip()
+
+    def on_activate(self, event):
+        if not event.GetActive():
+            self.session.release_all_keys()
+        event.Skip()
+
     def on_track_selected(self, event):
         index = self.track_list.GetSelection()
         if 0 <= index < len(self.session.song.tracks):
@@ -1159,6 +1282,8 @@ class MainFrame(wx.Frame):
         tracks = s.song.tracks
         items = [t.describe(i + 1) + (", selected" if s.is_selected_track(t.id) else "") for i, t in enumerate(tracks)]
         index = self.session.song.index_of(self.session.selected_track_id)
+        if not items:                       # a new project: no tracks yet (as the Regions list says no regions)
+            items, index = [NO_TRACKS], 0
         show_items(self.track_list, items, index if index >= 0 else None)
 
     def refresh_regions(self, select=None):
@@ -1169,7 +1294,8 @@ class MainFrame(wx.Frame):
         count = len(s.regions_of(tid)) if tid is not None else 0
         here = self.region_list.GetSelection() if select is None else select
         here = min(max(here, 0), count - 1) if count else None
-        items = [s.describe_region_item(tid, i, current=here) for i in range(count)] or [NO_REGIONS]
+        items = [s.describe_region_item(tid, i, current=here) for i in range(count)] or [
+            NO_REGIONS if tid is not None else NO_TRACK_YET]
         show_items(self.region_list, items, here if here is not None else 0)
 
     def current_region(self):
@@ -1209,7 +1335,7 @@ class MainFrame(wx.Frame):
                                                 "off" if bars == 0 else "{} bar{}".format(bars, "s" if bars > 1 else "")),
             "Audio: {}.".format(self.audio_output.description if self.audio_output else "off"),
             "Microphone: {}.".format(s.describe_microphone()),
-            "Announcements: {}.".format(self.speaker.describe() if self.speaker else "off"),
+            "Announcements: {}.".format(self.speaker.describe(refresh=False) if self.speaker else "off"),
         ]
         return lines
 
@@ -1217,7 +1343,11 @@ class MainFrame(wx.Frame):
         text = "\n".join(self.status_lines())
         if text != self._last_status_text:
             self._last_status_text = text
-            self.status_text.SetValue(text)
+            # keep the reading place: replacing the text put the cursor back at the start, so reading Status line by
+            # line while it updated started over
+            where = self.status_text.GetInsertionPoint()
+            self.status_text.ChangeValue(text)
+            self.status_text.SetInsertionPoint(min(max(0, where), self.status_text.GetLastPosition()))
         self.keyboard.Refresh()
 
     def on_timer(self, event):
@@ -1271,11 +1401,11 @@ class MainFrame(wx.Frame):
             self.session.audio_is_live = False
             log.error("Windows' output changed to %s, and no output could be opened: %s", new, exc)
             self.session.announce("Windows' sound output changed to {}, but Musician Forge could not play there. "
-                                  "Try Options, Audio settings.".format(new))
+                                  "Try Options, Audio settings.".format(new), interrupt=False)    # audit D6
             return
         self.session.audio_is_live = True
         log.info("Windows' output changed to %s; the sound now plays there (%s)", new, description)
-        self.session.announce("Sound now on {}".format(new))
+        self.session.announce("Sound now on {}".format(new), interrupt=False)     # never over other speech (D6)
         self.refresh_status_text()
 
     def on_autosave(self, event):
@@ -1312,6 +1442,10 @@ class MainFrame(wx.Frame):
             self.session.stop(speak=False)
         if not self.session.modified:
             return True
+        with self.session.pressed("window"):     # "Saved ..." comes after the question and the Save window close
+            return self._confirm_discard()
+
+    def _confirm_discard(self):
         answer = ask_yes_no_cancel(self, "Save changes to {} first?".format(self.session.song.title))
         log.info("Asked to save changes to %s first: %s", self.session.song.title, answer)
         if answer == "cancel":
@@ -1325,6 +1459,10 @@ class MainFrame(wx.Frame):
 
     def new_song(self, parent=None):
         """New project: asks for the title, tempo, time signature and key. Returns True if one was made."""
+        with self.session.pressed("window"):     # its words come once the project window shows
+            return self._new_song(parent)
+
+    def _new_song(self, parent=None):
         if parent is None and not self.confirm_discard():
             return False
         with NewSongDialog(parent or self, self.session.settings) as dlg:
@@ -1338,11 +1476,34 @@ class MainFrame(wx.Frame):
                     show_error(dlg, str(exc))
         self.session.new_song_with(**values)
         self.session.announce("New project {}, {} BPM".format(values["title"], format_number(values["bpm"])))
+        if parent is None:
+            self.offer_first_track()            # the project window is already showing
+        else:
+            self._first_track_wanted = True     # from the start screen: once the project window shows
         return True
+
+    def offer_first_track(self):
+        """A new project starts with no tracks, and the New track list opens as soon as the project window shows
+        (Russell, 23 Oct 2026: "have them immediately add a track instead of having a simple piano track in the
+        beginning"). Cancel there leaves the project with no tracks yet."""
+        self._first_track_wanted = False
+
+        def offer():
+            with self.session.pressed("window"):     # "Added ..." once the list has closed and the focus is read
+                self._after(self.safe(self.new_track))
+        if self.test_mode:
+            offer()
+        else:                    # after the window has the focus, so the list opens over it
+            wx.CallAfter(offer)
 
     def open_song(self, path=None, parent=None, preselect=None):
         """Open project: from a path, or from the Open project list (preselect: the project to have chosen
-        there already). Returns True if one opened."""
+        there already). Returns True if one opened. What it says ("Opened ..., 2 recordings could not be found")
+        comes once the project window shows and its Tracks list is filled (screen reader audit A1, 23 Oct 2026)."""
+        with self.session.pressed("window"):
+            return self._open_song(path, parent, preselect)
+
+    def _open_song(self, path=None, parent=None, preselect=None):
         if parent is None and not self.confirm_discard():
             return False
         if path is None:
@@ -1403,20 +1564,23 @@ class MainFrame(wx.Frame):
                 on_quit=self.quit_app,
                 on_help=lambda button: self.show_help_menu(button),
                 on_say=self.session.announce)
-        self.Hide()
+        # the start screen first, then this window goes: hiding first left no window of ours in front for a moment,
+        # and Windows could bring another program forward (screen reader audit A2, 23 Oct 2026)
         if self.test_mode:
             self.start_frame.refresh()  # automated tests never put windows on the screen
         else:
             self.start_frame.present()
+        self.Hide()
 
     def _from_start(self, action, *args, **options):
         """Run New, Open or a recent project from the start screen; show the project if it worked."""
         parent = self.start_frame
         try:
-            done = action(*args, parent=parent, **options)
+            with self.session.pressed("window"):
+                done = action(*args, parent=parent, **options)
         except (ValueError, SongFileError) as exc:
             show_error(parent, str(exc))
-            parent.refresh()
+            parent.refresh(select=None)        # the list keeps your place (screen reader audit A5)
             return False
         except Exception as exc:  # noqa: BLE001
             log.exception("Could not start the project")
@@ -1429,17 +1593,23 @@ class MainFrame(wx.Frame):
 
     def show_project(self):
         """Show the project window (after a project was made or opened, or recovered)."""
-        if self.start_frame is not None:
-            self.start_frame.Hide()
         self.refresh_all()
         if not self.test_mode:
             self.Show()
             self.Raise()
             self.body.FitInside()      # the button rows wrap at the window's real width only once it is shown
         self.track_list.SetFocus()
+        if self.start_frame is not None:  # after this window is in front (screen reader audit A2)
+            self.start_frame.Hide()
+        if self._first_track_wanted:
+            self.offer_first_track()
 
     def close_project(self):
         """Close project (Control+W): offer to save, then go back to the start screen."""
+        with self.session.pressed("window"):     # "Saved ..." comes once the start screen shows
+            return self._close_project()
+
+    def _close_project(self):
         self.session.stop(speak=False)  # first, so a take being recorded is kept and counts as a change
         if not self.confirm_discard():
             return False
@@ -1460,10 +1630,14 @@ class MainFrame(wx.Frame):
         self.Close(True)
 
     def speech_window(self):
-        """The window that is showing (the start screen or the project), for screen reader notifications."""
-        if self.start_frame is not None and self.start_frame.IsShown():
-            return self.start_frame.GetHandle()
-        return self.GetHandle()
+        """The window for screen reader notifications (Narrator): the one the keyboard focus is in (a list window
+        open over the project, say: a notification from a window in the background may not be read; screen reader
+        audit E2), else the start screen or the project, whichever shows."""
+        default = self.start_frame if self.start_frame is not None and self.start_frame.IsShown() else self
+        try:
+            return focused_window(default).GetHandle()
+        except Exception:  # noqa: BLE001
+            return default.GetHandle()
 
     def save(self):
         if self.session.path:
@@ -1555,7 +1729,7 @@ class MainFrame(wx.Frame):
             if self.show_modal(dlg) != wx.ID_OK:
                 return
             path = dlg.GetPath()
-        path, _size = self.session.export_midi(path)
+        path, _size = self.session.export_midi(path, speak=False)        # the message box says it (audit C2)
         show_info(self, self.session.midi_export_words(path), "Export finished")
 
     def export_audio(self):
@@ -1584,11 +1758,12 @@ class MainFrame(wx.Frame):
         if result is None:
             return
         if result["cancelled"]:
-            self.session.announce("Export cancelled")
+            with self.session.pressed("window"):   # after the progress window has closed
+                self.session.announce("Export cancelled")
             return
-        message = self.session.describe_export(result)
-        self.session.announce(message)
-        show_info(self, message, "Export finished")
+        # only the message box: the screen reader reads it, and the same words said first were cut off by it
+        # (screen reader audit C2, 23 Oct 2026)
+        show_info(self, self.session.describe_export(result), "Export finished")
 
     export_wav = export_audio  # its name before M4A arrived
 
@@ -1614,11 +1789,10 @@ class MainFrame(wx.Frame):
         if result is None:
             return
         if result["cancelled"]:
-            self.session.announce("Export cancelled")
+            with self.session.pressed("window"):
+                self.session.announce("Export cancelled")
             return
-        message = self.session.describe_track_export(result)
-        self.session.announce(message)
-        show_info(self, message, "Export finished")
+        show_info(self, self.session.describe_track_export(result), "Export finished")   # the box only (audit C2)
 
     def make_progress(self, path):
         """The progress window for an audio export (tests replace this)."""
@@ -1651,7 +1825,9 @@ class MainFrame(wx.Frame):
         worker = threading.Thread(target=work, name="wav-export", daemon=True)
         progress = self.make_progress(path)
         worker.start()
-        said = ExportCountdown(self.session.announce)
+        # queued, never over the screen reader (audit C3); it stops at 90 percent: the Export finished message comes
+        # straight after, and a "100 percent" was only cut off by it (audit C2)
+        said = ExportCountdown(lambda words: self.session.announce(words, interrupt=False))
         try:
             while worker.is_alive():
                 percent = min(99, int(state["fraction"] * 100))
@@ -1664,14 +1840,12 @@ class MainFrame(wx.Frame):
                         keep_going, _skip = progress.Update(percent)
                 else:
                     keep_going, _skip = progress.Update(percent)
-                said.reached(state["fraction"])
+                said.reached(min(state["fraction"], 0.99))
                 if not keep_going:
                     state["cancel"] = True
                 wx.MilliSleep(100)
         finally:
             progress.Destroy()
-        if state["error"] is None and state["result"] is not None and not state["result"].get("cancelled"):
-            said.reached(1.0)
         if state["error"] is not None:
             raise state["error"]
         return state["result"]
@@ -1682,10 +1856,34 @@ class MainFrame(wx.Frame):
     def _need_track(self):
         track = self.session.selected_track
         if track is None:
-            raise ValueError("There is no track selected. Press Control+T to add one.")
+            raise ValueError(NO_TRACK_YET if not self.session.song.tracks else
+                             "There is no track selected. Press Control+T to add one.")
         return track
 
     def new_track(self):
+        """New track (Control+T and the New track button; at once in a new project): the list of kinds of track,
+        then that kind's own window. Returns the kind chosen, or None if it was cancelled."""
+        if self.session.engine.recording:     # said before any window opens, not after choosing an instrument
+            raise ValueError("Stop recording before adding a track")
+        with NewTrackDialog(self) as dlg:
+            if self.show_modal(dlg) != wx.ID_OK:
+                return None
+            kind = dlg.get_kind()
+        if kind is None:
+            return None
+        {"instrument": self.new_instrument_track, "audio": self.new_audio_track,
+         "import": self.import_onto_new_track, "player": lambda: self.new_player(new_track=True)}[kind]()
+        return kind
+
+    def need_room_for_a_track(self):
+        """At the track limit, say so before a window for a new track opens, not after it is filled in (0.9.7: the
+        instrument list and the New rhythm player window opened first; Audio already said it at once)."""
+        if len(self.session.song.tracks) >= MAX_TRACKS:
+            raise ValueError("A song can have up to {} tracks".format(MAX_TRACKS))
+
+    def new_instrument_track(self):
+        """Instrument in the New track list: the instrument list, then a track with the instrument chosen."""
+        self.need_room_for_a_track()
         with InstrumentDialog(self, self.session) as dlg:
             if self.show_modal(dlg) != wx.ID_OK or dlg.get_preset() is None:
                 return
@@ -1695,6 +1893,7 @@ class MainFrame(wx.Frame):
         self.track_list.SetFocus()
 
     def new_audio_track(self):
+        """Control+U, and Audio in the New track list."""
         self.session.add_audio_track()
         self.track_list.SetFocus()
 
@@ -1719,22 +1918,36 @@ class MainFrame(wx.Frame):
         if is_midi_file(path):
             self.import_midi_file(path)
         else:
-            self.import_audio_path(path)
-            self.track_list.SetFocus()
+            with self.session.pressed("window"):   # said after the progress window closes and the list is read
+                self.import_audio_path(path)
+                self.track_list.SetFocus()
 
     import_wav = import_file  # its name before 0.9.1
 
-    def import_audio_path(self, path, track_id=None, owner=None):
+    def import_onto_new_track(self):
+        """Import file in the New track list: an audio file always onto a new audio track named after it (never
+        the selected track), or a MIDI file as new tracks. Cancel in the Open window adds nothing."""
+        path = self.choose_import_file()
+        if not path:
+            return
+        if is_midi_file(path):
+            self.import_midi_file(path)
+        else:
+            self.import_audio_path(path, new_track=True)
+            self.track_list.SetFocus()
+
+    def import_audio_path(self, path, track_id=None, owner=None, new_track=False):
         """Read an audio file and make Musician Forge's copy (showing progress for long ones), then put it on the
-        track. Returns the new recording's place, or None if it was cancelled."""
-        self.session.check_import_target(track_id)         # before the slow part, not after
+        track (new_track: on a new audio track named after the file). Returns the new recording's place, or None if
+        it was cancelled."""
+        self.session.check_import_target(track_id, new_track=new_track)         # before the slow part, not after
         prepared = self.prepare_import_with_progress(path, owner)
         if prepared is None:
             self.session.announce("Import cancelled")
             return None
         try:
             if track_id is None:
-                return self.session.import_audio_file(path, prepared=prepared)
+                return self.session.import_audio_file(path, prepared=prepared, new_track=new_track)
             return self.session.import_audio(track_id, path, prepared=prepared)
         except BaseException:
             self.session.discard_prepared(prepared)          # not placed after all: no copy is left behind
@@ -1761,7 +1974,7 @@ class MainFrame(wx.Frame):
         progress window shows how far it is and can cancel. Returns the prepared import, or None if cancelled
         (then no copy is left); problems are raised in words."""
         state = {"fraction": 0.0, "cancel": False, "result": None, "error": None}
-        self.session.announce("Importing {}".format(os.path.basename(path)))
+        # no "Importing ...": the progress window opening says it, and cut it off (screen reader audit C4)
 
         def work():
             try:
@@ -1816,8 +2029,11 @@ class MainFrame(wx.Frame):
             if self.show_modal(dlg) != wx.ID_OK:
                 return
             values = dlg.get_values()
-        self.session.import_midi(path, contents, use_timeline=values["use_timeline"])
-        self.track_list.SetFocus()
+        # what came in (and any notes about it) is said once the window has closed and the Tracks list, filled
+        # again, has been read (screen reader audit C5)
+        with self.session.pressed("window"):
+            self.session.import_midi(path, contents, use_timeline=values["use_timeline"])
+            self.track_list.SetFocus()
 
     def track_settings(self):
         track = self._need_track()
@@ -1831,7 +2047,7 @@ class MainFrame(wx.Frame):
         """Control+F: the selected track's effects."""
         track = self._need_track()
         with EffectsDialog(self, self.session, track.id, run_modal=self.show_modal,
-                           confirm=lambda m: ask_yes_no(self, m)) as dlg:
+                           confirm=self.ask_here) as dlg:
             self.show_modal(dlg)
         self.session.end_effect_preview()
         self.refresh_tracks()
@@ -1840,7 +2056,7 @@ class MainFrame(wx.Frame):
         """Control+Shift+U: the selected track's automation lanes."""
         track = self._need_track()
         with AutomationDialog(self, self.session, track.id, run_modal=self.show_modal,
-                              confirm=lambda m: ask_yes_no(self, m)) as dlg:
+                              confirm=self.ask_here) as dlg:
             self.show_modal(dlg)
         self.refresh_tracks()
 
@@ -1892,9 +2108,15 @@ class MainFrame(wx.Frame):
                 s.delete_tracks(ids)
             return
         track = s.song.track_by_id(ids[0])
-        count, what = (len(track.regions), "recording") if track.is_audio else (len(track.notes), "note")
-        if ask_yes_no(self, "Delete the track {} and its {} {}{}? You can undo this with Control+Z.".format(
-                track.name, count, what, "" if count == 1 else "s")):
+        if track.is_audio:
+            holds = [s._count_words(len(track.regions), "recording")]
+        else:          # a rhythm player's notes are made as it plays, so its regions are counted instead
+            players = sum(1 for region in track.note_regions if region.player)
+            holds = [s._count_words(len(track.notes), "note")] if track.notes or not players else []
+            if players:
+                holds.append(s._count_words(players, "rhythm player region"))
+        if ask_yes_no(self, "Delete the track {} and its {}? You can undo this with Control+Z.".format(
+                track.name, " and ".join(holds))):
             s.delete_tracks([track.id])
 
     # ------------------------------------------------------------------
@@ -1920,9 +2142,27 @@ class MainFrame(wx.Frame):
         else:
             index = self.current_region()
             if index is None:
-                raise ValueError("This track has no regions yet")
+                raise ValueError("This track has no regions yet" if s.selected_track_id is not None else NO_TRACK_YET)
             s.toggle_region_selected(index)
             self.select_region_in_list(index)
+
+    def select_or_unselect(self):
+        """The Select or unselect button: Space in selection mode, for the track or region you are on in the list
+        you were in last (selection turns on first if it is off)."""
+        s = self.session
+        if self.last_list == "regions":
+            if self.current_region() is None:
+                raise ValueError("This track has no regions yet")
+            focused = self.region_list
+        else:
+            if s.selected_track_id is None:
+                raise ValueError("There are no tracks yet")
+            focused = self.track_list
+        if not s.selecting:
+            s.toggle_selecting()
+        self.toggle_item_selected(focused)
+        self.refresh_tracks()
+        self.refresh_regions()
 
     def select_all(self, what):
         if not self.session.selecting:
@@ -1953,10 +2193,7 @@ class MainFrame(wx.Frame):
         self.track_list.SetFocus()
 
     def _need_region_track(self):
-        tid = self.session.selected_track_id
-        if tid is None:
-            raise ValueError("There is no track selected. Press Control+T to add one.")
-        return tid
+        return self._need_track().id
 
     def region_action(self, what):
         s = self.session
@@ -2016,7 +2253,8 @@ class MainFrame(wx.Frame):
                 values = self.ask_values(dlg, dlg.get_values)
             if values is None:
                 return
-            self.select_region_in_list(s.update_region(tid, index, **values))
+            # the Regions list reads the recording's new words when the focus comes back to it: not said twice
+            self.select_region_in_list(s.update_region(tid, index, speak=False, **values))
         else:
             start, end = s.region_span(tid, index)
             with EventListDialog(self, s, tid, span=(start, end), span_name=s.region_name(tid, index)) as dlg:
@@ -2036,17 +2274,21 @@ class MainFrame(wx.Frame):
             s.announce("Editing {} rhythm player regions together".format(len(starts)))
         try:
             with PlayerEditorDialog(self, s, tid, index, run_modal=self.show_modal,
-                                    confirm=lambda m: ask_yes_no(self, m), together=len(starts)) as dlg:
+                                    confirm=self.ask_here, together=len(starts)) as dlg:
                 self.show_modal(dlg)
         finally:
             s.player_group = None
         self.refresh_tracks()
         self.select_region_in_list(index)
 
-    def new_player(self):
-        """Control+Shift+R: a rhythm player region on a new track or the selected one."""
+    def new_player(self, new_track=False):
+        """Control+Shift+R: a rhythm player region on a new track or the selected one. new_track: from the New track
+        list, always on a new track."""
         s = self.session
-        with NewPlayerDialog(self, s) as dlg:
+        selected = s.song.track_by_id(s.selected_track_id)
+        if new_track or selected is None or selected.is_audio:
+            self.need_room_for_a_track()           # a new track is the only place it can go
+        with NewPlayerDialog(self, s, new_track=new_track) as dlg:
             values = self.ask_values(dlg, dlg.get_values)
         if values is None:
             return
@@ -2096,6 +2338,13 @@ class MainFrame(wx.Frame):
         self.select_region_in_list(index)
         self.region_list.SetFocus()
 
+    def rename_for_focus(self):
+        """F2: the region in the Regions list (when it has one), the track everywhere else."""
+        if self._focused_control() is self.region_list and self.current_region() is not None:
+            self.rename_region()
+        else:
+            self.rename_track()
+
     def settings_for_focus(self):
         """Alt+Enter: region settings in the Regions list, track settings everywhere else."""
         if self._focused_control() is self.region_list and self.current_region() is not None:
@@ -2106,7 +2355,7 @@ class MainFrame(wx.Frame):
     def chord_track(self):
         """Control+Shift+H: the chord changes rhythm players play."""
         with ChordTrackDialog(self, self.session, run_modal=self.show_modal,
-                              confirm=lambda m: ask_yes_no(self, m)) as dlg:
+                              confirm=self.ask_here) as dlg:
             self.show_modal(dlg)
         self.refresh_status_text()
 
@@ -2166,7 +2415,7 @@ class MainFrame(wx.Frame):
                 "list of recordings" if track.is_audio else "event list"))
         if track.is_audio:
             with RecordingsDialog(self, self.session, track.id, run_modal=self.show_modal,
-                                  confirm=lambda m: ask_yes_no(self, m), import_file=self.import_into_track) as dlg:
+                                  confirm=self.ask_here, import_file=self.import_into_track) as dlg:
                 self.show_modal(dlg)
         else:
             with EventListDialog(self, self.session, track.id) as dlg:
@@ -2192,9 +2441,8 @@ class MainFrame(wx.Frame):
             return
         if values["what"] == "region":
             start, end = s.region_span(track.id, region)
-            half = values["grid"] / 2.0
-            # A note played a little early still belongs to the region it snaps into.
-            chosen = [i for i, n in enumerate(track.notes) if start - half <= n.tick < end - half]
+            # every note in the region, and one played a little early that snaps into it
+            chosen = quantize.notes_in_region(track.notes, start, end, values["grid"], s.song.timeline)
             if not chosen:
                 raise ValueError("This region has no notes to quantize")
             s.quantize([track.id], values["grid"], values["strength"], values["lengths"], note_indices=chosen)
@@ -2208,7 +2456,7 @@ class MainFrame(wx.Frame):
         self.refresh_status_text()
 
     def sections(self):
-        with SectionsDialog(self, self.session, confirm=lambda m: ask_yes_no(self, m),
+        with SectionsDialog(self, self.session, confirm=self.ask_here,
                             run_modal=self.show_modal) as dlg:
             self.show_modal(dlg)
         self.refresh_status_text()
@@ -2264,6 +2512,7 @@ class MainFrame(wx.Frame):
     def stop_all_sound(self):
         if self.session.engine.recording or self.session.engine.playing:
             self.session.stop()
+        self.session.release_all_keys()     # a key whose release was lost plays again at its next press
         self.session.engine.panic()
         self.session.announce("All sound stopped")
 
@@ -2323,7 +2572,8 @@ class MainFrame(wx.Frame):
         audio_settings = self.session.settings["audio"]
         mic.configure(host_api, device_name, audio_settings["block_frames"], audio_settings["raw_microphone"])
         mic.start_test()  # RuntimeError if no microphone opens
-        self.session.announce("Listening for 3 seconds. Speak, sing or play something.")
+        # nothing said here: Audio settings puts the focus on its result box, which says "Listening for 3 seconds"
+        # (said here too, it was said twice or cut off; screen reader audit D1)
 
         def finish():
             quiet = mic.quiet_level() if hasattr(mic, "quiet_level") else None
@@ -2332,7 +2582,7 @@ class MainFrame(wx.Frame):
             log.info("Microphone test: peak %.4f over %d frames, between sounds %s, %s", peak, frames,
                      "unknown" if quiet is None else "{:.1f} dB".format(audiotracks.peak_db(quiet)),
                      getattr(mic, "description", ""))
-            self.session.announce(message)
+            self.session.announce(message, interrupt=False)
             done(message)
 
         if self.test_mode:
@@ -2348,8 +2598,11 @@ class MainFrame(wx.Frame):
             raise ValueError("Musician Forge has no microphone support here")
         audio_settings = self.session.settings["audio"]
         mic.configure(host_api, device_name, audio_settings["block_frames"], audio_settings["raw_microphone"])
-        self.session.measure_recording_delay(done)
-        self.session.announce("Measuring. Keep the room quiet; the clicks take about five seconds.")
+        def finished(result):          # said (queued) as well as shown: the box's new words are not read by itself
+            self.session.announce(result.describe(), interrupt=False)
+            done(result)
+
+        self.session.measure_recording_delay(finished)    # the result box, which has the focus, says "Measuring"
 
     def preferences(self):
         with PreferencesDialog(self, self.session.settings) as dlg:
@@ -2449,24 +2702,24 @@ class MainFrame(wx.Frame):
 SHORTCUTS_TEXT = """Musician Forge keyboard shortcuts
 
 Starting
-Musician Forge opens on the start screen: New project, Browse projects, and the Recent projects list.
-Enter on a recent project opens it. Browse projects (Control+O in a project) lists your recent projects
+Musician Forge opens on the start screen: New project, Browse projects, and the Recent projects list with its
+Open and Remove from list buttons. Enter (or Open) on a recent project opens it. Browse projects (Control+O in a project) lists your recent projects
 first, then every other project in Musician Forge Songs, newest first; there Enter opens the selected
-project, and Browse finds one in another folder. Delete in the Recent projects list removes a project
-from the list (the file itself is kept). Control+W closes the project you are in, asks to save any
+project, and Browse finds one in another folder. Delete (or Remove from list) in the Recent projects list removes a
+project from the list (the file itself is kept). Control+W closes the project you are in, asks to save any
 changes, and goes back to the start screen.
 
 Moving around the project window
 F6: go to the next area. Shift+F6: go to the previous area. They go round in a circle, in the order
 the areas are on screen: Tracks, Regions, the Musical keyboard, the Keyboard controls, each button group
 (Transport, Track, Edit, Region, Song and Menus) and Status. An area that is hidden or empty is skipped, and
-Musician Forge says where you landed, for example "Track group, 11 buttons, 3 check boxes".
+Musician Forge says where you landed, for example "Track group, 9 buttons, 3 check boxes".
 Tab and Shift+Tab: move from control to control.
 Space or Enter presses the button you are on.
 The button groups: Transport (Go to start, Rewind, Play, Stop, Record, Forward, Previous and Next section, the
-Metronome and All sections check boxes), Track (New track, New audio track, New rhythm player, Instrument, Track
+Metronome and All sections check boxes), Track (New track, Instrument, Track
 settings, Effects, Automation, Write automation, Mute, Solo, Event list, Move up, Move down, Delete track), Edit
-(Undo, Redo, Select, Cut, Copy, Paste, Duplicate, Delete, Quantize, Go to bar), Region (Open region, Move region,
+(Undo, Redo, Select, Select or unselect, Select all, Cut, Copy, Paste, Duplicate, Delete, Quantize, Go to bar), Region (Open region, Move region,
 Split, Join, Mute region, Rename region, Region settings, Reforge, New rhythm player region) and Song (Tempo, Time
 signature and Key changes, Sections, Chord track). Their commands are not in the menus too; their shortcuts work
 everywhere. Everything else is in the menus: Alt opens the menu bar, and the Menus group has a button for each menu
@@ -2495,12 +2748,14 @@ Comma and period: back or forward one bar (the Rewind and Forward buttons do the
 Musician Forge says when you reach the start or end of a section.
 Shift+comma and Shift+period: back or forward one beat.
 Control+G: go to a bar.
-Control+Shift+J: customize the chord strips (your own chord on each of the keys A to K).
-Control+Shift+O: Audio settings. Control+Shift+D: measure the recording delay (both in the Options menu).
 Control+K: metronome on or off.
 Control+Shift+C: count-in off, 1 bar or 2 bars.
 Control+P: speak the position, section, tempo, time signature and key.
 Escape: stop all sound.
+
+Keyboard and Options (anywhere in the main window)
+Control+Shift+J: customize the chord strips (your own chord on each of the keys A to K).
+Control+Shift+O: Audio settings. Control+Shift+D: measure the recording delay (both in the Options menu).
 
 Musical keyboard (when it has focus)
 Piano layout: A S D F G H J K L semicolon and apostrophe are white keys from C.
@@ -2550,13 +2805,16 @@ Control+A selects every track or region in the list. Shift+F8 again turns select
 
 Tracks list
 Up and Down arrows: choose a track. Musical typing plays and records on the chosen track.
+Type a track's number to go to it (1 then 2 quickly for track 12); the Regions list works the same way.
 Control+X, Control+C, Control+V and Control+D: cut, copy, paste and duplicate tracks.
 M: mute. S: solo. Left bracket and right bracket: volume down and up.
 Shift+left bracket and Shift+right bracket: pan left and right.
 Control+Up and Control+Down: move the track (also the Move up and Move down buttons).
 F2: rename. Delete: delete the track, or the selected tracks (asks first).
-Alt+Enter: track settings. Control+I: change instrument. Control+T: new track. Control+U: new audio track.
+Alt+Enter: track settings. Control+I: change instrument. Control+U: new audio track.
 Control+Shift+R: new rhythm player.
+Control+T (or the New track button): new track, from a list of the kinds of track: Instrument, Audio,
+Import file and Rhythm player. Enter chooses, Escape adds nothing. A new project starts with no tracks, so this list opens straight away.
 Control+F: the track's effects. Control+Shift+U: the track's automation.
 Control+Shift+W: Write automation on or off.
 
@@ -2625,9 +2883,9 @@ progression (such as one, five, six, four) into bars you choose, in the song's k
 listens to a track's notes, such as chord strips you played, and writes the chords it hears.
 The Status (Control+3) says the chord at the playhead.
 
-Rhythm players (Control+Shift+R, or the New rhythm player button in the Track group)
+Rhythm players (Control+Shift+R, or Control+T and then Rhythm player)
 Anvil plays drums, Bellows bass, Ember keys, Spark synth, and Hammer guitar. Choose a player, a style,
-where it goes (a new track or the selected one) and how long it plays. It makes a rhythm player region.
+where it goes (a new track or the selected one; from the New track list, always a new track) and how long it plays. It makes a rhythm player region.
 Enter on that region opens its editor: Style; Variation (each style has its own grooves or parts, numbered
 and described; Previous and Next variation step through them); Patch (the instrument or kit); Intensity
 (how hard it plays, never how many notes), Complexity (how busy), Fill amount (where fills come, counted from the
@@ -2643,9 +2901,20 @@ Kit pieces: a piece the variation's groove does not use is off by itself ("off, 
 usually are), until you choose a pattern or make steps for it. Off takes a piece out of the groove only: fills always use
 the whole kit, and the crash where a section starts follows its When setting. Space turns a piece on or off; Enter opens
 its settings: Pattern (the variation's own, another
-variation's, or a common one), Complexity and Loudness sliders for that piece alone, and its own extras: half or double
+variation's, or a common one), a Complexity slider for that piece alone (Loudness only for a region from an older version that has its own),
+and its own extras: half or double
 time (kick and snare), ghost notes, their loudness and a rim click (snare), how open the hi-hat is, toms in fills, when and
-which crash comes, which ride and its bell. Each piece plays only its own sounds. Above 120 beats a minute the ride
+which crash comes, which ride and its bell. Each piece plays only its own sounds. Each kit piece's loudness is in
+the drummer track's Track settings (Alt+Enter): a slider for each piece, 50 as the drummer plays it, 100 the loudest,
+0 silent.
+On the rock, hard rock, metal, jazz, funk and pop drummers one hand keeps time on one cymbal: turning
+the ride on moves the hand from the hi-hats (the Closed hi-hat plays its foot pedal only, "foot only", and the Open
+hi-hat stops; on metal and hard rock there is no hi-hat foot, so the hi-hats are off); a ride with nothing of its own
+to play takes over the hi-hat's rhythm. A fill takes both hands: from its first note to the end of the bar the ride
+and the hi-hats stop, and the kick and the hi-hat's foot keep going. Turning a hi-hat on turns the
+ride off. Turning the ride off brings the hi-hats back, and turning off the hi-hat that took the ride's place brings
+the ride back. Each is one undo step.
+Above 120 beats a minute the ride
 plays no runs of sixteenth notes (its eighth notes stay; those patterns leave the Pattern list there); the hi-hat keeps
 its sixteenth notes at any tempo. A part has the chord track on or off, an octave, a note length, the root
 only, and passing notes into each chord change.
@@ -2673,8 +2942,7 @@ With WAV, What to export can also be every track, or only the tracks you choose 
 Select or unselect the track, selects), each as its own WAV file: one track makes a WAV file, several a zip file.
 Control+Shift+E: export the whole song as one MIDI file, with the chord track (silent) and the song's
 tempos, time signatures, keys and section markers.
-Control+Shift+I, or File menu, Import: import an audio file or a MIDI file.
-File menu, Import MIDI file, lists only MIDI files.
+Importing: New track, then Import file (or Control+Shift+I): an audio file or a MIDI file.
 Files go into Musician Forge Songs unless you choose another folder, and Musician Forge says where each went.
 Musician Forge keeps a copy of your changes for crash recovery a few seconds after each one; Save puts them into the project.
 Headphones: plug them in or out at any time. When Windows switches between the speakers and the headphones,
@@ -2685,7 +2953,7 @@ Each MIDI track with notes becomes a new track (split by channel when a track ho
 instrument its program change chooses; channel 10 becomes a drum track. The first volume and pan become the
 track's own, and later volume and pan changes become automation. A window says what the file holds and
 offers to use its tempo changes, time signatures, keys and markers (markers become sections); this is on
-for a project with nothing in it yet, and then the empty Piano track makes way. Changes that a file puts
+for a project with nothing in it yet. Changes that a file puts
 partway through a bar move to the next bar line, and Musician Forge says so. Control+Z takes the whole
 import back. Musician Forge's own MIDI export writes the exact key (a mode such as Dorian) too, so a song
 comes back the same.

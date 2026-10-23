@@ -192,11 +192,30 @@ class FilterCascade:
         key = tuple((s[0], float(s[1]), float(s[2]), float(s[3])) for s in sections)
         if key == self._key:
             return
+        old_key = self._key or ()
         self._key = key
-        A, B, C, D = cascade([svf_section(self.sample_rate, *s) for s in key])
+        parts = [svf_section(self.sample_rate, *s) for s in key]
+        A, B, C, D = cascade(parts)
         order = len(B)
         if order != self.order:
-            self.state = np.zeros((order, self.channels))
+            # A filter was added or taken away (an EQ band turned on or off while playing). The others keep
+            # their state: starting them all from silence clicked (23 Oct 2026). The state is each filter's own
+            # integrators, one after another, so each kept filter's rows move to where it now is.
+            state = np.zeros((order, self.channels))
+            old_sizes = [len(svf_section(self.sample_rate, *s)[1]) for s in old_key]
+            old_starts = np.concatenate([[0], np.cumsum(old_sizes)]).astype(int) if old_sizes else [0]
+            used = set()
+            at = 0
+            for section, part in zip(key, parts):
+                size = len(part[1])
+                for i, old in enumerate(old_key):
+                    if i not in used and old[0] == section[0] and old_sizes[i] == size \
+                            and old_starts[i] + size <= len(self.state):
+                        used.add(i)
+                        state[at:at + size] = self.state[old_starts[i]:old_starts[i] + size]
+                        break
+                at += size
+            self.state = state
             self.order = order
         self.A, self.B, self.C, self.D = A, B, C, D
         self._bank = None
