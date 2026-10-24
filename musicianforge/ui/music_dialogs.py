@@ -813,6 +813,11 @@ class PlayerEditorDialog(wx.Dialog):
                 self.session.set_variation(self.track_id, self.index, number, reset_steps=True, speak=speak)
             else:
                 self.session.announce("Cancelled. Still {}".format(self.session.variation_words(self.settings())))
+                return
+        # steps thrown away with the variation can end a cymbal's turn (session_music.set_variation): say so
+        turns = getattr(self.session, "turn_words", None)
+        if turns:
+            say_after(self.session.announce, turns)
 
     def step_variation(self, step):
         settings = self.settings()
@@ -877,12 +882,16 @@ class PlayerEditorDialog(wx.Dialog):
         if piece == "part":
             self.session.announce("The part cannot be turned off; mute the region instead (M in the Regions list)")
             return
-        on = not self.session.piece_settings(self.track_id, self.index, piece)["on"]
         in_list = wx.Window.FindFocus() is self.pieces
+        # the model's own toggle: one undo step, the other cymbal's turn included (0.9.8). Quiet: the list reads
+        # the piece's new line itself (session.toggle_piece says the line too, so with it every Space was said
+        # twice, "Ride: on, the hi-hat's rhythm. Hi-hat off" before the turn's own words; the review, 24 Oct 2026)
+        on = not self.session.piece_settings(self.track_id, self.index, piece)["on"]
         self.session.update_piece(self.track_id, self.index, piece, speak=False, on=on)
-        self.fill()
+        on = self.session.piece_settings(self.track_id, self.index, piece)["on"]      # as it stands now, read back
+        self.fill()                 # every line again, so the other cymbal's line shows its new state too
         turns = getattr(self.session, "turn_words", None)
-        if turns:                   # the ride and the hi-hats take turns (0.9.7): "Ride on, hi-hat foot only"
+        if turns:                   # the ride and the hi-hat take turns (0.9.8): "Ride on, hi-hat off"
             say_after(self.session.announce, turns)
         elif not in_list:       # the Pieces list reads the piece's line again, with on or off (screen reader audit B2)
             name = player_pieces.PIECE_BY_KEY[piece].name
@@ -1014,26 +1023,47 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
                               size=(460, 50))
         if not self.part:
             self._check(form, "on", "Play this piece")
+        # The ride and the hi-hat take turns on the drummers a person plays (0.9.8): the other cymbal's toggle is here
+        # too, right after this piece's, so both hands are in sight and in reach of Tab. Both are read back from the
+        # session after every change (fill), never guessed: ticking one unticks the other.
+        self.partner_key, self.partner = None, None
+        partners = () if self.part else player_pieces.takes_turns(settings["style"], self.piece.key)
+        if partners:
+            self.partner_key = partners[0]
+            names = player_pieces.TURN_NAMES
+            self.partner = wx.CheckBox(self, label="Play the {} (the {} and the {} take turns)".format(
+                names[self.partner_key], names[self.piece.key], names[self.partner_key]))
+            form.add_wide(self.partner)
         self.pattern = form.add("Pattern", choice_ctrl, choices=[])
         self.numbers["busy"] = form.add(
             "Complexity of this {} in percent (50 as the style plays it; more is busier)".format(
                 "part" if self.part else "piece"), slider_ctrl, value=player_pieces.BUSY_DEFAULT)
         kind = self.piece.kind
-        if kind in ("kick", "snare"):
+        # Each kind's own extras come from player_pieces.EXTRAS (the model says which a piece has; 0.9.8: the Hi-hat
+        # is the hand, closed and open sounds in one piece, with How open the hi-hat is; the Hi-hat pedal, the foot,
+        # has none of its own). A setting the ride and the hi-hat taking turns keeps for itself (TURN_KEYS) is not
+        # shown: the turns are the two Play this piece check boxes.
+        extras = tuple(key for key in player_pieces.EXTRAS.get(kind, ())
+                       if key not in getattr(player_pieces, "TURN_KEYS", ()))
+        if "time" in extras:
             self._choice(form, "time", "Time", player_pieces.TIME)
-        if kind == "snare":
+        if "ghosts" in extras:
             self._choice(form, "ghosts", "Ghost notes", player_pieces.GHOSTS)
+        if "ghost_level" in extras:
             self.numbers["ghost_level"] = form.add(
                 "Ghost note loudness in percent (50 as the style plays them; more is bigger)", slider_ctrl,
                 value=player_pieces.LEVEL_DEFAULT)
+        if "rim" in extras:
             self._choice(form, "rim", "Rim click (cross-stick) instead of the snare", player_pieces.RIM_CHOICES)
-        if kind == "hat":
+        if "openness" in extras:
             self._choice(form, "openness", "How open the hi-hat is", player_pieces.OPENNESS)
+        if "open_offbeats" in extras:
             self._check(form, "open_offbeats", "Open the hi-hat on the and of each beat")
-        if kind == "toms":
+        if "in_fills" in extras:
             self._check(form, "in_fills", "Play the toms in fills (off: the fills use the snare)")
-        if kind == "crash":
+        if "when" in extras:
             self._choice(form, "when", "When a crash comes", player_pieces.WHEN)
+        if "which" in extras:
             which = [(key, player_pieces.which_words(key, self.kit))
                      for key, _notes in player_pieces.which_choices(self.kit_notes)]
             if full["which"] not in [key for key, _words in which]:      # chosen with another kit
@@ -1041,9 +1071,9 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
                               player_pieces.missing_words(dict(player_pieces.WHICH).get(full["which"], ()),
                                                           self.kit_notes, self.kit)))
             self._choice(form, "which", "Which cymbal", which)
-        if kind == "ride":
+        if "ride_sound" in extras:
             self._choice(form, "ride_sound", "Which ride", self._in_kit(player_pieces.RIDE_SOUNDS, full["ride_sound"]))
-        if kind == "ride" and (self.kit_notes is None or player_pieces.RIDE_BELL in self.kit_notes or full["bell"]):
+        if "bell" in extras and (self.kit_notes is None or player_pieces.RIDE_BELL in self.kit_notes or full["bell"]):
             self._check(form, "bell", "Play the bell on the beats")
         if self.part:
             self._check(form, "chords", "Follow the chord track (off: the key's own chord)")
@@ -1076,6 +1106,8 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
             ctrl.Bind(wx.EVT_CHOICE, lambda e, k=key: self._choice_chosen(k))
         for key, ctrl in self.checks.items():
             ctrl.Bind(wx.EVT_CHECKBOX, lambda e, k=key: self.change(**{k: self.checks[k].GetValue()}))
+        if self.partner is not None:
+            self.partner.Bind(wx.EVT_CHECKBOX, lambda e: self.change_partner(self.partner.GetValue()))
         self.steps_button.Bind(wx.EVT_BUTTON, lambda e: self._run(self.open_steps))
         self.clear_button.Bind(wx.EVT_BUTTON, lambda e: self._run(self.back_to_pattern))
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
@@ -1157,6 +1189,15 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
                 ctrl.SetSelection(values.index(full[key]) if full[key] in values else 0)
             for key, ctrl in self.checks.items():
                 ctrl.SetValue(bool(full[key]))
+            if self.partner is not None:        # the other cymbal's toggle as the session has it now (0.9.8)
+                self.partner.SetValue(bool(self.session.piece_settings(self.track_id, self.index,
+                                                                       self.partner_key)["on"]))
+                # dimmed if an undo in here changed the style to a drum machine, where the two do not take turns
+                style = self.session.player_settings(self.track_id, self.index)["style"]
+                turns = bool(player_pieces.takes_turns(style, self.piece.key))
+                if not turns and self.partner.HasFocus():
+                    self.checks["on"].SetFocus()        # about to be dimmed: keep the focus somewhere useful
+                self.partner.Enable(turns)
             for key, ctrl in self.numbers.items():
                 try:
                     shown = ctrl.GetValue()
@@ -1182,17 +1223,28 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
     after_change = fill
 
     def change(self, **changes):
+        self._update(self.piece.key, changes)
+
+    def change_partner(self, on):
+        """The other cymbal's toggle (the hi-hat's in the ride's window, the ride's in the hi-hat's): the same as
+        Space on it in the Kit pieces list, one undo step with what it does to this piece (0.9.8)."""
+        self._update(self.partner_key, {"on": on})
+
+    def _update(self, piece_key, changes):
         if self._filling or self._close_if_gone():
             return
         try:
-            self.session.update_piece(self.track_id, self.index, self.piece.key, speak=False, **changes)
+            self.session.update_piece(self.track_id, self.index, piece_key, speak=False, **changes)
         except ValueError as exc:
             show_error(self, str(exc))
+            self.fill()             # the check box or list goes back to what the piece really is (0.9.8)
             return
         self.fill()
         turns = getattr(self.session, "turn_words", None)
-        if turns:                   # Play this piece or a Pattern changed the ride or the hi-hats (0.9.7): said, briefly
-            self.session.announce(turns)
+        if turns:                   # Play this piece or a Pattern turned the ride or the hi-hat off or back on (0.9.8):
+            # said briefly ("Ride on, hi-hat off"), after the screen reader has read the check box's new state or the
+            # Pattern list's new choice, not over it (as the Kit pieces list does; Russell, 23 Oct 2026)
+            say_after(self.session.announce, turns)
         # nothing more is said: the pattern list, choices, check boxes and number boxes are read by the screen reader
         # as they change, and the piece's whole line on top of that was too much (Russell, 10 Oct 2026)
 
@@ -1218,7 +1270,8 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
         self.steps_button.SetFocus()                    # Back to the pattern is dimmed once the steps are gone
         words = self.session.update_piece(self.track_id, self.index, self.piece.key, speak=False, steps=None)
         self.fill()
-        self.session.announce(words)
+        # after the screen reader has read the Step pattern button the focus went to, not cut off by it (0.9.8)
+        say_after(self.session.announce, words)
 
 
 STEP_LENGTHS = [1, 2, 3, 4]
@@ -1271,8 +1324,8 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
             "Up and Down move one step; the buttons under the list do what its keys do. Until you change a step, this "
             "shows what the piece plays now. Changing a step makes the piece hand-made: Reforge keeps it, and the "
             "pattern repeats through the whole region. Crashes where the region starts and after fills still come by "
-            "themselves. At the end of a phrase a fill still takes over the snare, claps and toms (the kick, hi-hats, "
-            "ride and shaker keep your steps): set Fill amount to 0 to hear only your steps.")))
+            "themselves. At the end of a phrase a fill still takes over the snare, claps and toms (the kick, hi-hat, "
+            "hi-hat pedal, ride and shaker keep your steps): set Fill amount to 0 to hear only your steps.")))
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(form.grid, 0, wx.EXPAND)
         outer.Add(step_row, 0, wx.TOP, 6)
@@ -1355,7 +1408,7 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
         first_time = not self.hand_made
         was_on = self.part or self.session.piece_settings(self.track_id, self.index, self.piece.key)["on"]
         self.session.set_piece_steps(self.track_id, self.index, self.piece.key, self.steps, speak=False)
-        # steps for the ride take the hand from the hi-hats, and the other way round (0.9.7: one hand, one cymbal)
+        # steps for the ride turn the hi-hat off, and the other way round (0.9.8: one hand, one cymbal)
         turns = getattr(self.session, "turn_words", None)
         self.hand_made = True
         self.steps = self.session.piece_steps(self.track_id, self.index, self.piece.key)
@@ -1374,7 +1427,7 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
         else:
             words = extra = ""
         # a piece turned off by hand that is given steps is turned on (23 Oct 2026), said briefly: "Kick on", or
-        # "Ride on, hi-hat foot only" when the ride and the hi-hats take turns (0.9.7)
+        # "Ride on, hi-hat off" when the ride and the hi-hat take turns (0.9.8)
         turn = ""
         if turns:
             turn = turns

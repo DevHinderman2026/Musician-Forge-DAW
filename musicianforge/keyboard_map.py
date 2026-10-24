@@ -40,7 +40,7 @@ DRUM_KEYS = {
     "s": (38, "snare"),
     "d": (42, "closed hi-hat"),
     "f": (46, "open hi-hat"),
-    "g": (44, "pedal hi-hat"),
+    "g": (44, "hi-hat pedal"),
     "h": (45, "low tom"),
     "j": (48, "middle tom"),
     "k": (50, "high tom"),

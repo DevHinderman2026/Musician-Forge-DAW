@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.7 before its first release.
+For people trying Musician Forge 0.9.8 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -111,7 +111,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 4.2: Add the players
 
-**What to check:** Press Control+Shift+R (or Control+T, then Rhythm player) and add Anvil (drums), style Rock. Then add Bellows (bass), style Driving eighths, and Hammer (guitar), style Rock strum, the same way.
+**What to check:** Press Control+Shift+R (or Control+T, then Rhythm player) and add Anvil (drums), style Rock (the Style list says "Acoustic: Rock"). Then add Bellows (bass), style Driving eighths, and Hammer (guitar), style Rock strum, the same way.
 
 **What to expect:** Each player gets its own track and region, and they play the chords together.
 
@@ -131,7 +131,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** In the drummer's Kit pieces list, arrow through the pieces. Press Space on the Kick. Then press Enter on a piece to open its settings and try When a crash comes, every 4 bars, on the Crash cymbals.
 
-**What to expect:** In a rock groove the Clap or rim, Toms ("off, in fills only"), Crash cymbals, Ride, Congas and bongos, and Shaker, tambourine, cowbell and claves say "off" (the groove doesn't use them). Space on the Kick says "Kick off" and the groove's kicks stop. The crash plays every 4 bars.
+**What to expect:** The list goes Kick, Snare, Clap or rim, Hi-hat, Hi-hat pedal, Toms, Crash cymbals, Ride, Congas and bongos, and Shaker, tambourine, cowbell and claves. In a rock groove the Clap or rim, Hi-hat pedal, Toms ("off, in fills only"), Crash cymbals, Ride, Congas and bongos, and Shaker, tambourine, cowbell and claves say "off" (the groove doesn't use them). Space on the Kick says "Kick off" and the groove's kicks stop. The crash plays every 4 bars.
 
 ### Step 4.6: The Step pattern
 
@@ -153,7 +153,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 4.9: The Forge Dubstep Kit
 
-**What to check:** Add Anvil with the style Dubstep and play it.
+**What to check:** Add Anvil with the style Dubstep ("Electronic: Dubstep" in the Style list) and play it.
 
 **What to expect:** A deep, heavy kit that sounds like dubstep.
 
@@ -209,7 +209,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Add a section (Song group, Sections), move into it, then press Enter and comma a few times. Then turn on All sections (Transport group) and press Enter.
 
-**What to expect:** You stay in that section ("Start of Section 2"). With All sections on, Enter goes to the start of the song.
+**What to expect:** You stay in that section ("Bar 9, start of Section 2"). With All sections on, Enter goes to the start of the song ("Bar 1, start of Section 1").
 
 ### Step 7.6: Choosing an instrument
 
@@ -311,6 +311,20 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** It opens and plays as before.
 
+## New in 0.9.8
+
+### Step W.1: The ride and the hi-hat take turns
+
+**What to check:** In a rock drummer's Kit pieces, arrow to Ride and press Space, and play. Press Space on the Ride again. Press Space on the Ride once more, so it is on, then arrow to Hi-hat and press Space, and Space on Hi-hat once more. Press Control+Z five times, so the Hi-hat is on and the Ride off as at the start. Then open the Ride's settings (Enter), tick and untick Play this piece, tick it again, and tick the check box under it, "Play the hi-hat". Try a jazz drummer and a house drummer too.
+
+**What to expect:** Space on the Ride says "Ride on with the hi-hat's rhythm, hi-hat off": the ride keeps time with the hi-hat's rhythm, and the Hi-hat line in the list reads "Hi-hat: off, the ride keeps time". Space again says "Ride off, hi-hat on", and the Hi-hat is back on. Space a third time says "Ride on, hi-hat off" (the ride has its rhythm now). Space on the Hi-hat says "Hi-hat on, ride off", and the Ride's line reads "Ride: off, the hi-hat keeps time"; Space on it again says "Hi-hat off, ride on", because the Hi-hat had turned the Ride off. In the Ride's window, ticking Play this piece says "Ride on with the hi-hat's rhythm, hi-hat off", unticking it says "Ride off, hi-hat on", and ticking it again says "Ride on, hi-hat off"; right under it is "Play the hi-hat (the ride and the hi-hat take turns)", which unticks itself when the ride goes on and ticks itself again when the ride goes off, and ticking it yourself while the ride is on turns the ride off ("Hi-hat on, ride off"). The Hi-hat's window has "Play the ride" the same way. A piece you turned off yourself stays off: the other one going on and off again does not bring it back. In jazz the Ride is on from the start and the Hi-hat off ("Hi-hat: off, not in this groove", since the jazz grooves keep time on the ride), so Space on the Ride only turns it off and on, and the Hi-hat pedal keeps the foot going. A house drummer's Ride and Hi-hat windows have no second check box, since those two do not take turns there: on house, trap or dubstep, Space on the Ride just turns it on and the Hi-hat keeps playing. The Hi-hat pedal never changes with any of these: in jazz, funk and pop it stays on and keeps the foot going under the ride; in rock, hard rock, metal and the drum machines it stays off until you turn it on. Each change is one Control+Z.
+
+### Step W.2: The Hi-hat pedal is its own piece
+
+**What to check:** In a jazz drummer's Kit pieces, arrow to Hi-hat pedal and listen to its line. Press Space on it, then Space again. Turn the Ride on and off. Then look at a rock drummer's Hi-hat pedal, a funk drummer's and a house drummer's, and open the pedal's settings with Enter.
+
+**What to expect:** The list has Hi-hat (the hand, closed and open sounds) and, right after it, Hi-hat pedal (the foot); there is no separate piece for the open sound any more, and the Hi-hat is simply on or off. In jazz the pedal's line reads "Hi-hat pedal: on" (the groove has the foot in it); in funk and pop it reads "Hi-hat pedal: on, the foot on two and four". Space turns it off (the line reads "Hi-hat pedal: off" in jazz, "Hi-hat pedal: off, not in this groove" in funk and pop) and the foot stops; Space again turns it back on. The Ride going on and off leaves the pedal as it was. In rock, hard rock, metal, house, trap and dubstep the pedal's line reads "Hi-hat pedal: off, not in this groove" until you turn it on; then it reads "Hi-hat pedal: on, the foot on two and four" and plays that. The pedal's window has Play this piece, Pattern (the foot on two and four, on every beat, or on one and three), Complexity and Step pattern, and nothing about how open the hi-hat is (that is the Hi-hat's). Each change is one Control+Z.
+
 ## New in 0.9.7
 
 ### Step V.1: A new project starts with no tracks
@@ -341,7 +355,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** On the drummer's track, press Track settings (or Alt+Enter on the track). Tab past Mute and Solo to the kit sliders. Move Kick loudness to 0 and Ride loudness up, press Enter and play. Then open a project made with 0.9.6 that has a drummer, play it, and open its drummer track's Track settings.
 
-**What to expect:** Ten sliders, one for each kit piece, each at 50. With Kick at 0 no kick plays at all, fills included. Control+Z takes it back in one step. The 0.9.6 project has the sliders too, all at 50, and sounds exactly as it did.
+**What to expect:** Ten sliders, one for each kit piece (Hi-hat and Hi-hat pedal among them), each at 50. With Kick at 0 no kick plays at all, fills included. Control+Z takes it back in one step. The 0.9.6 project has the sliders too, all at 50, and sounds exactly as it did.
 
 ### Step V.6: Enter on a kit piece
 
@@ -349,11 +363,11 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** Enter opens the Kick's window, for every drummer. It has no Loudness slider (that is in Track settings now), unless the region comes from an older project that set the piece's own loudness. Escape goes back to Kit pieces.
 
-### Step V.7: The ride and the hi-hats take turns
+### Step V.7: The ride and the hi-hat take turns
 
-**What to check:** In a rock drummer's Kit pieces, arrow to Ride and press Space, and play. Press Space on the Ride again. Then press Space on Closed hi-hat while the ride is on. Try a jazz drummer and a house drummer too.
+**What to check:** In a rock drummer's Kit pieces, arrow to Ride and press Space, and play. Press Space on the Ride again.
 
-**What to expect:** Space on the Ride says "Ride on with the hi-hat's rhythm, hi-hat foot only": the ride keeps time and the hi-hat's foot pedal keeps playing on two and four ("Closed hi-hat: foot only"). Space again says "Ride off, hi-hats on". On a metal or hard rock drummer, Space on the Ride says "... hi-hats off" (or "hi-hat off") instead, with no foot: "Closed hi-hat: off". Turning the hi-hat on while the ride plays turns the ride off. In jazz the foot hi-hat keeps playing under the ride. On house or trap, the Ride just turns on and the hi-hats keep playing. Each change is one Control+Z.
+**What to expect:** The ride and the hi-hat take turns, as Step W.1 says in full (changed in 0.9.8: the hi-hat is one piece, with the pedal as a piece of its own; see Step W.2). Each change is one Control+Z.
 
 ### Step V.8: Steps turn a piece back on
 
@@ -407,13 +421,13 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to check:** Open one of your projects made with 0.9.6 or earlier and play it all the way through.
 
-**What to expect:** The rhythm players play the same notes as before, except that the drummer's ride and hi-hats now stop for each fill (Step V.17). Apart from that, only the reverb is a little drier on tracks below full volume, because the reverb now follows each track's volume.
+**What to expect:** The rhythm players play the same notes as before, except that the drummer's ride and hi-hat now stop for each fill (Step V.17). Apart from that, only the reverb is a little drier on tracks below full volume, because the reverb now follows each track's volume.
 
 ### Step V.17: Fills take both hands
 
 **What to check:** Add a rock drummer, turn its Ride on (Space in Kit pieces), set Fills to 100 and play. Try metal and jazz too, and a rock drummer with the ride off.
 
-**What to expect:** In each fill, the ride (or the hi-hats) stops when the fill starts, and comes back with the crash on the next bar; only the kick and, where the drummer has one, the hi-hat foot keep playing under the fill. No fill has a cymbal ticking along on top of the toms.
+**What to expect:** In each fill, the ride (or the hi-hat) stops when the fill starts, and comes back with the crash on the next bar; only the kick and, where it is on, the Hi-hat pedal keep playing under the fill. No fill has a cymbal ticking along on top of the toms.
 
 ## New in 0.9.6
 
@@ -443,7 +457,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step N.5: Fast hi-hats
 
-**What to check:** Set the tempo to 180 and the Closed hi-hat's pattern to sixteenth notes, then to disco sixteenths.
+**What to check:** Set the tempo to 180 and the Hi-hat's pattern to sixteenth notes, then to disco sixteenths.
 
 **What to expect:** Both stay sixteenth notes. (The ride still plays eighth notes above 120 beats a minute.)
 
@@ -511,9 +525,9 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step E.9: One sound per piece
 
-**What to check:** Open the Closed hi-hat's settings.
+**What to check:** Open the Hi-hat's settings.
 
-**What to expect:** There is no "Play this rhythm on" any more: each piece plays only its own sounds.
+**What to expect:** There is no "Play this rhythm on" any more: each piece plays only its own sounds (the Hi-hat its closed and open sounds; the foot is the Hi-hat pedal, a piece of its own).
 
 ### Step E.10: The ride in fast songs
 
@@ -550,7 +564,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.7
+## Known limits in 0.9.8
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

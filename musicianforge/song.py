@@ -11,14 +11,18 @@ import math
 import os
 from dataclasses import dataclass, field
 
-from . import paths, theory
+from . import compat, paths, theory
+from .compat import NewerVersionError, SongFileError  # noqa: F401 - song.SongFileError, as before
 from .timeline import PPQ, Timeline
 
 FILE_FORMAT = "musician-forge-song"
-FILE_VERSION = 8   # 2 added song sections, 3 audio tracks, 4 regions on instrument tracks, 5 effects,
+FILE_VERSION = 9   # 2 added song sections, 3 audio tracks, 4 regions on instrument tracks, 5 effects,
                    # 6 the chord track, rhythm players and region looping, 7 automation, 8 rhythm players'
                    # variations, performances and pieces (players.clean_settings reads the older settings
-                   # the way 0.9.1 played them); older files open
+                   # the way 0.9.1 played them), 9 (0.9.8) the drummer's hi-hat pedal piece and the open hi-hat
+                   # folded into the hi-hat (player_pieces.clean_pieces reads the older pieces), and every rhythm
+                   # player region records the rules it plays by. Older files open: compat.upgrade brings them up
+                   # one version at a time (one step per version; add one there with each new version).
 FILE_EXTENSION = ".mforge"
 # (A development build of 0.9.7 saved "features" in a new project, 23 Oct 2026, to keep its kit-piece loudness and the
 # ride and hi-hats taking turns out of older projects; Russell then chose them for every project, 23 Oct 2026, 4:52 AM.
@@ -276,8 +280,8 @@ def valid_strips(raw):
     return strips
 
 
-class SongFileError(Exception):
-    """A song file could not be read."""
+# SongFileError ("a song file could not be read") and NewerVersionError (saved by a newer Musician Forge) live in
+# compat.py, with the steps that open older files; they are imported above so song.SongFileError stays where it was.
 
 
 class Song:
@@ -478,8 +482,8 @@ class Song:
         if not isinstance(data, dict) or data.get("format") != FILE_FORMAT:
             raise SongFileError("This is not a Musician Forge song file")
         try:
-            if int(data.get("version", 0)) > FILE_VERSION:
-                raise SongFileError("This song was saved by a newer version of Musician Forge")
+            saved = compat.saved_version(data)       # (a newer version's file: compat.upgrade refuses it plainly)
+            data = compat.upgrade(copy.deepcopy(data))   # older files: up to date, one version at a time
             if int(data.get("ppq", PPQ)) != PPQ:
                 raise SongFileError("This song uses an unsupported timing resolution")
             song = cls(title=str(data.get("title", "Untitled")),
@@ -527,7 +531,7 @@ class Song:
             song.fit_last_section()  # older songs: one section long enough for all their notes
             from . import regions
 
-            if int(data.get("version", 0)) < 4:
+            if saved < 4:
                 regions.migrate(song)  # older songs: a region for each section that has notes
             regions.tidy(song)
             ids = [t.id for t in song.tracks]
@@ -554,7 +558,7 @@ class Song:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        if os.path.exists(path) and (not os.path.exists(path + ".bak") or Song.is_readable(path)):
+        if os.path.exists(path) and (not os.path.exists(path + ".bak") or Song.is_worth_keeping(path)):
             paths.replace_file(path, path + ".bak")       # a damaged file never takes a good backup's place
         paths.replace_file(tmp, path)
 
@@ -563,6 +567,19 @@ class Song:
         """True if path opens as a song."""
         try:
             Song.load(path)
+            return True
+        except Exception:  # noqa: BLE001 - damaged in any way
+            return False
+
+    @staticmethod
+    def is_worth_keeping(path):
+        """True if path opens as a song, or was saved by a newer Musician Forge (a whole project this version cannot
+        read, not damage: when its backup is opened instead and saved, it goes to the .bak file rather than being
+        written over and lost; the review of 24 Oct 2026)."""
+        try:
+            Song.load(path)
+            return True
+        except NewerVersionError:
             return True
         except Exception:  # noqa: BLE001 - damaged in any way
             return False

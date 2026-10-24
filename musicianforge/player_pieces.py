@@ -21,6 +21,35 @@ it", which plays the style's own notes on that step. Hand-made steps stay throug
 resets them after a warning (Russell, 11:57 PM), and Control+Z brings them back.
 
 This module holds the data and the words; players.py applies the settings while it plays.
+
+UI CONTRACT (0.9.8)
+What the windows use from here (Russell, 24 Oct 2026: one hi-hat piece for the hand, a separate pedal piece for the
+foot, and the ride and the hi-hat taking turns as two plain toggles):
+- DRUM_PIECES, in the Kit pieces list's order, key and display name (PIECE_BY_KEY[key].name): kick "Kick",
+  snare "Snare", clap "Clap or rim", hat "Hi-hat" (the hand on the hi-hat: both its closed and open sounds, HAT and
+  OPEN_HAT; kind "hat", with the settings "openness" (How open the hi-hat is) and "open_offbeats"), pedal "Hi-hat
+  pedal" (the foot, PEDAL only; kind "pedal", only the common settings: on, pattern, busy, level, steps), toms "Toms",
+  crash "Crash cymbals", ride "Ride", hand_drums "Congas and bongos", percussion "Shaker, tambourine, cowbell and
+  claves". There is no "open_hat" piece any more, and no "foot only" state: a piece is on or off. The settings in
+  TURN_KEYS ("off_for", "open_level", "open_busy", "old_off", "old_steps") are the model's own and get no control in
+  the piece window.
+- A toggle: the window calls session.update_piece(track_id, index, piece_key, speak=False, on=True or False), or
+  session.toggle_piece(track_id, index, piece_key). Both apply TAKES_TURNS in the same undo step and return the
+  piece's Kit pieces line (describe_piece). Right after, session.turn_words is None or one of TURN_PHRASES ("Ride on,
+  hi-hat off", "Hi-hat on, ride off", "Ride off, hi-hat on", "Hi-hat off, ride on"), or "Ride on with the hi-hat's
+  rhythm, hi-hat off" when a ride with nothing of its own to play took over the hi-hat's rhythm. The window then
+  re-reads the other piece (session.piece_settings(track_id, index, other)["on"]) and sets its check box to that.
+  session.pieces_turned_off(track_id, index, piece_key) says beforehand which other piece turning this one on would
+  turn off: ["hat"], ["ride"] or [] (nothing is changed).
+- session.piece_settings(track_id, index, piece_key)["on"] is a piece's toggle as it stands (piece_on).
+- The pedal's default (pedal_default_on; PEDAL_STYLES): on by itself where the groove has the foot (jazz), and in
+  regions made or changed from 0.9.8 (rules 4) also in funk and pop, the foot on two and four; off in rock, hard rock,
+  metal and the drum machines (house, trap, dubstep) until turned on. Nothing but its own toggle, Pattern or steps
+  turns it on or off: the ride and the hi-hat never touch it (TAKES_TURNS has no entry for it).
+- Lines in the Kit pieces list: "Hi-hat: off, the ride keeps time" and "Ride: off, the hi-hat keeps time" for a piece
+  the other one turned off (it comes back when that one is turned off); "Hi-hat pedal: off, not in this groove" for
+  the pedal off by itself and "Hi-hat pedal: on, the foot on two and four" where it plays by itself. TURN_NAMES has
+  the spoken names ("ride", "hi-hat", "hi-hat pedal").
 """
 
 from dataclasses import dataclass
@@ -52,8 +81,8 @@ DRUM_PIECES = (
     Piece("kick", "Kick", (KICK, KICK2), "kick"),
     Piece("snare", "Snare", (SNARE, SNARE2), "snare"),
     Piece("clap", "Clap or rim", (CLAP, RIM)),
-    Piece("hat", "Closed hi-hat", (HAT, PEDAL), "hat"),
-    Piece("open_hat", "Open hi-hat", (OPEN_HAT,)),
+    Piece("hat", "Hi-hat", (HAT, OPEN_HAT), "hat"),            # the hand: closed and open (0.9.8)
+    Piece("pedal", "Hi-hat pedal", (PEDAL,), "pedal"),           # the foot (0.9.8)
     Piece("toms", "Toms", (TOM_FLOOR, TOM_LOW, TOM_MID, TOM_HIGH), "toms"),
     Piece("crash", "Crash cymbals", (CRASH, CRASH2, SPLASH, CHINA), "crash"),
     Piece("ride", "Ride", (RIDE, RIDE_BELL, RIDE2), "ride"),
@@ -149,7 +178,7 @@ DRUM_DEFAULTS = {"on": True, "pattern": "style", "busy": BUSY_DEFAULT, "level": 
                  "ghosts": "style", "ghost_level": LEVEL_DEFAULT,
                  "rim": "intensity", "openness": "intensity", "open_offbeats": False, "in_fills": True,
                  "when": "start_and_fills", "which": "crash1", "bell": False, "ride_sound": "ride",
-                 "foot_only": False, "for_hats": False, "steps": None}
+                 "off_for": "", "open_level": -1, "open_busy": -1, "old_off": "", "old_steps": "", "steps": None}
 PART_DEFAULTS = {"pattern": "style", "chords": True, "octave": 0, "length": "normal", "root_only": False,
                  "passing": False, "busy": BUSY_DEFAULT, "level": LEVEL_DEFAULT, "steps": None}
 RANGES = {"busy": (0, 100), "level": (0, 100), "ghost_level": (0, 100), "octave": (-2, 2)}
@@ -157,11 +186,25 @@ CHOICES = {"time": TIME, "ghosts": GHOSTS, "openness": OPENNESS, "when": WHEN,
            "which": tuple((key, key) for key, _notes in WHICH), "length": LENGTHS, "rim": RIM_CHOICES,
            "ride_sound": tuple((key, words) for key, words, _note in RIDE_SOUNDS)}
 EXTRAS = {"kick": ("time",), "snare": ("time", "ghosts", "ghost_level", "rim"),
-          "hat": ("openness", "open_offbeats", "foot_only"), "toms": ("in_fills",), "crash": ("when", "which"),
-          "ride": ("ride_sound", "bell", "for_hats")}
-# set by the ride and the hi-hats taking turns (TAKES_TURNS), not in the piece window: the Closed hi-hat's "foot only"
-# and the Ride's "off for the hi-hats"
-TURN_KEYS = ("foot_only", "for_hats")
+          "hat": ("openness", "open_offbeats", "off_for", "open_level", "open_busy", "old_off", "old_steps"),
+          "toms": ("in_fills",),
+          "crash": ("when", "which"), "ride": ("ride_sound", "bell", "off_for")}
+# set by the ride and the hi-hat taking turns (TAKES_TURNS), not in the piece window: "off_for" is the piece that
+# turned this one off ("ride" or "hat"), so turning that one off brings this one back; "" for off by hand.
+# "open_level" is only for regions saved before 0.9.8, whose Open hi-hat had a loudness of its own: it is applied to
+# the hi-hat's open notes so they play as they did (-1: the hi-hat's own level; nothing in the windows sets it).
+# "open_busy" is the same for the Open hi-hat's Complexity of its own, read only under the old rules
+# (players._KitPieces._old_hat_pieces; the review of 24 Oct 2026: without it those open notes came out at the
+# region's Complexity, and the fills' random choices moved with them) and dropped when the region moves to today's
+# rules, where the one Hi-hat has one Complexity.
+# "old_steps" says which of those regions' two pieces had hand-made steps ("hat", "open" or "both"; the Hi-hat
+# holds both pieces' steps now), so that under the old rules each old piece's steps replace only that piece's
+# sounds, as they did; it goes with "old_off" when the region moves to today's rules.
+# "old_off" is for those regions too: "closed" when their Closed hi-hat was turned off by hand while the Open
+# hi-hat played ("closed_groove" when it was off for having nothing in the groove: the hi-hat still built into a
+# louder region then), "open" the other way round (one Hi-hat cannot be half off, so the drummer leaves those notes
+# out under the old rules, and the setting goes when the region moves to today's rules: players.to_todays_rules).
+TURN_KEYS = ("off_for", "open_level", "open_busy", "old_off", "old_steps")
 COMMON = ("on", "pattern", "busy", "level", "steps")
 PART_KEYS = ("pattern", "chords", "octave", "length", "root_only", "passing", "busy", "level", "steps")
 
@@ -218,24 +261,24 @@ def clean_kit_levels(raw):
 
 # One hand keeps time on one cymbal (0.9.7; Russell, 23 Oct 2026: "if the hi-hat turns on and if somebody turns on
 # the ride, the hi-hat should turn off because it's a cymbal being used"; he chose both ways, and every project, old
-# and new, 23 Oct 2026, 4:52 AM). On a drummer that plays like a real one (LIVE_DRUMMER_STYLES; the drum machines and
-# the hand percussion are not affected), when a piece starts playing (Space, Play this piece, a Pattern or steps):
-#   the ride: the hand leaves the hi-hats. The Closed hi-hat goes to "foot only" (foot_only: its pedal keeps playing,
-#     the foot on two and four under the ride when its rhythm has no pedal of its own; Russell: "keep the foot
-#     playing") and the Open hi-hat is off while it is. A ride with nothing of its own to play takes over the hand's
-#     hi-hat rhythm (its Pattern becomes "The hi-hat's rhythm", HAT_RHYTHM), as a drummer moves the riding hand.
-#   either hi-hat: the ride goes off, marked "for_hats" (off for the hi-hats).
-# And back (Russell, 23 Oct 2026): turning the ride off brings the hi-hats back from foot only, and once a hi-hat has
-# taken the ride's place, the closed hi-hat's hand stopping (turned off, or a Pattern with only the pedal) brings the
-# ride back (and the open hi-hat goes, as when the ride is turned on), so something keeps time. A ride turned off by
-# hand stays off. A hi-hat counts only when its hand plays something (jazz's Closed hi-hat is the foot alone, so it
-# and the ride play together).
+# and new). From 0.9.8 (Russell, 24 Oct 2026: "the actual toggle needs to be set to off. Same the other way around")
+# the ride and the hi-hat are two plain toggles that take turns, on a drummer that plays like a real one
+# (LIVE_DRUMMER_STYLES; the drum machines and the hand percussion are not affected): when the ride starts playing
+# (Space, Play this piece, a Pattern or steps) the Hi-hat is turned off, marked off for the ride; when the hi-hat
+# starts playing the Ride is turned off, marked off for the hi-hat. Turning the one that took over off by hand
+# brings the other back (so something keeps time); a piece turned off by hand stays off. A ride with nothing of its
+# own to play takes over the hand's hi-hat rhythm (its Pattern becomes "The hi-hat's rhythm", HAT_RHYTHM), as a
+# drummer moves the riding hand. The Hi-hat pedal (the foot) is never touched: it has no entry here.
 # Each is one undo step. Nothing changes until a piece is turned on or off, so an older region with the ride and the
-# hi-hats both on keeps playing them both.
-TAKES_TURNS = {"ride": ("hat", "open_hat"), "hat": ("ride",), "open_hat": ("ride",)}
-TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "open_hat": "open hi-hat"}
-HATS = ("hat", "open_hat")
-HAT_RHYTHM = "h:"           # the ride's Pattern "The hi-hat's rhythm": "h:" and the Closed hi-hat's own pattern
+# hi-hat both on keeps playing them both.
+TAKES_TURNS = {"ride": ("hat",), "hat": ("ride",)}
+TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "pedal": "hi-hat pedal"}
+TURN_PHRASES = ("Ride on, hi-hat off", "Hi-hat on, ride off", "Ride off, hi-hat on", "Hi-hat off, ride on")
+HAT_RHYTHM = "h:"           # the ride's Pattern "The hi-hat's rhythm": "h:" and the Hi-hat's own pattern
+# The Hi-hat pedal plays by itself where the groove has the foot in it (jazz), and from rules 4 (0.9.8, Russell,
+# 24 Oct 2026) also in funk and pop, a quiet foot on two and four under the ride; off in rock, hard rock, metal
+# ("metal, hard rock, whatever drummers don't use the foot pedal") and the drum machines until turned on.
+PEDAL_STYLES = ("jazz", "funk", "pop")
 
 
 def takes_turns(style_key, piece_key):
@@ -243,75 +286,47 @@ def takes_turns(style_key, piece_key):
     return TAKES_TURNS.get(piece_key, ()) if style_key in LIVE_DRUMMER_STYLES else ()
 
 
-def foot_only(settings):
-    """Whether the riding hand has left the hi-hats (TAKES_TURNS): the Closed hi-hat plays its pedal only and the
-    Open hi-hat is off."""
-    return bool(((settings.get("pieces") or {}).get("hat") or {}).get("foot_only"))
+def pedal_default_on(style_key, variation, base_tables, rules=None):
+    """Whether the Hi-hat pedal plays with nothing chosen for it: the groove has the foot (jazz), or, from rules 4,
+    the style is one whose drummer keeps a foot on two and four under the ride (PEDAL_STYLES)."""
+    if PEDAL in style_table(style_key, variation, base_tables):
+        return True
+    return style_key in PEDAL_STYLES and (rules is None or rules >= 4)
 
 
-# The drummers with no hi-hat foot under the ride (Russell, 23 Oct 2026, 1:26 PM: "I don't think metal, hard rock has
-# that"; he left which ones to Claude): a metal drummer's feet are both on the double kick, and a hard rock drummer
-# riding the ride leaves the hi-hat shut. Their grooves have no pedal, so when the ride takes the hand the Closed hi-hat
-# is simply off (and says so), unless you gave it a pedal yourself (the Pattern "the foot pedal on two and four", or
-# hand-made pedal steps). Jazz, rock, funk and pop keep the foot (jazz's grooves have it; the rest get it on two and
-# four).
-NO_HAT_FOOT_STYLES = ("hard_rock", "metal")
-
-
-def own_pedal(settings):
-    """Whether the Closed hi-hat's own Pattern or hand-made steps have the foot pedal in them."""
-    hat = piece_settings(settings, "hat")
-    if hat["steps"]:
-        return any(hit[2] == PEDAL for bar in hat["steps"]["bars"] for hit in bar)
-    return any(PEDAL in rows for key, _words, rows in GENERIC["hat"] if "g:" + key == hat["pattern"])
-
-
-def foot_plays(settings):
-    """At foot only (the riding hand on the ride), whether the hi-hat's foot pedal plays: on every drummer but metal
-    and hard rock (NO_HAT_FOOT_STYLES), and on those only with a pedal you gave it."""
-    if not foot_only(settings):
-        return False
-    return settings.get("style") not in NO_HAT_FOOT_STYLES or own_pedal(settings)
-
-
-def hand_on(settings, piece_key, has_groove=True):
-    """Whether a piece is played by hand: piece_on, except that the Closed hi-hat at foot only is not."""
-    return piece_on(settings, piece_key, has_groove) and not (piece_key == "hat" and foot_only(settings))
+def pedal_rows(settings, base_tables):
+    """The rows the Hi-hat pedal plays when its Pattern is the style's: the groove's own foot, else the foot on two
+    and four (where the pedal plays by itself, pedal_default_on, and wherever it was turned on by hand), else
+    none."""
+    table = style_table(settings["style"], settings["variation"], base_tables)
+    rows = piece_rows(table, PIECE_BY_KEY["pedal"])
+    if rows:
+        return rows
+    stored = (settings.get("pieces") or {}).get("pedal") or {}
+    if stored.get("on") or pedal_default_on(settings["style"], settings["variation"], base_tables,
+                                            settings.get("rules", 1)):
+        return dict(GENERIC["pedal"][0][2])
+    return {}
 
 
 def turn_state(settings, piece_key, has_groove=True):
-    """'on', 'off', or for the Closed hi-hat 'foot only' (TAKES_TURNS; 'off' on metal and hard rock, where the foot
-    does not play: foot_plays)."""
-    if piece_key == "hat" and foot_only(settings) and piece_on(settings, piece_key, has_groove):
-        return "foot only" if foot_plays(settings) else "off"
+    """'on' or 'off' (TAKES_TURNS; before 0.9.8 the Closed hi-hat could be at 'foot only')."""
     return "on" if piece_on(settings, piece_key, has_groove) else "off"
 
 
 def others_words(piece_key, before, after):
-    """What a change to this piece did to the others' turns (TAKES_TURNS), or '': 'hi-hat foot only', 'hi-hats on',
-    'ride off', 'closed hi-hat on, ride off'. before and after: {piece key: turn_state}."""
-    others = [key for key in ("ride",) + HATS if key != piece_key and before.get(key) != after.get(key)]
-    words = []
-    hats = [key for key in others if key in HATS]
-    if "hat" in hats and after["hat"] == "foot only":
-        words.append("hi-hat foot only")             # the open hi-hat goes with it
-    elif len(hats) == 2 and after["hat"] == after["open_hat"]:
-        words.append("hi-hats " + after["hat"])
-    else:
-        for key in hats:
-            name = "closed hi-hat" if key == "hat" and piece_key == "open_hat" else TURN_NAMES[key]
-            words.append("{} {}".format(name, after[key]))
-    if "ride" in others:
-        words.append("ride " + after["ride"])
-    return ", ".join(words)
+    """What a change to this piece did to the other's turn (TAKES_TURNS), or '': 'hi-hat off', 'ride on'.
+    before and after: {piece key: turn_state}."""
+    return ", ".join("{} {}".format(TURN_NAMES[key], after[key]) for key in TAKES_TURNS.get(piece_key, ())
+                     if before.get(key) != after.get(key))
 
 
 def turns_words(piece_key, before, after, rhythm=None):
-    """What the windows say when a piece's turn changes the others' (TAKES_TURNS), or None when it changes none of
-    them (nor gives the ride a rhythm): 'Ride on, hi-hat foot only', 'Ride on with the hi-hat's rhythm, hi-hat foot
-    only', 'Ride off, hi-hats on', 'Closed hi-hat on, ride off', 'Closed hi-hat off, ride on'; only the others when
-    the piece itself stayed on or off (a Pattern chosen: 'Ride off'). rhythm: what a ride with nothing of its own to
-    play was given ("the hi-hat's rhythm", "the hi-hat's steps" or "eighth notes")."""
+    """What the windows say when a piece's turn changes the other's (TAKES_TURNS), or None when it changes nothing
+    (nor gives the ride a rhythm): 'Ride on, hi-hat off', 'Ride on with the hi-hat's rhythm, hi-hat off',
+    'Ride off, hi-hat on', 'Hi-hat on, ride off', 'Hi-hat off, ride on'; only the other when the piece itself stayed
+    on or off (a Pattern chosen: 'Ride off'). rhythm: what a ride with nothing of its own to play was given ("the
+    hi-hat's rhythm", "the hi-hat's steps" or "eighth notes")."""
     others = others_words(piece_key, before, after)
     if not others and not rhythm:
         return None
@@ -322,17 +337,16 @@ def turns_words(piece_key, before, after, rhythm=None):
 
 
 def hand_hat_row(style_key, variation, hat_pattern, base_tables):
-    """What the hand plays on the hi-hats, as one row (16 chances, loudness, scaled), or None when it plays none:
-    the closed hi-hat of the Closed hi-hat's pattern (not its pedal) with the variation's own open hi-hat (in hard
-    rock the hand keeps time on the open hi-hat), each step as likely as the likelier of the two; the loudness is that
-    of the one that plays more."""
+    """What the hand plays on the hi-hat, as one row (16 chances, loudness, scaled), or None when it plays none:
+    the closed and the open hi-hat of the Hi-hat's pattern (in hard rock the hand keeps time on the open hi-hat),
+    each step as likely as the likelier of the two; the loudness is that of the one that plays more."""
     rows = None
     if not hat_pattern.startswith(HAT_RHYTHM):
         rows = drum_pattern_rows(style_key, variation, "hat", hat_pattern, base_tables)
     table = style_table(style_key, variation, base_tables)
     if rows is None:
         rows = piece_rows(table, PIECE_BY_KEY["hat"])
-    found = [entry for entry in (rows.get(HAT), table.get(OPEN_HAT)) if entry is not None]
+    found = [entry for entry in (rows.get(HAT), rows.get(OPEN_HAT)) if entry is not None]
     if not found:
         return None
     chances = [max(entry[0][place] for entry in found) for place in range(len(found[0][0]))]
@@ -392,8 +406,19 @@ def clean_value(piece, key, value, player_key=None):
         raise ValueError("{} has no setting called {}".format(piece.name, key))
     if key == "rim" and isinstance(value, bool):      # before 0.9.4 the rim click was on or off
         value = "always" if value else "intensity"
-    if key in ("on", "open_offbeats", "in_fills", "bell", "chords", "root_only", "passing", "foot_only", "for_hats"):
+    if key in ("on", "open_offbeats", "in_fills", "bell", "chords", "root_only", "passing"):
         return bool(value)
+    if key == "off_for":
+        return value if value in ("ride", "hat") else ""
+    if key == "old_off":
+        return value if value in ("closed", "closed_groove", "open") else ""
+    if key == "old_steps":
+        return value if value in ("hat", "open", "both") else ""
+    if key in ("open_level", "open_busy"):
+        try:
+            return int(max(-1, min(100, int(value))))
+        except (TypeError, ValueError, OverflowError):
+            return -1
     if key in RANGES:
         low, high = RANGES[key]
         try:
@@ -477,6 +502,233 @@ def clean_pieces(player_key, raw):
     return cleaned
 
 
+# ----------------------------------------------------------------------
+# pieces saved before 0.9.8 (compat._to_9 calls this once, when an older project file is read)
+# ----------------------------------------------------------------------
+OLD_HAT_FOOTLESS_STYLES = ("hard_rock", "metal")     # 0.9.7's "foot only" played no foot on these
+
+
+def _old_on(stored, groove, rules):
+    """0.9.7's piece_on for a piece from its stored settings: rules 1, on unless turned off by hand."""
+    if "on" in stored:
+        return bool(stored["on"])
+    return True if rules < 2 else bool(groove or stored.get("pattern", "style") not in ("style", "none")
+                                       or stored.get("steps"))
+
+
+def _merge_steps(*step_sets):
+    """Hand-made steps of several old pieces as one piece's: {"bars": [...]} or None; a shorter set repeats."""
+    found = [steps for steps in step_sets if steps and steps.get("bars")]
+    if not found:
+        return None
+    length = max(len(steps["bars"]) for steps in found)
+    bars = []
+    for number in range(length):
+        bar = []
+        for steps in found:
+            bar.extend(list(hit) for hit in steps["bars"][number % len(steps["bars"])])
+        bars.append(bar)
+    return {"bars": bars}
+
+
+def _silent_steps(*step_sets):
+    """Hand-made steps with every step off, as many bars as the longest of these."""
+    return {"bars": [[] for _ in range(max(len(steps["bars"]) for steps in step_sets if steps))]}
+
+
+def _steps_of(steps, sounds):
+    """The hits of these sounds from hand-made steps, or None when there are none."""
+    if not steps or not steps.get("bars"):
+        return None
+    bars = [[list(hit) for hit in bar if len(hit) > 2 and hit[2] in sounds] for bar in steps["bars"]]
+    return {"bars": bars} if any(bars) else None
+
+
+def _old_hand_tokens(hat_pattern, generic_hat):
+    """What 0.9.7's Closed hi-hat pattern gave the hand and the foot: (the hand's tokens of the Hi-hat's pattern,
+    the Hi-hat pedal's pattern or None for no foot)."""
+    hand, foot_pattern = [], None
+    if hat_pattern in ("style", "none") or hat_pattern.startswith("v") and _number(hat_pattern[1:]) is not None:
+        if hat_pattern != "none":
+            hand.append("c:" + hat_pattern)
+        foot_pattern = hat_pattern
+    elif hat_pattern == "g:pedal":
+        foot_pattern = "g:pedal"
+    elif hat_pattern.startswith("g:") and hat_pattern[2:] in generic_hat:
+        hand.append(hat_pattern)              # a hand pattern: the groove's foot does not play under it
+    else:                                     # unknown: played as the variation's own
+        hand.append("c:style")
+        foot_pattern = "style"
+    return hand, foot_pattern
+
+
+def old_pieces_to_new(raw, style_key, variation, base_tables, rules=1):
+    """The pieces of a drummer region saved before 0.9.8, as 0.9.8 keeps them, playing the same notes: the Closed
+    hi-hat (closed hi-hat and foot pedal) and the Open hi-hat become the Hi-hat (the hand: closed and open) and the
+    Hi-hat pedal (the foot). Each old piece's rhythm goes to the new piece that plays its sounds: the closed hi-hat's
+    hand part and the open hi-hat's pattern join as one Hi-hat pattern ("g:eighths+o:style", "c:style" or
+    "g:open_quarters"; drum_pattern_rows), its pedal part becomes the Hi-hat pedal's pattern, hand-made steps are
+    split by sound, and a loudness the Open hi-hat had of its own is kept as the Hi-hat's open_level. 0.9.7's "foot
+    only" (the hand on the ride) becomes Hi-hat off for the ride and the pedal on; a ride "for the hi-hats" becomes
+    Ride off for the hi-hat. A dict already in the new form (a "pedal" entry, or no "open_hat", "foot_only" or
+    "for_hats") is returned as it is."""
+    if not isinstance(raw, dict):
+        return raw
+    hat = raw.get("hat") if isinstance(raw.get("hat"), dict) else {}
+    open_hat = raw.get("open_hat") if isinstance(raw.get("open_hat"), dict) else {}
+    ride = raw.get("ride") if isinstance(raw.get("ride"), dict) else {}
+    old = "open_hat" in raw or "foot_only" in hat or "for_hats" in ride
+    pattern = hat.get("pattern") if isinstance(hat.get("pattern"), str) else ""
+    ride_pattern = ride.get("pattern") if isinstance(ride.get("pattern"), str) else ""
+    new = ("pedal" in raw or any(key in hat for key in TURN_KEYS) or "+" in pattern
+           or pattern[:2] in ("c:", "o:") or pattern.startswith("g:open_")
+           or ride_pattern.startswith(HAT_RHYTHM) and (ride_pattern[2:4] in ("c:", "o:") or "+" in ride_pattern))
+    if new or not old and not hat and not ride_pattern.startswith(HAT_RHYTHM):
+        return raw
+    out = {key: value for key, value in raw.items() if key not in ("hat", "open_hat")}
+    table = style_table(style_key, variation, base_tables)
+    groove_hand, groove_open, groove_foot = HAT in table, OPEN_HAT in table, PEDAL in table
+    foot_only = bool(hat.get("foot_only"))
+    hat_on = _old_on(hat, groove_hand or groove_foot, rules)
+    open_on = _old_on(open_hat, groove_open, rules) and not foot_only
+    hat_pattern = hat.get("pattern", "style") if isinstance(hat.get("pattern"), str) else "style"
+    open_pattern = open_hat.get("pattern", "style") if isinstance(open_hat.get("pattern"), str) else "style"
+    generic_hat = {key for key, _w, _r in GENERIC["hat"]}
+    generic_open = {key for key, _w, _r in GENERIC["hat"] if key.startswith("open_")}
+
+    # The hand's rhythm tokens, and what the foot plays (None: nothing). Kept even for a piece that was off: 0.9.7
+    # still worked out an off piece's chosen pattern before leaving its notes out, and a fill's random choices
+    # went by how many hi-hat notes there were, so the fills only come out the same with the rhythm still there
+    # (old_off says what was off).
+    hand, foot_pattern = _old_hand_tokens(hat_pattern, generic_hat)
+    if foot_only:                             # 0.9.7: the foot's own rows, else two and four (not on metal, hard rock)
+        has_foot = foot_pattern in ("style", "none") and groove_foot or foot_pattern == "g:pedal" or (
+            foot_pattern or "").startswith("v") and PEDAL in style_table(
+                style_key, max(1, min(pv.count("anvil", style_key), _number(foot_pattern[1:]) or 1)), base_tables)
+        if hat.get("steps") and _steps_of(hat["steps"], (PEDAL,)):
+            has_foot = True
+        if not has_foot:
+            foot_pattern = "g:pedal" if style_key not in OLD_HAT_FOOTLESS_STYLES else None
+    if not hat_on:
+        foot_pattern = None                   # the Closed hi-hat off: its foot was off with it (at foot only too:
+        #                                       the review of 24 Oct 2026; the foot came on by itself before)
+    opened = []
+    if True:
+        if open_pattern in ("style",) or open_pattern.startswith("v") and _number(open_pattern[1:]) is not None:
+            opened.append("o:" + open_pattern)
+        elif open_pattern.startswith("g:") and "open_" + open_pattern[2:] in generic_open:
+            opened.append("g:open_" + open_pattern[2:])
+        elif open_pattern == "none":
+            opened.append("o:none")           # (an Open hi-hat at None worked that out as a pattern of its own)
+        else:
+            opened.append("o:style")
+
+    new_hat = {key: value for key, value in hat.items()
+               if key not in ("on", "pattern", "steps", "foot_only", "for_hats", "level", "busy")}
+    tokens = hand + opened
+    if tokens:
+        # only the two pieces' own patterns are the Hi-hat's own: another with the same rows (a variation's that
+        # happens to be the same) was worked out as a pattern of its own, with random choices of its own and
+        # without the performance's hi-hat accents (the review of 24 Oct 2026; it was taken for the style's)
+        pattern = "+".join(tokens)
+        if tokens == ["c:style", "o:style"]:
+            pattern = "style"
+        elif tokens == ["o:none"]:
+            pattern = "none"
+        if pattern != "style":
+            new_hat["pattern"] = pattern
+        if "on" in hat and hat["on"] and pattern == "style":
+            new_hat["on"] = True
+    level = hat.get("level", LEVEL_DEFAULT) if hat_on or foot_only else open_hat.get("level", LEVEL_DEFAULT)
+    if level != LEVEL_DEFAULT:
+        new_hat["level"] = level
+    if open_on and open_hat.get("level", LEVEL_DEFAULT) != level:
+        new_hat["open_level"] = open_hat.get("level", LEVEL_DEFAULT)
+    busy = hat.get("busy", BUSY_DEFAULT) if hand else open_hat.get("busy", BUSY_DEFAULT)
+    if busy != BUSY_DEFAULT:
+        new_hat["busy"] = busy
+    if opened and open_hat.get("busy", BUSY_DEFAULT) != BUSY_DEFAULT:
+        new_hat["open_busy"] = open_hat.get("busy", BUSY_DEFAULT)   # (its own, under the old rules)
+    hat_steps = hat.get("steps") if isinstance(hat.get("steps"), dict) and hat["steps"].get("bars") else None
+    open_steps = (open_hat.get("steps") if isinstance(open_hat.get("steps"), dict) and open_hat["steps"].get("bars")
+                  else None)
+    steps = _merge_steps(_steps_of(hat_steps, (HAT,)), _steps_of(open_steps, (OPEN_HAT,)))
+    if steps is None and (hat_steps or open_steps):
+        steps = _silent_steps(hat_steps, open_steps)    # every step off: a hand-made silence, kept silent
+    if steps:
+        new_hat["steps"] = steps
+    # (at foot only, 0.9.7 kept only the foot's steps of the Closed hi-hat's, and none when it had none)
+    had = [name for name, found in (("hat", hat_steps and (not foot_only or _steps_of(hat_steps, (PEDAL,)))),
+                                    ("open", open_steps)) if found]
+    if had:
+        # which old piece the steps were made for, so under the old rules each is applied to that piece's sounds
+        # (players._KitPieces.finish; the review of 24 Oct 2026: the Open hi-hat's steps took the closed hi-hat's
+        # groove out too, and the Closed hi-hat's steps left the groove's foot playing)
+        new_hat["old_steps"] = "both" if len(had) == 2 else had[0]
+    if foot_only:
+        new_hat["on"] = False
+        new_hat["off_for"] = "ride"
+    elif not (hat_on or open_on):
+        new_hat["on"] = False
+    elif hat_on != open_on and (hand if not hat_on else opened):
+        new_hat["old_off"] = ("closed" if hat.get("on") is False else "closed_groove") if not hat_on else "open"
+        if "on" in hat or "on" in open_hat:
+            new_hat["on"] = True
+    if new_hat:
+        out["hat"] = new_hat
+
+    foot_steps = _steps_of(hat_steps, (PEDAL,)) if hat_on else None
+    if foot_steps is None and hat_steps and hat_on and foot_pattern is not None and not foot_only:
+        foot_steps = _silent_steps(hat_steps)         # (the Closed hi-hat's steps had no foot: the foot was silent)
+    pedal = {}
+    if foot_pattern is None and not foot_steps:
+        pedal["on"] = False
+    else:
+        if foot_pattern not in (None, "style"):
+            pedal["pattern"] = foot_pattern
+        if "on" in hat and hat["on"] and foot_pattern == "style" and groove_foot:
+            pedal["on"] = True                # (turned on by hand with a foot in the groove: it stays turned on)
+        if foot_only:
+            pedal["on"] = True                # (the foot's steps, or its pattern, played under the ride)
+        for key in ("level", "busy"):
+            default = LEVEL_DEFAULT if key == "level" else BUSY_DEFAULT
+            if hat.get(key, default) != default:
+                pedal[key] = hat[key]
+    if foot_steps:
+        pedal["steps"] = foot_steps
+        if not foot_only:
+            pedal.pop("on", None)
+    if pedal:
+        out["pedal"] = pedal
+
+    if "for_hats" in ride or (ride.get("pattern") or "").startswith(HAT_RHYTHM):
+        new_ride = {key: value for key, value in ride.items() if key != "for_hats"}
+        if (ride.get("pattern") or "").startswith(HAT_RHYTHM):
+            # "The hi-hat's rhythm" named the old Closed hi-hat's pattern, played with the groove's open hi-hat
+            # (0.9.7's hand_hat_row): the same as the Hi-hat's pattern made of those two
+            tokens = _old_hand_tokens(ride["pattern"][len(HAT_RHYTHM):], generic_hat)[0] + ["o:style"]
+            new_ride["pattern"] = HAT_RHYTHM + ("style" if tokens == ["c:style", "o:style"] else "+".join(tokens))
+        if ride.get("for_hats") and not _old_on(ride, bool(piece_rows(table, PIECE_BY_KEY["ride"])), rules):
+            new_ride["on"] = False            # ("for the hi-hats" only marked a ride that was off)
+            new_ride["off_for"] = "hat"
+        if new_ride:
+            out["ride"] = new_ride
+        else:
+            out.pop("ride", None)
+    return out
+
+
+def old_kit_levels_to_new(raw):
+    """A track's kit-piece loudness saved before 0.9.8: the Hi-hat pedal gets the Closed hi-hat's (it played the
+    foot), the Open hi-hat's is dropped (the Hi-hat's covers its open notes now)."""
+    if not isinstance(raw, dict) or "open_hat" not in raw and "pedal" in raw:
+        return raw
+    out = {key: value for key, value in raw.items() if key != "open_hat"}
+    if "hat" in raw and "pedal" not in raw:
+        out["pedal"] = raw["hat"]
+    return out
+
+
 def piece_settings(settings, piece_key):
     """Every setting of one piece (the defaults with what the region changed)."""
     piece = PIECE_BY_KEY[piece_key]
@@ -489,17 +741,19 @@ def piece_on(settings, piece_key, has_groove=True):
     """Whether a kit piece plays its groove (Russell, 21 Oct 2026: "if a kit piece is not in the groove ... those kit
     pieces are off"). As chosen when it was turned on or off by hand; otherwise on when it has something of its own
     to play: the variation's groove has it (has_groove), another pattern was chosen for it, it has hand-made steps,
-    or more ghost notes were asked of it. The Open hi-hat is off while the Closed hi-hat is at foot only (the hand is
-    on the ride, TAKES_TURNS). Off only takes a piece out of the groove: fills use the whole kit, and the crashes where a section starts
-    and after fills follow the crash's When setting (from rules 2; see players._KitPieces). The part is always on."""
+    or more ghost notes were asked of it. The Hi-hat pedal also plays by itself where its drummer keeps a foot going
+    (pedal_default_on). Off only takes a piece out of the groove: fills use the whole kit, and the crashes where a
+    section starts and after fills follow the crash's When setting (from rules 2; see players._KitPieces). The part
+    is always on."""
     piece = PIECE_BY_KEY[piece_key]
     if piece.kind == "part":
         return True
-    if piece_key == "open_hat" and foot_only(settings):
-        return False                                    # the hand is on the ride (TAKES_TURNS)
     stored = (settings.get("pieces") or {}).get(piece_key) or {}
     if "on" in stored:
         return bool(stored["on"])
+    if piece_key == "pedal" and not has_groove and stored.get("pattern", "style") == "style" and not stored.get(
+            "steps") and settings.get("style") in PEDAL_STYLES and settings.get("rules", 1) >= 4:
+        return True                                     # a quiet foot on two and four (PEDAL_STYLES)
     return bool(has_groove or stored.get("pattern", "style") not in ("style", "none") or stored.get("steps")
                 or stored.get("ghosts") == "more")      # more ghost notes: the snare plays them, groove or not
 
@@ -543,11 +797,14 @@ GENERIC = {
             ("quarters", "every beat", {HAT: (_row("x...x...x...x..."), 85, "")}),
             ("offbeats", "the and of every beat", {HAT: (_row("..x...x...x...x."), 85, "")}),
             ("332", "a three-three-two pattern", {HAT: (_row("x..x..x.x..x..x."), 84, "")}),
-            ("pedal", "the foot pedal on two and four", {PEDAL: (_row("....x.......x..."), 78, "")}),
-            ("disco", "disco sixteenths (open on the and of each beat)", {HAT: (_row("xxxxxxxxxxxxxxxx"), 74, "")})],
-    "open_hat": [("offbeats", "the and of every beat", {OPEN_HAT: (_row("..x...x...x...x."), 88, "")}),
-                 ("and_of_four", "the and of four", {OPEN_HAT: (_row("..............x."), 88, "")}),
-                 ("quarters", "every beat", {OPEN_HAT: (_row("x...x...x...x..."), 90, "")})],
+            ("disco", "disco sixteenths (open on the and of each beat)", {HAT: (_row("xxxxxxxxxxxxxxxx"), 74, "")}),
+            ("open_offbeats", "open on the and of every beat", {OPEN_HAT: (_row("..x...x...x...x."), 88, "")}),
+            ("open_and_of_four", "open on the and of four", {OPEN_HAT: (_row("..............x."), 88, "")}),
+            ("open_quarters", "open on every beat", {OPEN_HAT: (_row("x...x...x...x..."), 90, "")})],
+    # the foot (0.9.8): its first pattern is what the pedal plays by itself where the groove has no foot (pedal_rows)
+    "pedal": [("pedal", "the foot pedal on two and four", {PEDAL: (_row("....x.......x..."), 78, "")}),
+              ("beats", "the foot pedal on every beat", {PEDAL: (_row("x...x...x...x..."), 72, "")}),
+              ("one_three", "the foot pedal on one and three", {PEDAL: (_row("x.......x......."), 76, "")})],
     "toms": [("floor_eighths", "the floor tom in eighth notes", {TOM_FLOOR: (_row("x.x.x.x.x.x.x.x."), 80, "")}),
              ("floor_beats", "the floor tom on every beat", {TOM_FLOOR: (_row("x...x...x...x..."), 90, "")}),
              ("around", "a groove around the toms", {TOM_FLOOR: (_row("x.....x........."), 100, ""),
@@ -639,6 +896,17 @@ def drum_pattern_options(style_key, variation, piece_key, base_tables, kit_progr
             seen.add(_rows_key(rows))
             options.append(("v{}".format(number), words_at_tempo("Variation {}'s: {}".format(
                 number, rows_words(rows, kit_program)), rows)))
+    if piece_key == "hat" and chosen and chosen not in [key for key, _words in options] and (
+            "+" in chosen or chosen[:2] in ("c:", "o:")):
+        # the pattern a region saved before 0.9.8 keeps from its two hi-hat pieces (old_pieces_to_new), named for
+        # what it plays (the review of 24 Oct 2026: the window said "The pattern chosen before" and no more); it is
+        # listed while it is the choice, and Control+Z brings it back once another is chosen
+        rows = drum_pattern_rows(style_key, variation, piece_key, chosen, base_tables)
+        if rows is not None:
+            seen.add(_rows_key(rows))
+            words = "As the closed and open hi-hat pieces played it before: {}".format(
+                rows_words(rows, kit_program) if rows else "none in the groove")
+            options.insert(1, (chosen, words_at_tempo(words, rows)))
     if piece_key == "ride":
         # the hi-hat's rhythm on the ride (TAKES_TURNS): the variation's own when its hi-hat has one, and the one
         # chosen when it is another
@@ -668,6 +936,27 @@ def drum_pattern_rows(style_key, variation, piece_key, pattern, base_tables):
         return None
     if pattern == "none":
         return {}
+    if pattern.startswith(HAT_RHYTHM) and piece_key == "ride":
+        # (before the "+" below: the hi-hat's pattern after "h:" can be one of two parts)
+        return hat_rhythm_rows(style_key, variation, pattern[len(HAT_RHYTHM):], base_tables)
+    if "+" in pattern and piece_key == "hat":
+        # two rhythms at once (only from a region saved before 0.9.8, whose Closed hi-hat and Open hi-hat each had a
+        # pattern of their own, now one Hi-hat): the union of both
+        rows = {}
+        for part in pattern.split("+"):
+            found = drum_pattern_rows(style_key, variation, piece_key, part, base_tables)
+            if found is None:
+                found = piece_rows(style_table(style_key, variation, base_tables), piece)
+            rows.update(found)
+        return rows
+    if piece_key == "hat" and pattern[:2] in ("c:", "o:"):
+        # the closed (c:) or the open (o:) hi-hat alone of the groove ("c:style") or a variation ("o:v2"); only from
+        # a region saved before 0.9.8, where the two were separate pieces
+        voice = HAT if pattern[0] == "c" else OPEN_HAT
+        rows = drum_pattern_rows(style_key, variation, piece_key, pattern[2:], base_tables)
+        if rows is None:
+            rows = piece_rows(style_table(style_key, variation, base_tables), piece)
+        return {k: v for k, v in rows.items() if k == voice}
     if pattern.startswith("v") and _number(pattern[1:]) is not None:
         number = max(1, min(pv.count("anvil", style_key), _number(pattern[1:])))
         return piece_rows(style_table(style_key, number, base_tables), piece)
@@ -675,8 +964,6 @@ def drum_pattern_rows(style_key, variation, piece_key, pattern, base_tables):
         for key, _words, rows in GENERIC.get(piece_key, ()):
             if key == pattern[2:]:
                 return dict(rows)
-    if pattern.startswith(HAT_RHYTHM) and piece_key == "ride":
-        return hat_rhythm_rows(style_key, variation, pattern[len(HAT_RHYTHM):], base_tables)
     return None                     # an unknown pattern (from a newer version, say) plays the variation's own
 
 
@@ -810,19 +1097,24 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
     if piece.kind != "part":
         state = turn_state(settings, piece_key, has_groove)
         words.append(state)
-        if state == "off" and piece_key == "open_hat" and foot_only(settings) and piece_on(
-                dict(settings, pieces=dict(settings["pieces"], hat={})), piece_key, has_groove):
-            words.append("the ride keeps time")          # the hand is on the ride (TAKES_TURNS)
-        elif state == "off" and piece_key == "ride" and full["for_hats"]:
-            words.append("the hi-hats keep time")
+        if state == "off" and piece_key in TAKES_TURNS and full["off_for"]:
+            words.append("the {} keeps time".format(TURN_NAMES[full["off_for"]]))   # the other took its turn
         if not kit_voices(piece, kit_notes):
             words.append("not in this kit")
+    # a piece's pattern is said only while it plays (Russell, 24 Oct 2026: "Ride: off, the hi-hat keeps time", not
+    # "..., the hi-hat's rhythm"); a piece that is off says why, not what it would play
+    off = piece.kind != "part" and state == "off"
     if full["pattern"].startswith(HAT_RHYTHM) and piece_key == "ride":
-        words.append("the hi-hat's rhythm")
+        if not off:
+            words.append("the hi-hat's rhythm")
     elif full["pattern"] != "style":
-        words.append("pattern changed")
+        if not off:
+            words.append("pattern changed")
     elif piece.kind not in ("part", "crash") and not has_groove and not full["steps"] and kit_voices(piece, kit_notes):
-        words.append("in fills only" if piece.kind == "toms" else "not in this groove")
+        if piece_key == "pedal" and state == "on":
+            words.append("the foot on two and four")      # by itself (PEDAL_STYLES)
+        else:
+            words.append("in fills only" if piece.kind == "toms" else "not in this groove")
     if piece.kind == "crash":
         when = choice_words("when", full["when"])
         if full["when"] == "accents" and settings.get("follow") != "track":

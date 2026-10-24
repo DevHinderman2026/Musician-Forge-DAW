@@ -5,6 +5,11 @@ rhythm player follows.
 A region plays `loops` times in a row (1 means once). Loops set to 0 means "until the next
 region": it repeats until the next region on the track starts, or the song ends. A repeat never
 runs into the next region: whatever would land there is left out.
+
+A looping rhythm player region (0.9.8; Russell, 24 Oct 2026) leads back into its own first chord
+at the end of every repeat but the last, which leads into the chord where its playing stops:
+performance_for(track, region, lead_into=tick) gives those two versions (the same notes, for a
+player that does not lead into chords).
 """
 
 import math
@@ -54,13 +59,20 @@ def sounding_notes(song, track, performance_for):
     for index, region in enumerate(track.note_regions):
         if region.mute:
             continue
-        inside = [n for n in track.notes if region.start <= n.tick < region.end]
-        if region.player:
-            inside = sorted(inside + list(performance_for(track, region)), key=lambda n: (n.tick, n.pitch))
+        own = [n for n in track.notes if region.start <= n.tick < region.end]
+        inside = own
         count, stop = note_region_repeats(track, index, song_end)
+        looping = None
+        if region.player:
+            inside = sorted(own + list(performance_for(track, region) if count == 1 else
+                                       performance_for(track, region, lead_into=stop)),
+                            key=lambda n: (n.tick, n.pitch))
+            if count > 1:
+                looping = sorted(own + list(performance_for(track, region, lead_into=region.start)),
+                                 key=lambda n: (n.tick, n.pitch))
         for k in range(count):
             shift = k * region.length
-            for note in inside:
+            for note in (looping if looping is not None and k < count - 1 else inside):
                 tick = note.tick + shift
                 if tick >= stop:
                     break

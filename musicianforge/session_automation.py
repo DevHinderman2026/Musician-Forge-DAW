@@ -122,6 +122,10 @@ class AutomationMixin:
         """Add a point (or change the one at `replacing`). Returns its place in the lane."""
         track, lane = self._lane(track_id, lane_index)
         tl = self.song.timeline
+        if int(bar) < 1:
+            # (a point before bar 1 was saved and then silently dropped when the project was opened again; the
+            # review, 24 Oct 2026)
+            raise ValueError("A point must be at bar 1 or later")
         beats = tl.time_signature_at_bar(int(bar)).numerator
         if not 1.0 <= float(beat) < beats + 1.0:
             raise ValueError("Bar {} has {} beats, so the beat must be from 1 to {}".format(bar, beats, beats))

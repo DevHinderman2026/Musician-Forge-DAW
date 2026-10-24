@@ -13,7 +13,7 @@ import logging
 import wx
 
 from .. import __version__, projects
-from .common import note_text, say_after, show_items, silence_name
+from .common import enable_keeping_focus, note_text, say_after, show_items, silence_name
 
 log = logging.getLogger("musicianforge.ui")
 
@@ -100,8 +100,10 @@ class StartFrame(wx.Frame):
         self.paths = self.settings.recent_projects() if self.settings is not None else []
         items = [describe_recent(p) for p in self.paths] or [NO_RECENT]
         show_items(self.recent_list, items, min(select, len(items) - 1))
-        self.open_recent_button.Enable(bool(self.paths))
-        self.remove_button.Enable(bool(self.paths))
+        # dimmed while one has the focus (Open on a project whose file has gone: the list drops it), Windows would
+        # move the focus on by itself, unannounced: it goes to New project first, as after Remove from list
+        for button in (self.open_recent_button, self.remove_button):
+            enable_keeping_focus(button, bool(self.paths), self.new_button)
 
     def present(self):
         """Show the start screen and put the keyboard focus somewhere useful."""

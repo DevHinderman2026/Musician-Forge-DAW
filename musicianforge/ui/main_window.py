@@ -50,8 +50,8 @@ from ..outputwatch import OutputWatch
 from ..song import MAX_TRACKS, NO_TRACK_YET, Instrument, SongFileError
 from ..session import default_song_file_name
 from ..timeline import TimelineError, format_number
-from .common import (SAY_AFTER_MS, ask_yes_no, ask_yes_no_cancel, fit_to_screen, focused_window, list_target,
-                     say_after, show_error, show_info, show_items, silence_name)
+from .common import (SAY_AFTER_MS, ask_yes_no, ask_yes_no_cancel, enable_keeping_focus, fit_to_screen, focused_window,
+                     list_target, say_after, show_error, show_info, show_items, silence_name)
 from .dialogs import (AudioSettingsDialog, ChangesDialog, EventListDialog, ExportAudioDialog, GoToBarDialog,
                       InstrumentDialog, MidiImportDialog, NewSongDialog, NewTrackDialog, OpenProjectDialog,
                       PreferencesDialog, QuantizeDialog,
@@ -1266,8 +1266,10 @@ class MainFrame(wx.Frame):
                              (self.write_check, self.session.automation_write)):
             if check.GetValue() != value:
                 check.SetValue(value)
-        self.mute_check.Enable(track is not None)
-        self.solo_check.Enable(track is not None)
+        # dimmed while one has the focus (Control+Z taking back the only track, say), Windows would move the focus
+        # on by itself, unannounced: it goes to the Tracks list first (screen reader audit B3)
+        enable_keeping_focus(self.mute_check, track is not None, self.track_list)
+        enable_keeping_focus(self.solo_check, track is not None, self.track_list)
         self._sync_keyboard_controls()
 
     def refresh_title(self):
@@ -2326,15 +2328,25 @@ class MainFrame(wx.Frame):
         """Alt+Enter in the Regions list: trim a region's start and end, and loop it."""
         s = self.session
         tid, index = self._need_region()
+        def apply():
+            # the trim is made here, inside ask_values: a trim the song refuses (it would overlap the next region,
+            # say) brings the same window back with everything typed still in it, instead of closing it and losing
+            # the bars typed (the review of 24 Oct 2026). Quietly: the Regions list reads the region's new words
+            # when the focus comes back to it, as for a recording's settings (not said twice).
+            start, end, loops = dlg.get_values()
+            new_index = index
+            if start is not None:
+                new_index = s.trim_region(tid, index, start, end, speak=False)
+            return new_index, loops
+
         with RegionSettingsDialog(self, s, tid, index) as dlg:
-            values = self.ask_values(dlg, dlg.get_values)
+            values = self.ask_values(dlg, apply)
         if values is None:
             return
-        start, end, loops = values
-        if start is not None:
-            index = s.trim_region(tid, index, start, end)
+        index, loops = values
         if loops != s.region_loops(tid, index):
-            s.set_region_loops(tid, index, loops)
+            with s.pressed("window"):       # said after the list has read the region (the window has just closed)
+                s.set_region_loops(tid, index, loops)
         self.select_region_in_list(index)
         self.region_list.SetFocus()
 
@@ -2907,13 +2919,16 @@ time (kick and snare), ghost notes, their loudness and a rim click (snare), how 
 which crash comes, which ride and its bell. Each piece plays only its own sounds. Each kit piece's loudness is in
 the drummer track's Track settings (Alt+Enter): a slider for each piece, 50 as the drummer plays it, 100 the loudest,
 0 silent.
-On the rock, hard rock, metal, jazz, funk and pop drummers one hand keeps time on one cymbal: turning
-the ride on moves the hand from the hi-hats (the Closed hi-hat plays its foot pedal only, "foot only", and the Open
-hi-hat stops; on metal and hard rock there is no hi-hat foot, so the hi-hats are off); a ride with nothing of its own
-to play takes over the hi-hat's rhythm. A fill takes both hands: from its first note to the end of the bar the ride
-and the hi-hats stop, and the kick and the hi-hat's foot keep going. Turning a hi-hat on turns the
-ride off. Turning the ride off brings the hi-hats back, and turning off the hi-hat that took the ride's place brings
-the ride back. Each is one undo step.
+The Hi-hat is the hand on the hi-hat (its closed and open sounds; How open the hi-hat is sets which); the Hi-hat
+pedal is the foot, a piece of its own with its own on and off (on by itself in jazz, funk and pop; off in rock, hard
+rock, metal and the drum machines until you turn it on, when it plays the foot on two and four). On the rock, hard
+rock, metal, jazz, funk and pop drummers one hand keeps time on one cymbal, so the Ride and the Hi-hat take turns:
+turning the Ride on turns the Hi-hat off ("Ride on, hi-hat off"), and turning the Hi-hat on turns the Ride off
+("Hi-hat on, ride off"). Turning the Ride off by hand brings the Hi-hat back if the Ride had turned it off, and
+turning the Hi-hat off brings the Ride back if the Hi-hat had turned it off. The Ride's window and the Hi-hat's each
+have the other's Play check box too. The Hi-hat pedal takes no part in this. A ride with nothing of its own to play
+takes over the hi-hat's rhythm. A fill takes both hands: from its first note to the end of the bar the Ride and the
+Hi-hat stop, and the kick and the Hi-hat pedal keep going. Each is one undo step.
 Above 120 beats a minute the ride
 plays no runs of sixteenth notes (its eighth notes stay; those patterns leave the Pattern list there); the hi-hat keeps
 its sixteenth notes at any tempo. A part has the chord track on or off, an octave, a note length, the root

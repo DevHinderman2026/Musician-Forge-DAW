@@ -175,8 +175,37 @@ MAX_PERFORMANCE = 2 ** 53 - 1
 # its hand-made steps' first bar; an empty chord track is one chord change per change of key, not one per bar; the
 # Forge Dubstep and Trap kits crash after a fill instead of playing their reverse-cymbal swell). A region saved before
 # has no "rules", so it keeps 1 until it is changed in the editor (session_music.py); a region with 2 keeps 2 the same
-# way; new regions get 3.
-RULES = 3
+# way; 4: from 0.9.8 (24 Oct 2026: the Hi-hat pedal plays by itself in funk and pop; the melodic players' fixes of
+# 0.9.8, see rules_4). New regions get 4.
+RULES = 4
+
+
+def rules_4(settings):
+    """The fixes of 0.9.8 (RULES): only for regions made or changed since."""
+    return settings.get("rules", 1) >= 4
+
+
+def to_todays_rules(settings):
+    """A region changed by hand plays by today's rules (RULES). What only the old rules read goes with it: the
+    Hi-hat's "old_off" (pp.old_pieces_to_new; which of a region's two old hi-hat pieces was off) becomes the
+    pattern itself, keeping only the part that played."""
+    settings["rules"] = RULES
+    hat = (settings.get("pieces") or {}).get("hat")
+    if isinstance(hat, dict):
+        hat.pop("open_busy", None)              # (the Open hi-hat's own Complexity: the one Hi-hat has one)
+        hat.pop("old_steps", None)              # (whose steps they were: the one Hi-hat's now)
+    if isinstance(hat, dict) and hat.get("old_off"):
+        gone = hat.pop("old_off")
+        pattern = hat.get("pattern", "style")
+        tokens = ["c:style", "o:style"] if pattern == "style" else ([] if pattern == "none" else pattern.split("+"))
+        opened = [t for t in tokens if t.startswith("o:") or t.startswith("g:open_")]
+        kept = [t for t in tokens if (t in opened) == gone.startswith("closed")]
+        if kept:
+            hat["pattern"] = "+".join(kept)
+        else:
+            hat.pop("pattern", None)
+            hat["on"] = False
+    return settings
 
 
 def new_rules(settings):
@@ -1076,6 +1105,7 @@ class _KitPieces:
             for p in pp.DRUM_PIECES:
                 self.full[p.key]["on"] = pp.piece_on(settings, p.key, bool(pp.piece_rows(table, p)))
         # with every piece at its default, soft playing still goes to the rim and hard playing still opens the hi-hat
+        # (and a Hi-hat pedal playing by itself, pp.pedal_rows, is custom rows of its own: see below)
         self.active = (any(self.full[key] != pp.DRUM_DEFAULTS for key in self.full) or self.rim
                        or self.openness != "closed" or bool(self.mix))
         self.voices = {p.key: set(p.voices) for p in pp.DRUM_PIECES}
@@ -1087,16 +1117,21 @@ class _KitPieces:
                 self.custom[piece.key] = (rows, True)
             elif full["busy"] != pp.BUSY_DEFAULT:
                 self.custom[piece.key] = (pp.piece_rows(table, piece), False)
-        # the riding hand has left the hi-hats (pp.TAKES_TURNS, 0.9.7): the Closed hi-hat plays its pedal only, the
-        # foot on two and four when its rhythm has none (Russell: "keep the foot playing"), and the Open hi-hat is off
-        self.foot_only = self.full["hat"]["foot_only"]
-        if self.foot_only:
-            rows = self.custom.get("hat", (pp.piece_rows(table, pp.PIECE_BY_KEY["hat"]), False))[0]
-            pedal = {voice: entry for voice, entry in rows.items() if voice == PEDAL}
-            # metal and hard rock: no foot under the ride unless you gave the hi-hat one (pp.NO_HAT_FOOT_STYLES)
-            foot = dict(FOOT_ON_TWO_AND_FOUR) if style_key not in pp.NO_HAT_FOOT_STYLES else {}
-            self.custom["hat"] = (pedal or foot, True)
-            self.full["open_hat"]["on"] = False
+        # the Hi-hat pedal by itself (0.9.8, pp.pedal_rows): the groove's foot, or the foot on two and four on the
+        # drummers that keep one under the ride (pp.PEDAL_STYLES, from rules 4); nothing where there is none
+        if "pedal" not in self.custom and self.full["pedal"]["pattern"] == "style" and self.full["pedal"]["on"]:
+            rows = pp.pedal_rows(settings, _DRUM_STYLES)
+            if rows and not pp.piece_rows(table, pp.PIECE_BY_KEY["pedal"]):
+                self.custom["pedal"] = (rows, True)
+        self.active = self.active or bool(self.custom)
+        # a piece's own rhythm is worked out with random choices of its own (_rng(piece key)); which sounds share
+        # one piece's choices is the piece list's (custom_voices and custom_busy say otherwise for the two old
+        # hi-hat pieces of a region from before 0.9.8, _old_hat_pieces)
+        self.custom_voices = {}
+        self.custom_busy = {}
+        self.old_hat_own = None      # (rules 1 to 3: whether the old Closed hi-hat plays the style's own pattern)
+        if not rules_4(settings):
+            self._old_hat_pieces(table, settings)
         self.section_starts = list(section_starts or ())
         self.follow = follow
         self.accent_ticks = [h.tick for h in accents(hits_in) if h.weight >= 0.75] if follow else []
@@ -1104,6 +1139,60 @@ class _KitPieces:
 
     def _rng(self, name, bar):
         return random.Random(_piece_seed(self.settings, name, bar.index))
+
+    def _old_hat_pieces(self, table, settings):
+        """A region from before 0.9.8 (rules 1 to 3) plays its hi-hats exactly as it did: its Closed hi-hat (the
+        closed hi-hat and the foot pedal, seeded "hat") and its Open hi-hat (seeded "open_hat") were two pieces,
+        each working out its own rhythm, where today's Hi-hat (closed and open) and Hi-hat pedal are
+        (pp.old_pieces_to_new keeps each old piece's rhythm as part of the new ones). This puts the custom rows
+        back into those two groups, so the same random choices fall on the same notes."""
+        hat, pedal = self.full["hat"], self.full["pedal"]
+        pattern = hat["pattern"]
+        # ("none": both old pieces at None, each worked out as a pattern of its own with nothing in it)
+        tokens = ["c:style", "o:style"] if pattern == "style" else (["o:none"] if pattern == "none"
+                                                                     else pattern.split("+"))
+        opened = [t for t in tokens if t.startswith("o:") or t.startswith("g:open_")]
+        closed = [t for t in tokens if t not in opened]
+        style_key, variation = settings["style"], settings["variation"]
+
+        def rows_of(parts, piece_key):
+            rows = pp.drum_pattern_rows(style_key, variation, piece_key, "+".join(parts), _DRUM_STYLES)
+            return {} if rows is None else rows
+
+        self.custom.pop("hat", None)
+        self.custom.pop("pedal", None)
+        # whether the old Closed hi-hat played the style's own pattern with no steps of its own (the performance's
+        # hi-hat accents go on it then, _performance_touches; the old Open hi-hat's pattern and steps did not count)
+        self.old_hat_own = (closed == ["c:style"] and pedal["pattern"] == "style"
+                            and hat.get("old_steps") not in ("hat", "both"))
+        if pattern.startswith(pp.HAT_RHYTHM):
+            return
+        # (0.9.7's "foot only", now Hi-hat off for the ride: its Closed hi-hat played the foot alone, as another
+        # pattern, so the closed hi-hat's own rows are left out and the group counts as a pattern of its own)
+        foot_only = hat.get("off_for") == "ride" and not hat["on"]
+        other = closed != ["c:style"] or pedal["pattern"] != "style" or foot_only   # (no hand: its foot alone)
+        # the old Closed hi-hat's Complexity: the Hi-hat's where the hand's part is in it, else it went to the pedal
+        # (pp.old_pieces_to_new gave the Hi-hat the Open hi-hat's then)
+        busy = hat["busy"] if closed else pedal["busy"]
+        if other or busy != pp.BUSY_DEFAULT:
+            rows = {}
+            if closed and not foot_only:      # (a hat off by hand still worked its pattern out before leaving it out)
+                rows.update(rows_of(closed, "hat") if closed != ["c:style"] else
+                            {k: v for k, v in table.items() if k == HAT})
+            if pedal["on"]:
+                rows.update(rows_of([pedal["pattern"]], "pedal") if pedal["pattern"] != "style" else
+                            {k: v for k, v in table.items() if k == PEDAL})
+            self.custom["hat"] = (rows, other)
+            self.custom_voices["hat"] = {HAT, PEDAL}
+            self.custom_busy["hat"] = busy
+        # the old Open hi-hat: another pattern, or its own Complexity (pp "open_busy") on the groove's open hi-hat
+        open_busy = hat.get("open_busy", -1)
+        if opened and (opened != ["o:style"] or open_busy not in (-1, pp.BUSY_DEFAULT)):
+            other_open = opened != ["o:style"]
+            self.custom["open_hat"] = (rows_of(opened, "hat") if other_open else
+                                       {k: v for k, v in table.items() if k == OPEN_HAT}, other_open)
+            self.custom_voices["open_hat"] = {OPEN_HAT}
+            self.custom_busy["open_hat"] = open_busy if open_busy != -1 else pp.BUSY_DEFAULT
 
     def ghost_loudness(self, hits):
         """The snare's ghost notes at their own loudness (Russell, 10 Oct 2026: "an intensity slider for those ghost
@@ -1126,16 +1215,17 @@ class _KitPieces:
         if not self.active:
             return hits
         for piece_key, (rows, other_pattern) in self.custom.items():
-            voices = self.voices[piece_key]
+            voices = self.custom_voices.get(piece_key, self.voices.get(piece_key, ()))
             dropped = (GROOVE, ROW_GHOST, ROLL, BLAST) if other_pattern else (GROOVE, ROW_GHOST)
             hits = [h for h in hits if not (h[1] in voices and h[3] in dropped)]
-            busy = self.full[piece_key]["busy"]
+            busy = self.custom_busy.get(piece_key, self.full[piece_key]["busy"] if piece_key in self.full
+                                        else pp.BUSY_DEFAULT)
             complexity = pp.busy_complexity(self.settings["complexity"], busy) / 100.0
             rng = self._rng(piece_key, bar)
             mine = _table_hits(bar, rows, self.settings, rng, complexity)
             if busy != pp.BUSY_DEFAULT and new_rules(self.settings):
                 mine = _piece_density(bar, mine, rows, busy, rng, self.settings["intensity"],
-                                      kick=pp.PIECE_BY_KEY[piece_key].kind == "kick")
+                                      kick=piece_key == "kick")
             hits += mine
         snare = self.full["snare"]
         if snare["ghosts"] == "none":
@@ -1196,22 +1286,51 @@ class _KitPieces:
         crash = full["crash"]
         if crash["when"] != "start_and_fills":
             hits = self._crash_when(bar, hits, crash["when"], fill_bars)
+        old_steps = full["hat"].get("old_steps") if not rules_4(self.settings) and not self.for_steps else ""
+        if old_steps:
+            # a region from before 0.9.8 with hand-made steps on its Closed hi-hat (the closed hi-hat and the foot)
+            # or its Open hi-hat (pp old_steps): each old piece's steps replace that piece's sounds, as they did (a
+            # set with nothing in it is a hand-made silence). The Step pattern view shows today's pieces instead.
+            hat_steps, pedal_steps = full["hat"]["steps"], full["pedal"]["steps"]
+            if old_steps in ("hat", "both"):
+                group = pp._merge_steps(pp._steps_of(hat_steps, (HAT,)), pedal_steps)
+                hits = self._hand_made(bar, hits, {HAT, PEDAL},
+                                       group or pp._silent_steps(hat_steps, pedal_steps or {"bars": [[]]}),
+                                       fill_start, thinned)
+            if old_steps in ("open", "both"):
+                group = pp._steps_of(hat_steps, (OPEN_HAT,))
+                hits = self._hand_made(bar, hits, {OPEN_HAT}, group or pp._silent_steps(hat_steps or {"bars": [[]]}),
+                                       fill_start, thinned)
+        old_off = full["hat"].get("old_off") if not rules_4(self.settings) else ""
+        if old_off and full["hat"]["on"]:
+            # a region from before 0.9.8 with one of its two hi-hat pieces off (pp old_off): those notes go
+            voices = {HAT} if old_off.startswith("closed") else {OPEN_HAT}
+            hits = [h for h in hits if h[1] not in voices or (self.groove_only and h[3] in OUTSIDE_THE_GROOVE)]
         for piece in pp.DRUM_PIECES:
             settings, voices = full[piece.key], self.voices[piece.key]
             if not settings["on"]:
-                hits = [h for h in hits if h[1] not in voices or (self.groove_only and h[3] in OUTSIDE_THE_GROOVE)]
+                # (the silent pedal note that closes a half-open hi-hat is the hi-hat's, not the pedal's: it stays
+                # while the hi-hat plays, whatever the pedal does)
+                hits = [h for h in hits if h[1] not in voices or (self.groove_only and h[3] in OUTSIDE_THE_GROOVE)
+                        or (piece.key == "pedal" and h[3] == CHOKE and full["hat"]["on"])]
                 continue
-            steps = settings["steps"]
-            if steps and piece.key == "hat" and self.foot_only:      # the foot's steps only (the pedal)
-                steps = {"bars": [[s for s in pattern if s[2] == PEDAL] for pattern in steps["bars"]]}
-                steps = steps if any(steps["bars"]) else None
+            steps = settings["steps"] if not (old_steps and piece.key in ("hat", "pedal")) else None
             if steps:
-                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned)
-            if settings["level"] != pp.LEVEL_DEFAULT:
+                roll_sounds = ({h[1] for h in hits if h[1] in voices and h[3] == ROLL} if rules_4(self.settings)
+                               else None)
+                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned, roll_sounds)
+            # a region saved before 0.9.8 whose Open hi-hat had a loudness of its own keeps it for the hi-hat's open
+            # notes (pp open_level; -1: the hi-hat's own level)
+            open_level = settings.get("open_level", -1) if piece.key == "hat" else -1
+            # (an old piece that was off had no loudness: what it still plays, a fill's or a build's notes, stays as
+            # it is, as it did)
+            was_off = (HAT if old_off.startswith("closed") else OPEN_HAT) if old_off and piece.key == "hat" else None
+            if settings["level"] != pp.LEVEL_DEFAULT or open_level not in (-1, pp.LEVEL_DEFAULT):
                 scaled = []
                 for h in hits:
-                    if h[1] in voices and h[3] != HAND:
-                        velocity = pp.level_velocity(h[2], settings["level"])
+                    if h[1] in voices and h[3] != HAND and h[1] != was_off:
+                        level = open_level if h[1] == OPEN_HAT and open_level != -1 else settings["level"]
+                        velocity = pp.level_velocity(h[2], level)
                         if velocity is None:
                             continue                     # loudness 0: silent
                         h = (h[0], h[1], velocity, h[3])
@@ -1237,7 +1356,8 @@ class _KitPieces:
         if full["ride"]["bell"]:
             hits = [(h[0], RIDE_BELL, h[2], h[3]) if h[1] in (RIDE, pp.RIDE2) and h[0] == int(h[0])
                     and int(h[0]) in bar.beats else h for h in hits]
-        offbeats = hat["open_offbeats"] or hat["pattern"] == "g:disco"     # disco sixteenths open their offbeats
+        # disco sixteenths open their offbeats (in an older region's pattern of two parts too, "g:disco+o:style")
+        offbeats = hat["open_offbeats"] or "g:disco" in hat["pattern"].split("+")
         if hat["on"] and (self.openness != "closed" or offbeats):
             # half open by intensity keeps the full loudness: playing harder never makes a hit softer
             hits = self._open_hats(bar, hits, dict(hat, openness=self.openness, open_offbeats=offbeats,
@@ -1345,19 +1465,22 @@ class _KitPieces:
         return out
 
     @staticmethod
-    def _hand_made(bar, hits, voices, steps, fill_start, thinned=()):
+    def _hand_made(bar, hits, voices, steps, fill_start, thinned=(), roll_sounds=None):
         """The piece's own steps instead of what the style plays. What comes on top by itself stays: fills, rolls,
         crashes where the region starts and after fills, kicks on chord changes and on the followed track's hits. In a
         bar with a fill, the fill takes over from where it starts, except the sounds the style keeps playing through
         a fill (the kick, the hi-hats, the ride and the shaker); a trap hi-hat roll takes over the two steps it
-        fills."""
+        fills, from the steps of its own sound (roll_sounds; rules 4: an open hi-hat set by hand there stays, as it
+        did when the open hi-hat was a piece of its own) or of every sound of the piece (None: before rules 4)."""
         kept = [h for h in hits if h[1] not in voices or h[3] in (FILL, ROLL, CHOKE) + OVERLAYS]
         rolls = [h[0] for h in hits if h[1] in voices and h[3] == ROLL]
         rolled = (min(rolls), min(rolls) + 2) if rolls else (0, 0)
+        if roll_sounds is None:
+            roll_sounds = voices
         pattern = steps["bars"][bar.pattern_index % len(steps["bars"])]
         kept += [(step, sound, velocity, HAND) for step, velocity, sound in pattern
                  if (fill_start is None or step < fill_start or sound in FILL_KEEPS) and (step, sound) not in thinned
-                 and not rolled[0] <= step < rolled[1]]
+                 and not (rolled[0] <= step < rolled[1] and sound in roll_sounds)]
         return kept
 
 
@@ -1368,8 +1491,6 @@ OVERLAYS = (ACCENT, CHORD_KICK, FOLLOWED)    # what comes on top of a piece's st
 OUTSIDE_THE_GROOVE = (FILL, ACCENT, CHOKE)    # what a piece that is off still plays (rules 2): fills, crashes and the
                                               # pedal closing a half-open hi-hat of a build
 FILL_KEEPS = (KICK, HAT, OPEN_HAT, RIDE, PEDAL, SHAKER, FORGE_SHAKER)   # what keeps playing through a fill
-# the Closed hi-hat at foot only with no pedal of its own: the foot on two and four (player_pieces' "pedal" pattern)
-FOOT_ON_TWO_AND_FOUR = dict(next(rows for key, _words, rows in pp.GENERIC["hat"] if key == "pedal"))
 
 
 # A drummer has two hands (Russell, 10 Oct 2026: "a drummer doesn't play a hi-hat and a crash cymbal at the same time
@@ -1520,16 +1641,21 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
     rules_now = new_rules(settings)
     chosen_intensity = settings["intensity"]
     builds_at_all = rules_now and style_key in HAT_BUILD_STYLES and chosen_intensity < 100 and not for_steps
-    # no hi-hat playing (turned off by hand): nothing to build (Russell); a groove with no hi-hat of its own (riding
-    # the ride, say) still builds on it, as it did before its hi-hat was said to be off when not in the groove
-    # (nor when the riding hand has left the hi-hats: the Closed hi-hat at foot only, 0.9.7)
-    builds_at_all = builds_at_all and pp.piece_settings(settings, "hat")["on"] and not kit.foot_only
+    # no hi-hat playing (turned off by hand, or off for the ride): nothing to build (Russell); a groove with no hi-hat
+    # of its own still builds on it, as it did before its hi-hat was said to be off when not in the groove
+    builds_at_all = builds_at_all and pp.piece_settings(settings, "hat")["on"]
+    if kit.old_hat_own is not None and pp.piece_settings(settings, "hat").get("old_off") == "closed":
+        builds_at_all = False       # (rules 1 to 3: the old Closed hi-hat was off, and it was the one that built)
     builds_up = (builds_at_all and next_intensity is not None and next_intensity - chosen_intensity >= BUILD_RISE)
     if rules_now:
         settings = dict(settings, intensity=drum_intensity(settings["intensity"]))   # how hard the notes are played
     kit.settings = settings
     rules3 = rules_3(settings)
     changing = _changes_only(chord_spans) if rules3 else chord_spans
+    if rules_4(settings):
+        # a chord change off the grid is heard at the next sixteenth (_changes_on_the_grid, as the bass, keys,
+        # synth and guitar play it), so the kick on it lands there too instead of nowhere
+        changing = _changes_only(_changes_on_the_grid(chord_spans, bars))
     notes = []
     fill_bars = []
     followed = accents(hits_in) if follow else []
@@ -1540,6 +1666,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         if rules_now and style_key in LIVE_DRUMMER_STYLES:
             # only on pieces still playing the style's own pattern: a pattern chosen or steps made by hand stay as set
             own = lambda key: kit.full[key]["pattern"] == "style" and not kit.full[key]["steps"]  # noqa: E731
+            if kit.old_hat_own is not None:         # rules 1 to 3: as the old Closed hi-hat was (_old_hat_pieces)
+                own = lambda key, was=own: kit.old_hat_own if key == "hat" else was(key)  # noqa: E731
             hits = _performance_touches(bar, hits, hat_accents if own("hat") else HAT_ACCENTS[0],
                                         pickups if own("kick") and kit.full["kick"]["busy"] >= pp.BUSY_DEFAULT
                                         else 0.0, kit.rng_named("touches", bar), settings["intensity"],
@@ -2030,6 +2158,24 @@ def _fifth(intervals):
     return 7 if 7 in intervals else (intervals[2] if len(intervals) > 2 else 7)
 
 
+def _bass_run(target, left, up, key_notes):
+    """Rules 4 (the second review, 24 Oct 2026): the note of a bass fill run `left` notes before the coming root
+    `target`: the last a half step from it, each before that the next note of the key further away, so the run walks
+    one way into the root (D E F F sharp G from below, C B A A flat G from above). Before, every note of the run was
+    an approach note chosen again at random (a half step or a whole step from the root), so a run of eight was F
+    sharp, E, F sharp, F sharp, F, G sharp, F: a jitter around the root, not a run. The run stays inside the bass's
+    range (_pitches): a run from below that would go under its lowest note comes from above instead, and failing both,
+    the run moves an octave."""
+    classes = key_notes or frozenset(range(12))
+    step = -1 if up else 1
+    note = target + step
+    for _k in range(left - 1):
+        note += step
+        while note % 12 not in classes:
+            note += step
+    return note
+
+
 def _chord_tone(change, sound, low):
     """The root, third, fifth or octave of a chord, from its root at or above `low`."""
     intervals = change.intervals()
@@ -2109,9 +2255,26 @@ def _pitches(player, role, change, next_change, state, rng, settings, ahead=None
         # rules 3 (the review, 23 Oct 2026): an approach note leads into the chord on the next beat (at the end of a
         # bar, the next bar's), not into the next chord change however far off it is
         next_change = ahead.get("beat") or next_change
-    if new and player == "bellows" and ahead.get("change_here") and role in ("fifth", "third", "walk", "approach",
-                                                                             "lead"):
+    if new and player == "bellows" and ahead.get("change_here") and (role in ("fifth", "third", "walk", "approach",
+                                                                              "lead") or role.startswith("run:")):
         role = "root"                      # rules 3: a chord change starts on this note: the bass plays its root
+    if role.startswith("run:") and player == "bellows":
+        # rules 4 (the second review, 24 Oct 2026): a fill run walks into the coming root (_bass_run)
+        low, high = (24, 40) if settings["style"] in ("dubstep", "trap") else (28, 43)
+        target = _in_range((ahead.get("bar") or change).bass_class(), low, high)
+        left = int(role[4:])
+        if left >= state.get("run_left", 0):          # a new run: from below mostly, from above now and then
+            up = rng.random() < 0.7
+            first = _bass_run(target, left, up, ahead.get("key"))
+            if not low <= first <= high + 7:          # the whole run inside the bass's range: from the other side
+                other = _bass_run(target, left, not up, ahead.get("key"))
+                if low <= other <= high + 7:
+                    up, first = not up, other
+            state["run_up"] = up
+            state["run_shift"] = _fold(first, low, high + 7) - first      # (failing both, the run an octave over)
+        state["run_left"] = left
+        note = _bass_run(target, left, state["run_up"], ahead.get("key")) + state.get("run_shift", 0)
+        return [_fold(note, low, high + 7)]
     if role == "lead":                     # a half step from the note on the next beat, leading into it
         target_chord = ahead.get("beat") or change
         if player == "bellows":
@@ -2232,6 +2395,55 @@ def _changes_only(chord_spans):
     return out
 
 
+def _changes_on_the_grid(chord_spans, bars):
+    """Rules 4 (the audit, 24 Oct 2026): the chord spans with every chord change after the region's start moved up
+    to the next sixteenth of its bar. A change off the grid (beat 1.21, say) cut the notes it changed under to a blip
+    and nothing was struck again, so the rest of the bar was silent: the players only strike on sixteenths. Two
+    changes inside one sixteenth: the later one plays. The first span starts where the region does, as it was."""
+    if len(chord_spans) < 2:
+        return chord_spans
+    starts = [chord_spans[0][0]]
+    for start, _end, _change in chord_spans[1:]:
+        bar = next((b for b in bars if b.start <= start < b.end), None)
+        if bar is not None:
+            # (never past the bar's end: a bar shorter than its sixteenths, 3/32 say, is 360 ticks, and a change
+            # 300 ticks into it would have landed 120 ticks into the next bar, off its grid, so never struck)
+            start = min(bar.end, bar.start + STEP * -(-(start - bar.start) // STEP))
+        starts.append(start)
+    end = chord_spans[-1][1]
+    out = []
+    for k, (start, (_start, _end, change)) in enumerate(zip(starts, chord_spans)):
+        stop = starts[k + 1] if k + 1 < len(starts) else end
+        if stop > start and start < end:
+            if out and out[-1][1] > start:
+                out[-1] = (out[-1][0], start, out[-1][2])
+            out.append((start, min(stop, end), change))
+    for k in range(len(out) - 1):          # each span ends where the next kept one starts
+        out[k] = (out[k][0], out[k + 1][0], out[k][2])
+    return out
+
+
+def _chord_after_the_region(chord_spans, chord_changes, end, lead_into=None, timeline=None):
+    """Rules 4 (the audit, 24 Oct 2026): a span for the chord in effect where the region ends, when it is another
+    chord, so the last bar leads into it (a passing note, a bass run, a pad pushing the next chord in early) instead
+    of into the region's own last chord again. The span starts at the region's end, so nothing plays it.
+    lead_into: the tick whose chord that is (None: the region's end; a looping region's own start, say). timeline:
+    where the chord track has no chord there (before its first chord, or empty), the key's own chord of that bar, as
+    the players play it (the second review, 24 Oct 2026: a looping region starting before the first chord led into
+    its own last chord again instead of back into the key's chord it starts on)."""
+    tick = end if lead_into is None else lead_into
+    after = chordtrack.chord_at(chord_changes, tick)
+    if after is None and timeline is not None:
+        there = chordtrack.spans(chord_changes, tick, tick + 1, timeline)
+        after = there[0][2] if there else None
+    if after is None or not chord_spans:
+        return chord_spans
+    last = chord_spans[-1][2]
+    if (after.root % 12, after.quality, after.bass) == (last.root % 12, last.quality, last.bass):
+        return chord_spans
+    return chord_spans + [(end, end + STEP, after)]
+
+
 def _passing_notes(bar, events, chord_spans):
     """A short note into each chord change, a sixteenth before it (where nothing else starts)."""
     taken = {e[0] for e in events}
@@ -2272,6 +2484,7 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
     hand_made = part["steps"] if not for_steps else None
     changing = _changes_only(chord_spans) if rules_3(settings) else chord_spans    # (passing notes lead into these)
     new = rules_3(settings)
+    fourth = rules_4(settings)
     change_ticks = {span[0] for span in changing}       # rules 3: where the chord really changes
     notes = []
     state = {}
@@ -2385,9 +2598,30 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
             fill_bars.append(bar.number)
             if not for_steps:
                 run_start = start
+                every = run_every
+                if fourth:
+                    # rules 4 (the second review, 24 Oct 2026): a run is never thinner than the part it replaces (a
+                    # synth arpeggio in sixteenths got a "fill" of eighths: a hole in the arpeggio)
+                    own = sorted({int(e[0]) for e in events if run_start <= e[0] < top})
+                    if any(b - a == 1 for a, b in zip(own, own[1:])):
+                        every = 1
                 events = [e for e in events if e[0] < run_start]
-                for s in range(run_start, top, run_every):
-                    role = "approach" if player == "bellows" else ("power" if player == "hammer" else "arp:{}".format(s))
+                run_steps = list(range(run_start, top, every))
+                if fourth and swing >= TRIPLET_LOCK_FROM and grid == 4:
+                    # rules 4: the triplet feel of eighth swing (_triplet_lock) drops a run's note on the "a" of a beat
+                    # where its "and" plays; left out here, so the run still ends a half step from the coming root
+                    run_steps = [s for s in run_steps if not (s % 4 == 3 and bar.pulse_at(s)[1] == 4
+                                                               and s - 1 in run_steps)]
+                for k, s in enumerate(run_steps):
+                    if player == "bellows":
+                        # rules 4: a run walking into the coming root (_bass_run), not approach notes at random
+                        role = "run:{}".format(len(run_steps) - k) if fourth else "approach"
+                    elif player == "hammer":
+                        # rules 4: a strummed or picked part's run is strums or picked notes, not power chords
+                        sounds = FILL_SOUND.get(style) if fourth else None
+                        role = sounds[k % len(sounds)].format(s) if sounds else "power"
+                    else:
+                        role = "arp:{}".format(s)
                     events.append((s, 1, 0.8, role))
         if follow:
             amount = settings["follow_amount"] / 100.0
@@ -2434,6 +2668,8 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
 
 # Rules 3: what Follow plays on each followed hit in the guitar styles that do not play power chords
 FOLLOW_SOUND = {"strum": "strum_down", "arpeggio": "pick:{}:0"}
+# Rules 4: what a fill run plays, step by step, in those styles (strums down and up in turn; picked notes)
+FILL_SOUND = {"strum": ("strum_down", "strum_up"), "arpeggio": ("pick:{}:0",)}
 # Rules 3: the roles struck again where the chord changes under a held note (the bass plays the new root)
 HELD_AGAIN = {"chord": "chord", "left": "left", "shell": "shell", "power": "power", "power_up": "power",
               "strum_down": "strum_down", "strum_up": "strum_down"}
@@ -2568,6 +2804,8 @@ def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings
         sound = MAIN_SOUND[player] if sound == "style" else sound
         event = (step, max(1, following - step), 1.0, "step:" + sound, velocity)
         out.append((event, notes_of(event, step_rng)))
+    if rules_4(settings):
+        out = _steps_struck_again(bar, out, chord_spans, notes_of, step_rng)
     if part["passing"]:
         taken = [event for event, _notes in out]
         added = _passing_notes(bar, taken, chord_spans)[len(taken):]
@@ -2581,6 +2819,36 @@ def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings
             if run_start is not None and step >= run_start:
                 continue
             out.append((event, passing.get(step) or notes_of(event, step_rng)))
+    return out
+
+
+def _steps_struck_again(bar, made, chord_spans, notes_of, step_rng):
+    """Rules 4 (the second review, 24 Oct 2026): a hand-made step (the root, the chord, a power chord...) held
+    across a chord change is cut there and struck again on the new chord, with its own sound and loudness (as the
+    style's own held notes are, _struck_again_at_changes). Before, the notes the new chord does not have were cut
+    (rules 3) and nothing struck the new chord, so the rest of the step was silent or one common tone rang on alone.
+    A step "as the style plays it" plays the style's own notes, already cut and struck again as the style does (the
+    Step pattern view shows that strike as a step of its own). made: [(event, notes)]; the hand-made events are
+    those whose role starts with "step:"."""
+    changes = sorted((start - bar.start) // STEP for start, _end, _change in chord_spans
+                     if bar.start < start < bar.end and (start - bar.start) % STEP == 0)
+    if not changes:
+        return made
+    out = []
+    for event, notes in made:
+        step, length, role = event[0], event[1], event[3]
+        cuts = [c for c in changes if step < c < step + length]
+        if not cuts or not role.startswith("step:"):
+            out.append((event, notes))
+            continue
+        bounds = cuts + [step + length]
+        cut_tick = bar.start + cuts[0] * STEP
+        out.append(((step, cuts[0] - step) + tuple(event[2:]),
+                    [n if n.tick + n.length <= cut_tick else Note(n.tick, max(1, cut_tick - n.tick), n.pitch, n.velocity)
+                     for n in notes]))
+        for a, b in zip(bounds, bounds[1:]):
+            again = (a, b - a) + tuple(event[2:])
+            out.append((again, notes_of(again, step_rng)))
     return out
 
 
@@ -2742,7 +3010,7 @@ def _chokes_after_their_hats(grid, moved):
 
 
 def perform(settings, start, end, timeline, chord_changes, follow_hits=None, section_starts=(), for_steps=False,
-            next_intensity=None, humanize=False, kit_levels=None):
+            next_intensity=None, humanize=False, kit_levels=None, lead_into=None):
     """The notes a rhythm player plays in [start, end).
 
     settings: the region's player settings. chord_changes: the song's chord track (an empty one
@@ -2757,6 +3025,9 @@ def perform(settings, start, end, timeline, chord_changes, follow_hits=None, sec
     under the rules from before 10 Oct 2026 and the Step pattern view stay on the grid.
     kit_levels: drums only: the track's kit-piece loudness ({piece key: percent}; Track settings, every project);
     None or empty plays every piece as the drummer plays it.
+    lead_into: rules 4, not the drums: the tick whose chord the last bar leads into (None: the region's end). A
+    looping region leads back into its own first chord on every repeat but the last (Russell, 24 Oct 2026; see
+    arrangement.sounding_notes).
     Same inputs, same notes."""
     settings = clean_settings(settings) or new_settings("anvil")
     bars = _bars(timeline, start, end)
@@ -2766,6 +3037,16 @@ def perform(settings, start, end, timeline, chord_changes, follow_hits=None, sec
     if settings["player"] != "anvil" and not pp.piece_settings(settings, "part")["chords"]:
         chord_changes = []                 # the part plays the key's own chord, not the chord track
     chord_spans = chordtrack.spans(chord_changes, start, end, timeline)
+    if settings["player"] != "anvil" and rules_4(settings):
+        # rules 4 (the audit, 24 Oct 2026): a chord change off the sixteenth grid is played from the next sixteenth,
+        # and the last bar leads into the chord after the region (the drummer is not changed)
+        if cut:
+            # the first bar's notes before the start (carried into the region, _carried_into_region) are worked out
+            # from the chord playing there, not from the last span, which _chord_at falls back on before the first
+            # (the chord after the region: a pad came in missing notes and the bass came in late)
+            chord_spans = chordtrack.spans(chord_changes, bars[0].start, end, timeline)
+        chord_spans = _chord_after_the_region(_changes_on_the_grid(chord_spans, bars), chord_changes, end,
+                                              end if lead_into is None else lead_into, timeline)
     follow = settings["follow"] == "track" and follow_hits is not None
 
     def rng_for(index):
@@ -2851,7 +3132,7 @@ def summary(settings, performance, bars, follow_text=""):
 
 
 def pieces_words(settings):
-    """'Pieces off: Ride. Hand-made: Snare. Changed: Closed hi-hat.' (empty when every piece is as the style plays
+    """'Pieces off: Ride. Hand-made: Snare. Changed: Hi-hat.' (empty when every piece is as the style plays
     it)."""
     stored = settings.get("pieces") or {}
     if not stored:

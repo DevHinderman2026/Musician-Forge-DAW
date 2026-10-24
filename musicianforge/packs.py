@@ -162,6 +162,14 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
         if not sf2:
             raise PackError("the download has no SoundFont in it")
         entry = max(sf2, key=lambda e: e.size)
+        # the SoundFont must be the one the pack promises, by its exact size and the CRC the archive stores for it
+        # (the review of 24 Oct 2026: sf2_crc was carried but never compared, so a download of the right size
+        # holding another file of the right size would have been installed as the pack), before 400 megabytes
+        # are unpacked for nothing
+        if entry.size != pack.sf2_size:
+            raise PackError("the download holds a SoundFont of {} bytes instead of {}".format(entry.size, pack.sf2_size))
+        if pack.sf2_crc and entry.crc is not None and (entry.crc & 0xFFFFFFFF) != (pack.sf2_crc & 0xFFFFFFFF):
+            raise PackError("the download is not the expected SoundFont (its check sum differs)")
         target = installed_path(pack, folder)
         try:
             sevenzip.extract_file(archive, entry, target,

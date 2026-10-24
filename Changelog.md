@@ -1,5 +1,93 @@
 # Musician Forge release notes
 
+## 0.9.8 (24 October 2026, in testing)
+
+### New features and improvements
+
+- Every drummer's kit has one Hi-hat piece, for the hand: its closed and open sounds together (How open the hi-hat
+  is sets which). The separate Open hi-hat piece and its toggle are gone.
+- A new Hi-hat pedal piece, for the foot, with its own on and off, which no other piece changes. It plays by itself
+  on the jazz, funk and pop drummers (jazz has the foot in its grooves; funk and pop keep a quiet foot on two and
+  four) and is off on rock, hard rock, metal and the drum machines until you turn it on. Its Pattern list has the
+  foot on two and four, on every beat, and on one and three. In the drum layout, the G key is now called the hi-hat
+  pedal (it was the pedal hi-hat).
+- On the rock, hard rock, metal, jazz, funk and pop drummers the Ride and the Hi-hat take turns as two plain
+  toggles: turning the Ride on (Space, Play this piece, a Pattern or steps) turns the Hi-hat off ("Ride on, hi-hat
+  off"), turning the Hi-hat on turns the Ride off ("Hi-hat on, ride off"), and turning the one that took over off
+  again brings the other back, so something keeps time ("Ride off, hi-hat on"). A piece you turned off yourself
+  stays off. The check box itself changes, and the Kit pieces list says why a piece is off ("Hi-hat: off, the ride
+  keeps time"). "Foot only" is gone. Each change is one undo step.
+- On those drummers the Ride's window and the Hi-hat's window each have the other's Play check box too, right under
+  Play this piece.
+- The Hi-hat's Pattern list has three open patterns (open on the and of every beat, on the and of four, on every
+  beat), and a variation's hi-hat pattern now brings that variation's open hi-hat with it.
+- In the Kit pieces list a piece that is off says why ("Ride: off, the hi-hat keeps time"), not which pattern it
+  would play.
+- A bass, keys, synth or guitar region that loops leads back into its own first chord at the end of every repeat,
+  and only the last repeat leads into the chord that comes after it.
+- Projects saved by older versions are brought up to date as they open, one version at a time. Nothing is written
+  to the file until you save, and then the file as it was is kept as the .bak. A project saved by a newer Musician
+  Forge is not opened: a plain message says to update Musician Forge first, and that the file was not changed.
+
+### Bug fixes
+
+- Fixes a hand-made open hi-hat in a trap drummer's Kit pieces being swallowed by the hi-hat roll on the same steps
+  (new and changed regions).
+- Fixes a chord change that is not on a sixteenth (beat 1.21, say) making the bass, keys, synth and guitar play a
+  blip and then nothing for the rest of the bar: the old chord holds to the next sixteenth and the new one is
+  struck there, and a drummer following the chord track kicks there too (new and changed regions).
+- Fixes the last bar of a rhythm player region not seeing the chord that comes right after the region: a bass run
+  led to the wrong chord, a passing note into it never came, and a pad that pushes the next chord in early pushed
+  the old one (new and changed regions).
+- Fixes the Kit pieces list working out a piece's new state on its own, so what it said could differ from what
+  played: it now reads every piece back after each change.
+- Fixes the screen reader being cut off after Back to the pattern, and after Play this piece or a Pattern in a
+  piece's window turned the ride or the hi-hat off or back on.
+- Fixes editing several rhythm player regions at once putting every change into one undo step: each change is its
+  own step again, and still covers every region you chose.
+- Fixes a project saved by a newer Musician Forge being lost when you opened its backup instead and saved: the
+  newer file is now kept as the backup.
+- Fixes Region settings closing when the song refuses a trim (an end that would overlap the next region, say): the
+  same window comes back with the bars you typed still in it. A trim that works is read from the Regions list
+  once, not said as well.
+- Fixes Space (and Select or unselect the track) in Export audio's Tracks to export being said over the list's own
+  reading of the track: only the count is added after it, as in the event list.
+- Fixes the Mute and Solo check boxes, and the start screen's Open and Remove from list buttons, sending the focus
+  on by themselves, unannounced, when they are dimmed under it (Control+Z taking back the only track; Open on a
+  recent project whose file has gone): the focus goes to the Tracks list, or to New project, first.
+- Fixes a hand-made step for a bass, keys, synth or guitar part (the chord, the root, a power chord) held across a
+  chord change going quiet, or ringing the old chord, for the rest of the bar: it is struck again on the new chord
+  (new and changed regions).
+- Fixes the fills of the bass, keys, synth and guitar: a bass fill is a run that walks up or down the scale into
+  the coming chord's root, ending a half step from it (it was a jitter of notes around it); a synth or keys
+  arpeggio in sixteenths no longer fills with eighths, leaving a hole; a picked guitar part fills with picked
+  notes and a strummed one with fast strums, not with power chords (new and changed regions).
+- Fixes a looping rhythm player region that starts before the first chord change not leading back into the key's
+  own chord (new and changed regions).
+- Fixes Add section, Delete section, Duplicate section and a section's length change putting a chord change into
+  the chord track that only repeats the chord already playing ("G major at bar 5, G major at bar 9").
+- Fixes a chord change or an automation point accepted at bar 0: the project could not be opened again, or the
+  point was dropped without a word. Both are refused with a message.
+- Fixes a guitar pack download being installed without checking that the file inside is the expected SoundFont:
+  its size and check sum are checked first, and a wrong download is removed and tried again at the next start.
+
+### Older projects
+
+- They play the same notes as before, to the note and to the loudness (checked note for note against 0.9.7 over
+  hundreds of drummer regions with every hi-hat setting of before): a region's Closed hi-hat and Open hi-hat
+  become its Hi-hat and Hi-hat pedal with the same rhythms (a Closed hi-hat at "foot only" opens as Hi-hat off for
+  the ride and the pedal on; an Open hi-hat that played keeps its sound in the Hi-hat, its own loudness included; a
+  ride that was off for the hi-hats stays off), and a track's kit-piece loudness for the Closed hi-hat goes to the
+  Hi-hat and the pedal both. The one thing not carried over is a Track settings loudness set for the Open hi-hat
+  (the Hi-hat's covers its open notes now). Every rhythm player region keeps the rules it was made under until
+  you change something in it.
+- The Hi-hat pedal does not start playing in an older funk or pop region: only new regions, and regions you change,
+  get the quiet foot.
+
+### New projects
+
+- New and changed rhythm player regions use this version's rules, with the musical fixes above.
+
 ## 0.9.7 (23 October 2026, in testing)
 
 ### New features and improvements

@@ -152,12 +152,16 @@ def insert_clip(song, at_bar, clip):
         if change.tick >= at_tick:
             change.tick += clip.ticks
         moved.append(change)
-    if after is not None and not any(c.tick == at_tick + clip.ticks for c in moved):
-        moved.append(chordtrack.ChordChange(at_tick + clip.ticks, after.root, after.quality, after.bass))
     for off, change in clip.chords:
         placed = copy.deepcopy(change)
         placed.tick = at_tick + off
         moved.append(placed)
+    moved = chordtrack.sort(moved)
+    if after is not None and not any(c.tick == at_tick + clip.ticks for c in moved) \
+            and not _same_chord(chordtrack.chord_at(moved, at_tick + clip.ticks), after):
+        # (only when the chord there would be another one: until 24 Oct 2026 every added or deleted section left a
+        # chord change nobody placed, repeating the chord already playing, in the chord track)
+        moved.append(chordtrack.ChordChange(at_tick + clip.ticks, after.root, after.quality, after.bass))
     song.chords = chordtrack.sort(moved)
 
 
@@ -227,9 +231,15 @@ def delete_bars(song, start_bar, end_bar):
         if change.tick >= t1:
             change.tick -= span
             kept.append(change)
-    if at_end is not None and at_end.tick < t1:
+    if at_end is not None and at_end.tick < t1 and not _same_chord(chordtrack.chord_at(chordtrack.sort(kept), t0), at_end):
         kept.append(chordtrack.ChordChange(t0, at_end.root, at_end.quality, at_end.bass))
     song.chords = chordtrack.sort(kept)
+
+
+def _same_chord(a, b):
+    """Whether two chord changes are the same chord (either None: no)."""
+    return a is not None and b is not None and \
+        (a.root % 12, a.quality, a.bass) == (b.root % 12, b.quality, b.bass)
 
 
 # ----------------------------------------------------------------------

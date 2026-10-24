@@ -1365,18 +1365,24 @@ class ExportAudioDialog(wx.Dialog):
         else:
             self.chosen.add(tid)
             word = "selected"
+        in_list = wx.Window.FindFocus() is self.tracks
         self.refresh_tracks()
         self.update_size(None)
         count = len(self.chosen)
-        self.session.announce("{} {}. {} track{} selected".format(
-            self.session.song.track_by_id(tid).name, word, count, "" if count == 1 else "s"))
+        words = "{} track{} selected".format(count, "" if count == 1 else "s")
+        # Space in the list: the list reads the track again with or without ", selected", so only the count is
+        # added, after it, as in the event list (screen reader audit B2); from the button the list is not read, so
+        # the track and its new state are said too. Said at once, the words and the list's reading cut each other
+        # off (the review of 24 Oct 2026).
+        say_after(self.session.announce, words if in_list else "{} {}. {}".format(
+            self.session.song.track_by_id(tid).name, word, words))
 
     def choose_all(self):
         self.chosen = set(self.track_ids)
         self.refresh_tracks()
         self.update_size(None)
         count = len(self.chosen)
-        self.session.announce("{} track{} selected".format(count, "" if count == 1 else "s"))
+        say_after(self.session.announce, "{} track{} selected".format(count, "" if count == 1 else "s"))
 
     def chosen_format(self):
         return self.FORMATS[max(0, self.format.GetSelection())]
