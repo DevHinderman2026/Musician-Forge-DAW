@@ -7,9 +7,11 @@ region": it repeats until the next region on the track starts, or the song ends.
 runs into the next region: whatever would land there is left out.
 
 A looping rhythm player region (0.9.8; Russell, 24 Oct 2026) leads back into its own first chord
-at the end of every repeat but the last, which leads into the chord where its playing stops:
+at the end of every repeat but the last one heard (rules 7; before, the last one it was set to),
+which leads into the chord where its playing stops (and, a drummer of rules 7, builds into the
+louder drummer that starts there):
 performance_for(track, region, lead_into=tick) gives those two versions (the same notes, for a
-player that does not lead into chords).
+player that does neither).
 """
 
 import math
@@ -62,17 +64,23 @@ def sounding_notes(song, track, performance_for):
         own = [n for n in track.notes if region.start <= n.tick < region.end]
         inside = own
         count, stop = note_region_repeats(track, index, song_end)
+        # the repeats heard: the next region on the track may cut the loop before all of them have played, and the
+        # last one heard leads into what comes next (rules 7, 0.9.11: a region of older rules keeps counting the
+        # repeats it was set to, so an older project plays the same notes as before)
+        heard = count
+        if region.player and region.player.get("rules", 1) >= 7:
+            heard = max(1, min(count, int(math.ceil((stop - region.start) / float(max(1, region.length))))))
         looping = None
         if region.player:
-            inside = sorted(own + list(performance_for(track, region) if count == 1 else
+            inside = sorted(own + list(performance_for(track, region) if heard == 1 else
                                        performance_for(track, region, lead_into=stop)),
                             key=lambda n: (n.tick, n.pitch))
-            if count > 1:
+            if heard > 1:
                 looping = sorted(own + list(performance_for(track, region, lead_into=region.start)),
                                  key=lambda n: (n.tick, n.pitch))
         for k in range(count):
             shift = k * region.length
-            for note in (looping if looping is not None and k < count - 1 else inside):
+            for note in (looping if looping is not None and k < heard - 1 else inside):
                 tick = note.tick + shift
                 if tick >= stop:
                     break

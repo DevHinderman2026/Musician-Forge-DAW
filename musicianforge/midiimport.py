@@ -33,10 +33,60 @@ CHORD_TEXT_PREFIX = "Musician Forge chord: " # ... with this text event at each 
 INSTRUMENT_TEXT_PREFIX = "Musician Forge instrument: "   # midifile.py: the exact instrument of a track
 MIN_NOTE_TICKS = 30
 MAX_FILE_BYTES = 64 * 1024 * 1024
+# How far reading has got, for the progress window (0.9.11): told about every REPORT_BYTES of a track while its bytes
+# become events, and every REPORT_EVENTS events after that. Of the time, about half goes to the bytes and half to
+# making notes and settings of the events: the shares of the progress below.
+REPORT_BYTES = 64 * 1024
+REPORT_EVENTS = 16384
+READ_SHARE, SETTINGS_SHARE, NOTES_SHARE = 0.5, 0.05, 0.45
 
 
 class MidiImportError(ValueError):
     """The file cannot be imported; the message says why in plain words."""
+
+
+class ImportCancelled(Exception):
+    """Reading the file was cancelled (Escape in its progress window). Not a MidiImportError: nothing is wrong with
+    the file, and nothing of it is kept."""
+
+
+class _Steps:
+    """Tells progress(fraction, 0 to 1) how far parse has got, by the bytes of the file's tracks, and asks cancelled()
+    each time; True raises ImportCancelled (Russell, 25 Oct 2026: a big MIDI file froze the program while it was
+    read). Either may be None."""
+
+    def __init__(self, sizes, progress, cancelled):
+        self.total = float(max(1, sum(sizes)))
+        self.before = [sum(sizes[:i]) for i in range(len(sizes))]
+        self.sizes = sizes
+        self.progress, self.cancelled = progress, cancelled
+
+    def at(self, start, share, done):
+        if self.cancelled is not None and self.cancelled():
+            raise ImportCancelled("Import cancelled")
+        if self.progress is not None:
+            self.progress(min(1.0, start + share * done / self.total))
+
+    def reading(self, number):
+        """For _events: report(bytes of track `number` read so far)."""
+        return lambda done: self.at(0.0, READ_SHARE, self.before[number] + done)
+
+    def through(self, number, start, share):
+        """For _in_steps: report(fraction of track `number`'s events gone through)."""
+        return lambda fraction: self.at(start, share, self.before[number] + fraction * self.sizes[number])
+
+
+def _in_steps(events, report):
+    """The events in order, with report(fraction gone through) every REPORT_EVENTS of them (none without report)."""
+    if report is None:
+        return events
+
+    def walk():
+        count = float(max(1, len(events)))
+        for start in range(0, len(events), REPORT_EVENTS):
+            report(start / count)
+            yield from events[start:start + REPORT_EVENTS]
+    return walk()
 
 
 @dataclass
@@ -142,12 +192,17 @@ def _chunks(data):
     return chunks
 
 
-def _events(body, cut_short):
-    """(tick, kind, channel, data) for one track; kind is "meta" (with (type, payload)), or a channel event."""
+def _events(body, cut_short, report=None):
+    """(tick, kind, channel, data) for one track; kind is "meta" (with (type, payload)), or a channel event.
+    report(bytes read so far) is told how far it has got: at the start, then about every REPORT_BYTES."""
     reader = _Reader(body)
     tick, status, events = 0, None, []
+    next_report = 0 if report is not None else len(body) + 1
     try:
         while reader.pos < len(body):
+            if reader.pos >= next_report:
+                report(reader.pos)
+                next_report = reader.pos + REPORT_BYTES
             tick += reader.varlen()
             byte = reader.byte()
             if byte == 0xFF:
@@ -178,8 +233,9 @@ def _events(body, cut_short):
     return events
 
 
-def parse(data):
-    """MidiContents from the bytes of a MIDI file; raises MidiImportError with words."""
+def parse(data, progress=None, cancelled=None):
+    """MidiContents from the bytes of a MIDI file; raises MidiImportError with words. progress(fraction) and
+    cancelled(): see _Steps (both optional; ImportCancelled when cancelled() says True)."""
     if len(data) > MAX_FILE_BYTES:
         raise MidiImportError("it is larger than any song file should be ({} megabytes)".format(len(data) // 1000000))
     chunks = _chunks(bytes(data))
@@ -211,15 +267,18 @@ def parse(data):
     late_key_texts = {}
     padded_end = 0
     own_file = False                                    # written by Musician Forge (its own text events)
-    track_events = [_events(body, short) for body, short in tracks]
+    steps = _Steps([len(body) for body, _short in tracks], progress, cancelled) if progress or cancelled else None
+    track_events = [_events(body, short, steps.reading(number) if steps else None)
+                    for number, (body, short) in enumerate(tracks)]
     # Each channel's instrument, bank, volume and pan, from every track in time order: a type 1 file often sets
     # them up in a track of their own, apart from the notes (the review of 9 Oct 2026).
     # A file with more than 16 channels' worth of tracks puts them on several MIDI ports (a port meta event in each
     # track, as Musician Forge's export does since 23 Oct 2026): the same channel on two ports is two instruments.
     ports = [_port_of(events) for events in track_events]
     settings = {}
-    for port, events in zip(ports, track_events):
-        for tick, kind, channel, values in events:
+    for number, (port, events) in enumerate(zip(ports, track_events)):
+        report = steps.through(number, READ_SHARE, SETTINGS_SHARE) if steps else None
+        for tick, kind, channel, values in _in_steps(events, report):
             if kind == 0xC0:
                 settings.setdefault((port, channel), {}).setdefault("program", []).append((at(tick), values[0]))
             elif kind == 0xB0 and values[0] in (0, 7, 10):
@@ -251,7 +310,8 @@ def parse(data):
                 exact = instrument_from_text(_text(e[3][1])[len(INSTRUMENT_TEXT_PREFIX):])
                 own_file = True
         by_channel = {}
-        for tick, kind, channel, values in events:
+        report = steps.through(number, READ_SHARE + SETTINGS_SHARE, NOTES_SHARE) if steps else None
+        for tick, kind, channel, values in _in_steps(events, report):
             t = at(tick)
             if kind == "meta" and values[0] == 0x2F:
                 padded_end = max(padded_end, t)        # where a track says it ends: often empty time after the music
@@ -348,6 +408,8 @@ def parse(data):
     # another program often pads its tracks with empty time, which would become empty bars after the music
     if own_file or key_texts:
         contents.end_tick = max(contents.end_tick, padded_end)
+    if steps:
+        steps.at(1.0, 0.0, 0)                           # all of it
     return contents
 
 
@@ -430,8 +492,9 @@ def _first_and_rest(changes, convert, first_note=0):
     return first, points
 
 
-def read_file(path):
-    """MidiContents from a MIDI file on disk, or MidiImportError with words."""
+def read_file(path, progress=None, cancelled=None):
+    """MidiContents from a MIDI file on disk, or MidiImportError with words. progress(fraction) is told how far
+    reading it has got, and cancelled() is asked as often; True raises ImportCancelled (see _Steps)."""
     try:
         with open(path, "rb") as fh:
             data = fh.read(MAX_FILE_BYTES + 1)
@@ -439,7 +502,7 @@ def read_file(path):
         raise MidiImportError("it could not be opened ({})".format(exc.strerror or exc)) from None
     if not data:
         raise MidiImportError("it is empty")
-    return parse(data)
+    return parse(data, progress, cancelled)
 
 
 # ----------------------------------------------------------------------

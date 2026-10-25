@@ -303,7 +303,7 @@ def _first_window(frame, session, song_path):
     try:
         if session.recovery_available():
             if ask_yes_no(None, "Musician Forge did not close properly last time. "
-                                "Recover the project you were working on?"):
+                                "Recover the project you were working on?", escape=False):   # (No throws it away)
                 with session.pressed("window"):   # "Recovered ..." is said once the project window shows
                     if frame.safe(session.recover):
                         frame.show_project()

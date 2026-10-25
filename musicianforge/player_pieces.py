@@ -299,8 +299,10 @@ TAKES_TURNS = {"ride": ("hat",), "hat": ("ride",)}
 TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "pedal": "hi-hat pedal", "crash": "crash"}
 # Russell, 25 Oct 2026: where the crash keeps time (metal's grooves with no hi-hat and no ride), turning the Hi-hat on
 # takes the crash's turn too: the crash's groove goes off, marked off for the hi-hat ("off_for"), and comes back when
-# the Hi-hat is turned off again (the crash where a section starts and after fills keeps its When setting)
-CRASH_GIVES_WAY_TO = ("hat",)
+# the Hi-hat is turned off again (the crash where a section starts and after fills keeps its When setting). The Ride
+# the same way (Russell, 25 Oct 2026, 0.9.11: "Yes, like the Hi-hat"): "Ride on, crash off", and the Ride turned off
+# again gives it back.
+CRASH_GIVES_WAY_TO = ("hat", "ride")
 TURN_PHRASES = ("Ride on, hi-hat off", "Hi-hat on, ride off", "Ride off, hi-hat on", "Hi-hat off, ride on")
 HAT_RHYTHM = "h:"           # the ride's Pattern "The hi-hat's rhythm": "h:" and the Hi-hat's own pattern
 # The Hi-hat pedal plays by itself where the groove has the foot in it (jazz), and from rules 4 (0.9.8, Russell,

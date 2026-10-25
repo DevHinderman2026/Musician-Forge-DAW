@@ -4,6 +4,10 @@ Everything here works on whole bars, and keeps the song consistent:
 - notes and recordings move with their bars (a recording belongs to the bar it starts in),
 - regions move with their bars too; inserting bars inside a region splits it,
   and deleting bars shortens or removes the regions there,
+- a looping region keeps playing around inserted or deleted bars (0.9.11; Russell, 25 Oct 2026): up to them
+  it plays as it did, inserted bars are empty for it, and the rest of its playing carries on after them
+  with the phase it had (regions.continue_loop); copied bars hold what a loop plays in them, and their own
+  loops stay inside them where they are put,
 - tempo, time signature and key changes move with their bars,
 - automation points (volume, pan, effect settings) move with their bars too (23 Oct 2026; until then they stayed
   where they were, so a moved or deleted section left its fades behind),
@@ -16,8 +20,10 @@ Callers wrap these functions in Session.edit(), which provides undo.
 import copy
 from dataclasses import dataclass, field, replace
 
+from . import arrangement
 from . import automation as autolanes
 from . import chords as chordtrack
+from . import regions as regionlib
 from .song import DEFAULT_SECTION_BARS, Note, NoteRegion, Section
 from .timeline import KeyChange, TempoChange, TimeSignatureChange
 
@@ -55,13 +61,15 @@ def extract(song, start_bar, end_bar):
     keys = [(0, key.tonic, key.scale)]
     keys += [(k.bar - start_bar, k.tonic, k.scale) for k in tl.keys if start_bar < k.bar < end_bar]
     notes, regions, spans = {}, {}, {}
+    song_end = song.song_end_tick()
     for track in song.tracks:
         notes[track.id] = [(n.tick - t0, min(n.length, t1 - n.tick), n.pitch, n.velocity)
                            for n in track.notes if t0 <= n.tick < t1]
         regions[track.id] = [(r.tick - t0, copy.deepcopy(r)) for r in track.regions if t0 <= r.tick < t1]
         spans[track.id] = [NoteRegion(max(r.start, t0) - t0, min(r.end, t1) - t0, r.name, r.mute,
-                                      copy.deepcopy(r.player), r.loops)
+                                      copy.deepcopy(r.player), r.loops if r.end <= t1 else 1)
                            for r in track.note_regions if r.start < t1 and r.end > t0]
+        _copy_loops_playing_in(track, t0, t1, song_end, notes, spans)
     clip_chords = []
     starting = chordtrack.chord_at(song.chords, t0)
     if starting is not None:
@@ -89,14 +97,19 @@ def empty_clip(song, before_bar, bars):
                 [(0, key.tonic, key.scale)], {})
 
 
-def insert_clip(song, at_bar, clip):
-    """Insert the clip's bars at `at_bar`, pushing everything from there on later."""
+def insert_clip(song, at_bar, clip, loops_placed=None):
+    """Insert the clip's bars at `at_bar`, pushing everything from there on later. loops_placed: a LoopsCarriedOn
+    for what it carries on of the looping regions playing there (the session matches them to the loops)."""
     tl = song.timeline
     n = clip.bars
     at_tick = tl.bar_to_tick(at_bar)
     ts_after = tl.time_signature_at_bar(at_bar)
     tempo_after = tl.tempo_at_tick(at_tick)
     key_after = tl.key_at_bar(at_bar)
+    # looping regions still playing where the bars go in, worked out before anything moves (0.9.11)
+    song_end = song.song_end_tick()
+    across = {track.id: [_as_it_was(track, r) + (until,) for r, until in _looping(track, song_end)
+                         if r.start < at_tick < until] for track in song.tracks}
 
     # Order matters: later entries win when two land on the same bar.
     # 1) what was in effect at the insertion point, restored after the clip
@@ -148,6 +161,8 @@ def insert_clip(song, at_bar, clip):
                                     r.loops))
         spans.sort(key=lambda r: r.start)
         track.note_regions = spans
+        _loops_around_inserted_bars(track, at_tick, clip.ticks, across.get(track.id, []),
+                                    max(song_end, at_tick) + clip.ticks, loops_placed)
         _insert_lanes(track, at_tick, clip)
 
     # the chord track: what plays after the inserted bars is what played there before
@@ -177,8 +192,8 @@ def insert_clip(song, at_bar, clip):
     song.chords = chordtrack.sort(moved)
 
 
-def delete_bars(song, start_bar, end_bar):
-    """Remove bars start_bar .. end_bar - 1 and pull everything after them earlier."""
+def delete_bars(song, start_bar, end_bar, loops_placed=None):
+    """Remove bars start_bar .. end_bar - 1 and pull everything after them earlier. loops_placed: as for insert_clip."""
     if end_bar <= start_bar:
         return
     tl = song.timeline
@@ -188,6 +203,10 @@ def delete_bars(song, start_bar, end_bar):
     ts_end = tl.time_signature_at_bar(end_bar)
     tempo_end = tl.tempo_at_tick(t1)
     key_end = tl.key_at_bar(end_bar)
+    # looping regions whose playing reaches into the deleted bars and out of them, worked out first (0.9.11)
+    song_end = song.song_end_tick()
+    across = {track.id: [_as_it_was(track, r) + (until,) for r, until in _looping(track, song_end)
+                         if r.start < t1 and until > t0 and (r.start < t0 or until > t1)] for track in song.tracks}
 
     def keep(bar):
         return bar < start_bar or bar >= end_bar
@@ -234,6 +253,7 @@ def delete_bars(song, start_bar, end_bar):
                 r.start, r.end = start, end
                 spans.append(r)
         track.note_regions = spans
+        _loops_around_deleted_bars(track, t0, t1, across.get(track.id, []), t1 >= song_end, loops_placed, song_end)
         _delete_lanes(track, t0, t1)
 
     # the chord track: the chord playing at the end of the deleted bars carries on from where they were
@@ -246,6 +266,94 @@ def delete_bars(song, start_bar, end_bar):
     if at_end is not None and at_end.tick < t1 and not _same_chord(chordtrack.chord_at(chordtrack.sort(kept), t0), at_end):
         kept.append(chordtrack.ChordChange(t0, at_end.root, at_end.quality, at_end.bass))
     song.chords = chordtrack.sort(kept)
+
+
+# ----------------------------------------------------------------------
+# looping regions around inserted, deleted and copied bars (0.9.11)
+# ----------------------------------------------------------------------
+# Russell, 25 Oct 2026: "the loop keeps going on both sides" of a new section added in the middle of a looping region.
+# Until then the region split into two halves that played once (the loop was dropped), or, when only its repeats
+# reached the new bars, they ran on into them and shifted the music after them. The same goes for deleted bars (the
+# playing after them carries on where they were) and for copied bars (a copy holds what a loop plays in them).
+class LoopsCarriedOn(list):
+    """What an edit carried on of the looping regions it went through (insert_clip and delete_bars add to one given as
+    loops_placed): (track, the regions placed, the region as it was, p, q, until), as regions.continue_loop has them.
+    written: whether the session wrote one of them out as notes (Session._matching_loops)."""
+
+    written = False
+
+
+def _looping(track, song_end):
+    """(region, the tick where its playing stops) for each looping region on an instrument track."""
+    if track.is_audio:
+        return []
+    return [(r, arrangement.note_region_repeats(track, i, song_end)[1])
+            for i, r in enumerate(track.note_regions) if r.loops != 1]
+
+
+def _as_it_was(track, region):
+    """(a copy of a region, copies of its own notes): what regions.continue_loop needs once the edit has moved them."""
+    return copy.deepcopy(region), [copy.copy(n) for n in track.notes if region.start <= n.tick < region.end]
+
+
+def _loops_around_inserted_bars(track, at_tick, ticks, across, song_end, placed=None):
+    """After `ticks` of bars went in at at_tick: a loop that was playing there plays as it did up to them, they are
+    empty for it, and the rest of its playing carries on after them with the phase it had. A loop that came in with
+    them (a copied section's) stays inside them. song_end: where the song ends with them. placed: a LoopsCarriedOn
+    to add what was carried on to (None: nobody asks)."""
+    after = at_tick + ticks
+    for was, own, until in across:
+        new = regionlib.continue_loop(track, was, own, at_tick, after, until, song_end - ticks)
+        if placed is not None and new:
+            placed.append((track, new, was, at_tick, after, until))
+    for region in [r for r in track.note_regions if at_tick <= r.start < after and r.loops != 1]:
+        index = next(i for i, r in enumerate(track.note_regions) if r is region)
+        if arrangement.note_region_repeats(track, index, song_end)[1] > after:
+            regionlib.stop_loop_at(track, region, after, ends_there=after >= song_end)
+    for was, own, _until in across:
+        head = next((r for r in track.note_regions if r.start == was.start), None)
+        if head is not None:
+            regionlib.stop_loop_at(track, head, at_tick, own, first_end=was.end)
+
+
+def _loops_around_deleted_bars(track, t0, t1, across, at_the_end, placed=None, song_end=None):
+    """After ticks t0 .. t1 were deleted: a loop that was playing in them plays as it did up to t0, and the rest of its
+    playing after t1 carries on from t0 with the phase it had there (until then it went on from t0 as if the deleted
+    bars had never been: a repeat that was deleted came back, or the music after them was shifted, and a loop that began
+    in them was gone with all its repeats). at_the_end: the deleted bars ended the song, so it now ends at t0.
+    placed: as for _loops_around_inserted_bars. song_end: where the song ended before the bars were deleted."""
+    for was, own, until in across:
+        if until > t1:
+            new = regionlib.continue_loop(track, was, own, t1, t0, until, song_end)
+            if placed is not None and new:
+                placed.append((track, new, was, t1, t0, until))
+    for was, own, _until in across:
+        if was.start < t0:
+            head = next((r for r in track.note_regions if r.start == was.start), None)
+            if head is not None:
+                regionlib.stop_loop_at(track, head, t0, own, ends_there=at_the_end, first_end=was.end)
+
+
+def _copy_loops_playing_in(track, t0, t1, song_end, notes, spans):
+    """extract: a looping region that began before ticks t0 .. t1 and still plays in them. The copy holds what it plays
+    there, with the phase it has there (until then the copy left its repeats out, or, for a region reaching into the
+    copied bars, held the rest of it looping from the copy's start); notes and spans: the copy's, for this track."""
+    for region, until in _looping(track, song_end):
+        if not region.start < t0 < until:
+            continue
+        was, own = _as_it_was(track, region)
+        pieces = regionlib.loop_pieces(was, own, t0, min(until, t1))
+        if not pieces:
+            continue
+        reach = pieces[-1][1]             # (only the region's own music was there: what reached into the bars)
+        spans[track.id] = [s for s in spans[track.id] if s.start >= reach]
+        notes[track.id] = [n for n in notes[track.id] if n[0] >= reach]
+        for start, end, loops, piece_notes in pieces:
+            spans[track.id].append(NoteRegion(start, end, was.name, was.mute, copy.deepcopy(was.player), loops))
+            notes[track.id] += [(start + tick, min(length, t1 - t0 - start - tick), pitch, velocity)
+                                for tick, length, pitch, velocity in piece_notes]
+        spans[track.id].sort(key=lambda s: s.start)
+        notes[track.id].sort(key=lambda n: (n[0], n[2]))
 
 
 def _key_chord_changes(timeline, start, end=None):
@@ -443,10 +551,10 @@ def _drop_redundant_changes(tl):
 # ----------------------------------------------------------------------
 # whole sections
 # ----------------------------------------------------------------------
-def add_section_after(song, index, length=DEFAULT_SECTION_BARS):
-    """A new empty section right after section `index`. Returns its index."""
+def add_section_after(song, index, length=DEFAULT_SECTION_BARS, loops_placed=None):
+    """A new empty section right after section `index`. Returns its index. loops_placed: as for insert_clip."""
     _start, end = song.section_bounds(index)
-    insert_clip(song, end, empty_clip(song, end, length))
+    insert_clip(song, end, empty_clip(song, end, length), loops_placed)
     song.sections.insert(index + 1, Section(length))
     return index + 1
 
@@ -462,12 +570,13 @@ def duplicate_section(song, index):
     return len(song.sections) - 1
 
 
-def delete_section(song, index):
-    """Remove a section and everything in it. The song always keeps at least one section."""
+def delete_section(song, index, loops_placed=None):
+    """Remove a section and everything in it. The song always keeps at least one section. loops_placed: as for
+    insert_clip."""
     if len(song.sections) <= 1:
         raise ValueError("A song needs at least one section. Change its length instead.")
     start, end = song.section_bounds(index)
-    delete_bars(song, start, end)
+    delete_bars(song, start, end, loops_placed)
     del song.sections[index]
 
 
@@ -482,22 +591,26 @@ def move_section(song, index, delta):
     s1, _e1 = song.section_bounds(first)
     clip = extract(song, s2, e2)
     delete_bars(song, s2, e2)
+    # (0.9.11) the moved section is left out of the song while its bars are out of it, so the song's end is right for
+    # the loops insert_clip keeps playing around them; the order comes out as the swap it always was
+    moved = song.sections.pop(second)
     insert_clip(song, s1, clip)
-    song.sections[first], song.sections[second] = song.sections[second], song.sections[first]
+    song.sections.insert(first, moved)
     return other
 
 
-def set_section_length(song, index, length):
-    """Make a section longer (silent bars at its end) or shorter (removes bars from its end)."""
+def set_section_length(song, index, length, loops_placed=None):
+    """Make a section longer (silent bars at its end) or shorter (removes bars from its end). loops_placed: as for
+    insert_clip."""
     length = int(length)
     if length < 1:
         raise ValueError("A section must be at least 1 bar long")
     start, end = song.section_bounds(index)
     current = end - start
     if length > current:
-        insert_clip(song, end, empty_clip(song, end, length - current))
+        insert_clip(song, end, empty_clip(song, end, length - current), loops_placed)
     elif length < current:
-        delete_bars(song, start + length, end)
+        delete_bars(song, start + length, end, loops_placed)
     song.sections[index].length = length
 
 
@@ -515,7 +628,7 @@ def regions_in_bars(song, start_bar, end_bar):
     return sum(1 for t in song.tracks for r in t.regions if t0 <= r.tick < t1)
 
 
-def grow_section_for_recording(song, index, new_notes):
+def grow_section_for_recording(song, index, new_notes, loops_placed=None):
     """After a take in an Automatic section: grow it to hold notes recorded past its end.
 
     Material after the section (later sections) moves later to make room; the
@@ -523,11 +636,12 @@ def grow_section_for_recording(song, index, new_notes):
     """
     if not new_notes:
         return 0
-    return grow_section_to(song, index, max(n.tick + n.length for n in new_notes))
+    return grow_section_to(song, index, max(n.tick + n.length for n in new_notes), loops_placed)
 
 
-def grow_section_to(song, index, last_end):
-    """Grow an Automatic section so it reaches `last_end` (a tick). Returns the bars added."""
+def grow_section_to(song, index, last_end, loops_placed=None):
+    """Grow an Automatic section so it reaches `last_end` (a tick). Returns the bars added. loops_placed: as for
+    insert_clip."""
     tl = song.timeline
     start, end = song.section_bounds(index)
     if last_end <= 0:
@@ -538,6 +652,6 @@ def grow_section_to(song, index, last_end):
         return 0
     if index < len(song.sections) - 1:
         # make room: push the following sections later, but not the new notes
-        insert_clip(song, end, empty_clip(song, end, growth))
+        insert_clip(song, end, empty_clip(song, end, growth), loops_placed)
     song.sections[index].length += growth
     return growth

@@ -56,6 +56,27 @@ class PackError(Exception):
     """A download or an unpack went wrong (the message says what, in plain words)."""
 
 
+class PackCheckError(PackError):
+    """The download came, but it is not the pack's file (the checks in install_pack). The message is a whole sentence
+    in plain words, to be said as it is (Russell, 25 Oct 2026: "its check sum differs" was jargon); the exact sizes
+    and check numbers go to the log, and stay in `detail`, which repr shows (the installer's log writes repr)."""
+
+    def __init__(self, message, detail=""):
+        super().__init__(message)
+        self.detail = detail
+
+    def __repr__(self):
+        return "PackCheckError({!r}, {!r})".format(str(self), self.detail) if self.detail else super().__repr__()
+
+
+TRY_AGAIN = "Musician Forge will try again the next time it starts."
+WRONG_FILE = "The guitar sounds that were downloaded are not the right file, so they were removed and not installed. " \
+             + TRY_AGAIN
+WRONG_SIZE = "The guitar sounds that were downloaded are not the right size, so they were removed and not installed. " \
+             + TRY_AGAIN
+BAD_UNPACK = "The guitar sounds did not unpack correctly, so they were removed and not installed. " + TRY_AGAIN
+
+
 def soundfont_folder():
     return paths.soundfont_dir()
 
@@ -167,9 +188,14 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
         # holding another file of the right size would have been installed as the pack), before 400 megabytes
         # are unpacked for nothing
         if entry.size != pack.sf2_size:
-            raise PackError("the download holds a SoundFont of {} bytes instead of {}".format(entry.size, pack.sf2_size))
+            detail = "the download holds a SoundFont of {} bytes instead of {}".format(entry.size, pack.sf2_size)
+            log.warning("%s: %s", pack.name, detail)
+            raise PackCheckError(WRONG_SIZE, detail)
         if pack.sf2_crc and entry.crc is not None and (entry.crc & 0xFFFFFFFF) != (pack.sf2_crc & 0xFFFFFFFF):
-            raise PackError("the download is not the expected SoundFont (its check sum differs)")
+            detail = "the downloaded SoundFont's CRC is {:08X} instead of {:08X}".format(
+                entry.crc & 0xFFFFFFFF, pack.sf2_crc & 0xFFFFFFFF)
+            log.warning("%s: %s", pack.name, detail)
+            raise PackCheckError(WRONG_FILE, detail)
         target = installed_path(pack, folder)
         try:
             sevenzip.extract_file(archive, entry, target,
@@ -177,9 +203,12 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
         except sevenzip.ArchiveError as exc:
             raise PackError(str(exc)) from None
         if not is_installed(pack, folder):
+            size = os.path.getsize(target) if os.path.exists(target) else None
             if os.path.exists(target):
                 os.remove(target)
-            raise PackError("the unpacked SoundFont is not the expected size")
+            detail = "the unpacked SoundFont is {} bytes ({} expected) or not a SoundFont".format(size, pack.sf2_size)
+            log.warning("%s: %s", pack.name, detail)
+            raise PackCheckError(BAD_UNPACK, detail)
         say("{} is ready.".format(pack.name))
         return target
     finally:

@@ -181,8 +181,12 @@ MAX_PERFORMANCE = 2 ** 53 - 1
 # see rules_5); 6: from 0.9.10 (25 Oct 2026, Russell: "when a fill comes in and there's a crash there needs to be
 # the bass pedal too": the kick lands with every crash where the region starts and after a fill, whatever the Kick
 # piece's state, see rules_6; the melodic players' fixes of the third review, _struck_again_at_changes and
-# _hits_together). New regions get 6.
-RULES = 6
+# _hits_together). 7: from 0.9.11 (25 Oct 2026, Russell's answers: the hi-hat pedal waits where the hand
+# plays an open hi-hat, a percussion sound you turn on is not held to the drummer's two hands, a follower plays its own
+# part in a bar where the followed track is silent, the lead-in note an eighth before the change in meters counted in
+# threes, a long arpeggio note cut by a chord change gives way to the new chord at once, a step "as the style plays
+# it" at Loudness 0 plays the style's notes; see rules_7). New regions get 7.
+RULES = 7
 
 
 def rules_4(settings):
@@ -198,6 +202,11 @@ def rules_5(settings):
 def rules_6(settings):
     """The changes of 0.9.10 (RULES): only for regions made or changed since."""
     return settings.get("rules", 1) >= 6
+
+
+def rules_7(settings):
+    """The changes of 0.9.11 (RULES): only for regions made or changed since."""
+    return settings.get("rules", 1) >= 7
 
 
 def to_todays_rules(settings):
@@ -482,6 +491,7 @@ class _Bar:
         # whole bar plays the first one, as the Step pattern view shows it)
         self.crash_step = 0 if index == 0 else None
         self.pattern_index = index
+        self.meter = (meter[0], meter[1])     # (top number, bottom number): rules 7, the melodic players' lead-in notes
         lengths = pulse_lengths(meter[0], meter[1], steps)
         starts = [sum(lengths[:i]) for i in range(len(lengths))]
         self.pulses = list(zip(starts, lengths))             # (first sixteenth, length) of each beat
@@ -1172,6 +1182,9 @@ class _KitPieces:
         self.accent_ticks = [h.tick for h in accents(hits_in) if h.weight >= 0.75] if follow else []
         self.crash_turn = 0
         self.style_key = style_key
+        # what keeps playing through a fill, hand-made steps too (rules 7: the percussion, a second player's)
+        self.fill_keeps = (FILL_KEEPS + tuple(sorted(_SECOND_PLAYER)) if rules_7(settings)
+                           and style_key in LIVE_DRUMMER_STYLES else FILL_KEEPS)
 
     def _rng(self, name, bar):
         return random.Random(_piece_seed(self.settings, name, bar.index))
@@ -1357,7 +1370,7 @@ class _KitPieces:
             if steps:
                 roll_sounds = ({h[1] for h in hits if h[1] in voices and h[3] == ROLL} if rules_4(self.settings)
                                else None)
-                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned, roll_sounds)
+                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned, roll_sounds, self.fill_keeps)
             # a region saved before 0.9.8 whose Open hi-hat had a loudness of its own keeps it for the hi-hat's open
             # notes (pp open_level; -1: the hi-hat's own level)
             open_level = settings.get("open_level", -1) if piece.key == "hat" else -1
@@ -1503,6 +1516,18 @@ class _KitPieces:
                 changed.append(h)
         return changed
 
+    def opened_in_view(self, bar, hits):
+        """Rules 7, for the Step pattern view, which shows the hi-hat's own sound (closed where How open the hi-hat is
+        plays it open, see finish): the places of the closed hi-hats that are heard open (_open_hats), where the foot
+        waits as it does in what is heard (_the_foot_waits)."""
+        hat = self.full["hat"]
+        offbeats = hat["open_offbeats"] or "g:disco" in hat["pattern"].split("+")
+        if not (hat["on"] and (self.openness != "closed" or offbeats)):
+            return set()
+        return {round(float(h[0]), 6) for h in hits if h[1] == HAT and h[3] in (GROOVE, ROLL, HAND)
+                and (self.openness in ("open", "half") or (offbeats and h[0] == int(h[0]) and int(h[0]) < bar.steps
+                                                           and bar.map[int(h[0])] % 4 == 2))}
+
     def _crash_when(self, bar, hits, when, fill_bars):
         cymbals = (CRASH, CRASH2)
         others = [h for h in hits if not (h[3] == ACCENT and h[1] in cymbals)]
@@ -1539,21 +1564,24 @@ class _KitPieces:
         return out
 
     @staticmethod
-    def _hand_made(bar, hits, voices, steps, fill_start, thinned=(), roll_sounds=None):
+    def _hand_made(bar, hits, voices, steps, fill_start, thinned=(), roll_sounds=None, fill_keeps=None):
         """The piece's own steps instead of what the style plays. What comes on top by itself stays: fills, rolls,
         crashes where the region starts and after fills, kicks on chord changes and on the followed track's hits. In a
         bar with a fill, the fill takes over from where it starts, except the sounds the style keeps playing through
         a fill (the kick, the hi-hats, the ride and the shaker); a trap hi-hat roll takes over the two steps it
         fills, from the steps of its own sound (roll_sounds; rules 4: an open hi-hat set by hand there stays, as it
-        did when the open hi-hat was a piece of its own) or of every sound of the piece (None: before rules 4)."""
+        did when the open hi-hat was a piece of its own) or of every sound of the piece (None: before rules 4).
+        fill_keeps: the sounds that keep playing through a fill (None: FILL_KEEPS; rules 7 adds the percussion, a
+        second player's, _SECOND_PLAYER)."""
         kept = [h for h in hits if h[1] not in voices or h[3] in (FILL, ROLL, CHOKE) + OVERLAYS]
         rolls = [h[0] for h in hits if h[1] in voices and h[3] == ROLL]
         rolled = (min(rolls), min(rolls) + 2) if rolls else (0, 0)
         if roll_sounds is None:
             roll_sounds = voices
+        keeps = FILL_KEEPS if fill_keeps is None else fill_keeps
         pattern = steps["bars"][bar.pattern_index % len(steps["bars"])]
         kept += [(step, sound, velocity, HAND) for step, velocity, sound in pattern
-                 if (fill_start is None or step < fill_start or sound in FILL_KEEPS) and (step, sound) not in thinned
+                 if (fill_start is None or step < fill_start or sound in keeps) and (step, sound) not in thinned
                  and not (rolled[0] <= step < rolled[1] and sound in roll_sounds)]
         return kept
 
@@ -1577,6 +1605,14 @@ _TIMEKEEPING = (HAT, OPEN_HAT, RIDE, RIDE_BELL, pp.RIDE2)
 _HAND_ORDER = [(_CRASHES, 0), ((SNARE, SNARE2, RIM), 1), ((TOM_HIGH, TOM_MID, TOM_LOW, TOM_FLOOR), 2),
                ((RIDE, RIDE_BELL, pp.RIDE2), 3), ((HAT, OPEN_HAT), 4), ((COWBELL, TAMBOURINE, CLAVES), 5)]
 _HAND_RANK = {note: rank for notes, rank in _HAND_ORDER for note in notes}
+# Rules 7 (Russell, 25 Oct 2026: "a percussion sound you turn on always plays, as if a second player had it"): the
+# Percussion piece's sounds (shaker, tambourine, cowbell, maracas, claves) and the Congas and bongos are not the
+# drummer's hands. They are never left out for the two hands (_two_hands), never take a hand from the hi-hat or the
+# ride, and play on through the drummer's fills. Until then the cowbell, the tambourine and the claves were a hand, the
+# last one kept (in rock a tambourine on two and four, with the snare and the hi-hat there, was never heard), a step
+# of them set by hand took the hi-hat's hand, and of these sounds only the shaker and the tambourine played on
+# through a fill, half of their notes.
+_SECOND_PLAYER = frozenset(pp.PIECE_BY_KEY["percussion"].voices + pp.PIECE_BY_KEY["hand_drums"].voices)
 
 
 def _one_hat_a_step(hits):
@@ -1591,6 +1627,46 @@ def _one_hat_a_step(hits):
             continue
         if h[1] == OPEN_HAT and h[3] != HAND and h[0] in closed_by_hand:
             continue
+        kept.append(h)
+    return kept
+
+
+def _the_foot_waits(hits, opened=()):
+    """Rules 7 (Russell, 25 Oct 2026): the Hi-hat pedal waits where the hand plays an open hi-hat. A General MIDI kit
+    closes the open hi-hat with the pedal (the one cuts the other off), so where the foot landed with an open hi-hat
+    (in funk and pop with the hi-hat open, or half open, on two and four, where the foot is) the open hi-hat was cut
+    off at once and never heard. On a step where an open hi-hat plays, whatever opened it (the style, a pattern, How
+    open the hi-hat is, a step set by hand), the foot's hit is left out; the silent pedal note that closes a half-open
+    hi-hat a sixteenth later is not a hit and stays. A step you set by hand stays and the other gives way, as with the
+    closed and the open hi-hat (_one_hat_a_step): a foot set by hand stays and the style's open hi-hat there gives way
+    (with the silent note that closed it), an open hi-hat set by hand stays and the style's foot gives way, and where
+    both are set by hand both stay. (The hi-hat build into a louder region has no foot.) After the two hands, so the
+    foot waits only for an open hi-hat that is heard.
+    opened: the Step pattern view's places of the closed hi-hats that are heard open (_KitPieces.opened_in_view; the
+    view shows the hi-hat's own sound): the foot waits there too, so its steps show what is heard and steps set the
+    same as the style's play the same."""
+    def place(h):
+        return round(float(h[0]), 6)
+
+    opened = set(opened)
+    opens = {place(h) for h in hits if h[1] == OPEN_HAT} | opened
+    feet = {place(h) for h in hits if h[1] == PEDAL and h[3] == HAND}
+    gone = {place(h) for h in hits if h[1] == OPEN_HAT and h[3] != HAND and place(h) in feet}
+    still_open = {place(h) for h in hits if h[1] == OPEN_HAT and not (h[3] != HAND and place(h) in feet)}
+
+    def closes_one_gone(at):
+        before = [round(at - gap, 6) for gap in (1, 0.5)]
+        return any(b in gone for b in before) and not any(b in still_open for b in before)
+
+    kept = []
+    for h in hits:
+        at = place(h)
+        if h[1] == PEDAL and h[3] not in (HAND, CHOKE) and at in opens:
+            continue                    # the style's foot waits for the open hi-hat
+        if (h[1] == OPEN_HAT or (h[1] == HAT and at in opened)) and h[3] != HAND and at in feet:
+            continue                    # a foot set by hand stays: the style's open hi-hat gives way
+        if h[1] == PEDAL and h[3] == CHOKE and closes_one_gone(at):
+            continue                    # (the silent note that closed it goes with it)
         kept.append(h)
     return kept
 
@@ -1625,7 +1701,9 @@ def _fill_from(hits):
     return min(starts) if starts else None
 
 
-def _two_hands(hits, rules3=False):
+def _two_hands(hits, rules3=False, rules7=False):
+    """At most two hand sounds start together (see above). Rules 7: the percussion is a second player's
+    (_SECOND_PLAYER), so it is not counted: it is never left out, and it takes no hand from another sound."""
     by_time = {}
     for hit in hits:
         by_time.setdefault(round(float(hit[0]), 6), []).append(hit)
@@ -1642,7 +1720,7 @@ def _two_hands(hits, rules3=False):
                     loudest[h[1]] = h
             together = [h if h[1] not in yours or h[3] == HAND else h[:3] + (HAND,)
                         for h in together if loudest.get(h[1]) is h]
-        hands = [h for h in together if h[1] in _HAND_RANK]
+        hands = [h for h in together if h[1] in _HAND_RANK and not (rules7 and h[1] in _SECOND_PLAYER)]
         if len(hands) < 2 and not any(h[1] in _CRASHES for h in hands):
             kept += together
             continue
@@ -1725,6 +1803,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         settings = dict(settings, intensity=drum_intensity(settings["intensity"]))   # how hard the notes are played
     kit.settings = settings
     rules3 = rules_3(settings)
+    # rules 7: the percussion a second player plays (_SECOND_PLAYER), in the styles a real drummer plays
+    second_player = _SECOND_PLAYER if rules_7(settings) and style_key in LIVE_DRUMMER_STYLES else frozenset()
     changing = _changes_only(chord_spans) if rules3 else chord_spans
     if rules_4(settings):
         # a chord change off the grid is heard at the next sixteenth (_changes_on_the_grid, as the bass, keys,
@@ -1762,9 +1842,11 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
             else:
                 start = bar.steps // 2 if (rng.random() < 0.6 or fills_amount < 0.6) else 0
                 start = max(0, min(bar.steps - 2, start + (bar.steps // 4 if rng.random() < 0.4 else 0)))
-            filled = [h for h in hits if h[0] < start or h[1] in FILL_KEEPS]
+            # (rules 7: the percussion is a second player's, _SECOND_PLAYER, and all of it plays on through the
+            # drummer's fill; the same random numbers are drawn, so the fill and the rest of the bar stay as they were)
+            filled = [h for h in hits if h[0] < start or h[1] in FILL_KEEPS or h[1] in second_player]
             kept_through = [h for h in filled if not (h[0] >= start and h[1] in (HAT, OPEN_HAT, SHAKER, FORGE_SHAKER)
-                                                      and rng.random() < 0.5)]
+                                                      and rng.random() < 0.5 and h[1] not in second_player)]
             thinned = {(h[0], h[1]) for h in filled if h not in kept_through}
             filled = kept_through
             fill = _drum_fill if rules_now else _drum_fill_rules_1
@@ -1824,8 +1906,12 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
                     step = (start - bar.start) // STEP
                     if not any(h[0] == step and h[1] in (KICK, KICK2) for h in hits):
                         hits.append((step, KICK, _velocity(105, settings["intensity"], rng), CHORD_KICK))
-        # Follow: the kick locks to the followed part's accents
-        if follow:
+        # Follow: the kick locks to the followed part's accents. Rules 7 (Russell, 25 Oct 2026): in a bar where the
+        # followed track is silent (not one hit of it), the drummer plays its own groove there, its kicks as they are;
+        # until then each kick there stayed only with the chance 100 less the Follow amount (about a third of them at
+        # 70), scattered, with nothing to lock to. A bar with a hit of the followed track follows it as before.
+        silent = rules_7(settings) and not any(bar.start <= h.tick < bar.end for h in hits_in)
+        if follow and not silent:
             amount = settings["follow_amount"] / 100.0
             in_bar = [h for h in followed if bar.start <= h.tick < bar.end]
             kicks = [h for h in hits if h[1] in (KICK, KICK2)]
@@ -1868,7 +1954,9 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         if rules3:
             hits = _no_ghost_under_a_stroke(_one_hat_a_step(hits))
         if style_key in LIVE_DRUMMER_STYLES:        # the Step pattern view too: it shows what is heard
-            hits = _two_hands(hits, rules3)
+            hits = _two_hands(hits, rules3, rules_7(settings))
+        if rules_7(settings):           # (wherever the foot plays; the Step pattern view too: it shows what is heard)
+            hits = _the_foot_waits(hits, kit.opened_in_view(bar, hits) if for_steps else ())
         for step, note, velocity, origin in hits:
             tick = _swing_tick(bar, step, swing, grid)
             if tick >= bar.end:
@@ -2529,15 +2617,28 @@ def _chord_after_the_region(chord_spans, chord_changes, end, lead_into=None, tim
     return chord_spans + [(end, end + STEP, after)]
 
 
-def _passing_notes(bar, events, chord_spans):
-    """A short note into each chord change, a sixteenth before it (where nothing else starts)."""
+def _lead_in(bar, threes=False):
+    """How many sixteenths before a chord change its passing note starts, and how long it lasts: one; threes, rules 7
+    (Russell, 25 Oct 2026): two in a meter counted in threes (3/8, 6/8, 9/8 and 12/8, whose beats are three eighths),
+    so the lead-in is an eighth before the change and an eighth long. Every other meter keeps the sixteenth."""
+    numerator, denominator = getattr(bar, "meter", (4, 4))
+    return 2 if threes and denominator == 8 and numerator % 3 == 0 else 1
+
+
+def _passing_notes(bar, events, chord_spans, threes=False):
+    """A short note into each chord change, a sixteenth before it (where nothing else starts). threes: rules 7, an
+    eighth before it and an eighth long in a meter counted in threes (_lead_in)."""
     taken = {e[0] for e in events}
+    size = _lead_in(bar, threes)
     added = []
     for start, _end, _change in chord_spans:
         if bar.start < start <= bar.end and (start - bar.start) % STEP == 0:
-            step = (start - bar.start) // STEP - 1
-            if 0 <= step < bar.steps and step not in taken:
-                added.append((step, 1, 0.7, "passing"))
+            step = (start - bar.start) // STEP - size
+            # (an eighth's lead-in only where nothing starts in that eighth: a note on its second sixteenth, a walking
+            # bass's own lead note or a pickup, already comes before the change, and the lead-in led into it)
+            free = step not in taken if size == 1 else not any(step <= t < step + size for t in taken)
+            if 0 <= step < bar.steps and free:
+                added.append((step, size, 0.7, "passing"))
     return events + added
 
 
@@ -2570,6 +2671,7 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
     changing = _changes_only(chord_spans) if rules_3(settings) else chord_spans    # (passing notes lead into these)
     new = rules_3(settings)
     fourth = rules_4(settings)
+    seventh = rules_7(settings)
     change_ticks = {span[0] for span in changing}       # rules 3: where the chord really changes
     notes = []
     state = {}
@@ -2578,9 +2680,11 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
     followed = accents(hits_in) if follow else []
     matched = set()
 
-    def event_notes(bar, event, rng, own_state, next_role="root"):
+    def event_notes(bar, event, rng, own_state, next_role="root", plain=None):
         """The notes of one event (step, length in steps, accent, role[, loudness set by hand]); next_role: the role
-        of the event after it (an approach note aims at a walking note that follows it)."""
+        of the event after it (an approach note aims at a walking note that follows it). plain: rules 7, a list that
+        also gets the notes as the style plays them at the part's Loudness 50 (even at Loudness 0, where none are
+        heard), for the hand-made steps "as the style plays it"."""
         step, length, accent, role = event[:4]
         tick = _swing_tick(bar, step, swing, grid)
         if tick >= bar.end:
@@ -2594,7 +2698,7 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
             grid_tick = bar.start + int(round(step * STEP))
             ahead.update(key=bar.key_notes, change_here=grid_tick in change_ticks)
             if role == "passing":                       # the chord change it leads into
-                ahead["after"] = _chord_at(chord_spans, min(grid_tick + STEP, bar.end))
+                ahead["after"] = _chord_at(chord_spans, min(grid_tick + STEP * _lead_in(bar, seventh), bar.end))
         pitches = _pitches(player, role, change, next_change, own_state, rng, settings, ahead)
         if part["root_only"] and pitches:
             lowest = min(pitches)
@@ -2628,6 +2732,7 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
         elif part["length"] == "long":
             ticks = int(ticks * 1.6)
         ticks = min(ticks, bar.end + 4 * STEP - tick)
+        loud = None
         if len(event) > 4:
             velocity = event[4]                      # a hand-made step: its own loudness
         else:
@@ -2637,15 +2742,20 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
             velocity = _velocity(base * accent, settings["intensity"], rng)
             if octave_pops and role == "root" and pitches and touch.random() < octave_pops:
                 pitches = [n + 12 for n in pitches if n + 12 <= 127] or pitches   # a bass octave pop now and then
+            loud = velocity                           # (as the style plays it, at the part's Loudness 50)
             if part["level"] != pp.LEVEL_DEFAULT:
-                velocity = pp.level_velocity(velocity, part["level"])
-                if velocity is None:
-                    return []                         # loudness 0: silent
+                velocity = pp.level_velocity(velocity, part["level"])       # (None at loudness 0)
         spread = 0
         if role.startswith("strum") or role == "step:strum":
             spread = 14 if (role.endswith("down") or role == "step:strum") else 10
-        return [Note(tick + k * spread, ticks, pitch, max(1, velocity - (k * 3 if spread else 0)))
-                for k, pitch in enumerate(pitches) if 0 <= pitch <= 127]
+
+        def struck(how_hard):
+            return [Note(tick + k * spread, ticks, pitch, max(1, how_hard - (k * 3 if spread else 0)))
+                    for k, pitch in enumerate(pitches) if 0 <= pitch <= 127]
+
+        if plain is not None:
+            plain.extend(struck(velocity if loud is None else loud))
+        return [] if velocity is None else struck(velocity)          # loudness 0: silent
 
     touch = None
     for bar in bars:
@@ -2708,9 +2818,11 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
                     else:
                         role = "arp:{}".format(s)
                     events.append((s, 1, 0.8, role))
-        if follow:
+        in_bar = [h for h in hits_in if bar.start <= h.tick < bar.end] if follow else []
+        # rules 7 (Russell, 25 Oct 2026): a bar where the followed track plays nothing plays the style's own part,
+        # untouched (about 100 - Follow amount percent of its notes were kept, at random: two or three scattered notes)
+        if follow and (in_bar or not seventh):
             amount = settings["follow_amount"] / 100.0
-            in_bar = [h for h in hits_in if bar.start <= h.tick < bar.end]
             rhythm_hits = followed and [h for h in in_bar if h in followed] or in_bar
             kept = []
             for event in events:
@@ -2731,18 +2843,33 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
                     events.append((step, length, 0.6 + 0.4 * hit.weight, role.format(k)))
                     matched.add(hit.tick)
         if part["passing"]:
-            events = _passing_notes(bar, events, changing)
+            events = _passing_notes(bar, events, changing, seventh)
         events = _triplet_lock(events, bar, settings["swing"], grid, lambda e: None)   # the Step view too
         if new:
             events = _struck_again_at_changes(bar, events, change_ticks, player,
-                                              chord_spans if rules_6(settings) else None)
+                                              chord_spans if rules_6(settings) else None, seventh)
+        if seventh and part["passing"] and player == "bellows":
+            # (hand-made steps win: a step set by hand on that eighth stays as set, see _part_steps; where none is set
+            # the style's own lead-in is kept for the passing note that comes back there by itself, so steps set as
+            # the Step pattern view shows them play the same)
+            mine = ({step for step, _velocity, _sound in hand_made["bars"][bar.pattern_index % len(hand_made["bars"])]}
+                    if hand_made else ())
+            events = _the_last_eighth(bar, events, changing, mine)
         events.sort(key=lambda e: e[0])
-        # every event's notes, exactly as the style plays the bar (hand-made steps then choose from them)
-        made = [(event, event_notes(bar, event, rng, state, events[k + 1][3] if k + 1 < len(events) else "root"))
-                for k, event in enumerate(events)]
+        # every event's notes, exactly as the style plays the bar (hand-made steps then choose from them); rules 7:
+        # with the part's Loudness changed, also as the style plays them at Loudness 50 (for the steps "as the style
+        # plays it")
+        plain = [] if hand_made and seventh and part["level"] != pp.LEVEL_DEFAULT else None
+        made = []
+        for k, event in enumerate(events):
+            own = None if plain is None else []
+            made.append((event, event_notes(bar, event, rng, state, events[k + 1][3] if k + 1 < len(events) else "root",
+                                            own)))
+            if plain is not None:
+                plain.append((event, own))
         if hand_made:
             made = _part_steps(bar, made, hand_made, run_start, changing, part, player, settings,
-                               lambda event, step_rng: event_notes(bar, event, step_rng, step_state))
+                               lambda event, step_rng: event_notes(bar, event, step_rng, step_state), plain)
         for event, event_list in made:
             if for_steps and event[3] == "passing":
                 continue                          # passing notes come back by themselves on hand-made steps
@@ -2760,6 +2887,34 @@ FILL_SOUND = {"strum": ("strum_down", "strum_up"), "arpeggio": ("pick:{}:0",)}
 HELD_AGAIN = {"chord": "chord", "left": "left", "shell": "shell", "power": "power", "power_up": "power",
               "strum_down": "strum_down", "strum_up": "strum_down"}
 BASS_HELD = ("root", "low", "fifth", "octave", "walk", "third")
+# Rules 7: the bass's own chord tones, which take the passing note's pitch on the last eighth before a chord change
+BASS_TONES = ("root", "low", "fifth", "octave", "third")
+
+
+def _the_last_eighth(bar, events, chord_spans, hand_made=()):
+    """Rules 7 (Russell, 25 Oct 2026: "Take that last eighth"): in a meter counted in threes (_lead_in), with passing
+    notes on, where the bass's own note, a chord tone (BASS_TONES), already starts on the eighth before a chord change
+    (straight eighths, say), so no passing note fits there, that note becomes the passing note: its own start, length
+    (never past the change) and loudness, with the passing note's pitch, aimed at the chord after the change as a
+    passing note's is (_pitches). A note that already leads in (a walking, approach or passing note), a fill's run, a
+    ghost note, a note on a beat or where the chord changes, and one with another note after it before the change stay
+    as they are; so do the keys, synth and guitar, and hand-made steps (only the style's own part comes here).
+    hand_made: the steps where a step set by hand starts in this bar: the style's own note there stays as it is (it is
+    what a step "as the style plays it" plays); elsewhere the style's lead-in is what comes back by itself."""
+    if _lead_in(bar, True) != 2:
+        return events
+    into = {(start - bar.start) // STEP for start, _end, _change in chord_spans
+            if bar.start < start <= bar.end and (start - bar.start) % STEP == 0}
+    starts = [e[0] for e in events]
+    out = []
+    for event in events:
+        step, length, role = event[0], event[1], event[3]
+        change = step + 2
+        if (role in BASS_TONES and change in into and step not in into and step not in bar.beats
+                and not any(step < other < change for other in starts) and step not in hand_made):
+            event = (step, min(length, 2), event[2], "passing") + tuple(event[4:])
+        out.append(event)
+    return out
 
 
 def _played_steps(bar):
@@ -2784,18 +2939,30 @@ def _beat_nearest(bar, place, top=None):
     return min(starts, key=lambda first: (abs(first - place), first))
 
 
-def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None):
+def _picked(player, role):
+    """Rules 7: an arpeggio note (the keys' or the synth's: a shape and a place in it, "up:3", an Alberti bass's, a
+    pluck's) or a guitar's picked note ("pick:2:0"): its pitch is worked out on the chord where it is played."""
+    if player == "hammer":
+        return role.startswith("pick:")
+    return player in ("ember", "spark") and ":" in role and not role.startswith("step:")
+
+
+def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None, arpeggios=False):
     """Rules 3 (the review, 23 Oct 2026): a held note or chord that the chord track changes under is cut where the
     chord changes and struck again on the new chord (a pad, a whole note or a ringing chord kept the old chord to the
     end of the bar); the bass plays the new chord's root there. chord_spans: rules 6 (the third review, 25 Oct 2026):
     the next bar's chord pushed in early ("next") is not cut where the chord changes to that very chord (a pad pushed
     in on the and of four, with the change on the last sixteenth, was cut to a sixteenth and the last sixteenth was
-    silent); where it changes to another chord, that chord is struck."""
+    silent); where it changes to another chord, that chord is struck. arpeggios: rules 7 (Russell, 25 Oct 2026): an
+    arpeggio or picked note (_picked) cut where the chord changes gives way to the new chord at once: the same note of
+    the arpeggio, worked out on the new chord, from the change until the cut note would have ended or the next note
+    starts (it was silent until the next note: half a beat in a figure of one note a beat). Where two ringing notes
+    are cut, the later one goes on, so it is one note, as the arpeggio plays."""
     changes = sorted((t - bar.start) // STEP for t in change_ticks
                      if bar.start < t < bar.end and (t - bar.start) % STEP == 0)
     if not changes:
         return events
-    out, again = [], []
+    out, again, picked = [], [], []
     for event in events:
         step, length, role = event[0], event[1], event[3]
         cuts = [c for c in changes if step < c < step + length]
@@ -2810,6 +2977,9 @@ def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None
         if role == "next" and chord_spans is not None:
             sound = "chord"
         if sound is None:
+            if arpeggios and _picked(player, role):
+                bounds = cuts + [step + length]
+                picked += [(step, (a, b - a) + tuple(event[2:])) for a, b in zip(bounds, bounds[1:])]
             continue                       # a passing, approach or arpeggio note: the next one comes by itself
         bounds = cuts + [step + length]
         again += [(a, b - a, event[2], sound) for a, b in zip(bounds, bounds[1:])]
@@ -2822,6 +2992,16 @@ def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None
         if (event[0], kind(event[3])) not in starts:
             starts.add((event[0], kind(event[3])))
             out.append(event)
+    if picked:
+        heard = sorted({e[0] for e in out if kind(e[3]) == "main"})
+        for _first, event in sorted(picked, key=lambda item: -item[0]):     # the latest struck first
+            at = event[0]
+            if (at, "main") in starts:
+                continue                   # the arpeggio's next note (or a later one cut there) starts there already
+            following = next((s for s in heard if s > at), None)
+            end = at + event[1] if following is None else min(at + event[1], following)
+            starts.add((at, "main"))
+            out.append((at, end - at) + tuple(event[2:]))
     return out
 
 
@@ -2869,12 +3049,15 @@ def _one_at_a_time(notes, player, end=None):
     return sorted(out, key=lambda n: (n.tick, n.pitch))
 
 
-def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings, notes_of):
+def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings, notes_of, plain=None):
     """A part's hand-made steps in one bar. made: [(event, notes)], the bar as the style plays it. A step "as the
     style plays it" plays the style's own notes on that step, at the step's loudness (or, where the style plays
     nothing on it in this bar, the player's main sound); any other sound is worked out from the chord and lasts until
     the next step. A fill still takes over where its run starts, and with passing notes on, a short note still leads
-    into each chord change where no step starts. Returns [(event, notes)]."""
+    into each chord change where no step starts. plain: rules 7, `made` as the style plays it at the part's Loudness
+    50 (None: `made` itself): a step "as the style plays it" plays those notes, at the step's loudness, whatever the
+    part's Loudness (Russell, 25 Oct 2026: at Loudness 0 the style's notes were silent, so the step played the
+    player's main sound instead, a full chord on the keys). Returns [(event, notes)]."""
     pattern = steps["bars"][bar.pattern_index % len(steps["bars"])]
     limit = bar.steps if run_start is None else run_start
     on = [(step, velocity, sound) for step, velocity, sound in pattern if step < limit]
@@ -2885,6 +3068,11 @@ def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings
             continue
         where = passing if event[3] == "passing" else style_notes
         where.setdefault(int(round(event[0])), []).extend(event_list)
+    if plain is not None:
+        style_notes = {}
+        for event, event_list in plain:
+            if event[3] != "passing" and (run_start is None or event[0] < run_start):
+                style_notes.setdefault(int(round(event[0])), []).extend(event_list)
     out = [(event, event_list) for event, event_list in made if run_start is not None and event[0] >= run_start]
     for k, (step, velocity, sound) in enumerate(on):
         following = on[k + 1][0] if k + 1 < len(on) else limit
@@ -2902,7 +3090,7 @@ def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings
         out = _steps_struck_again(bar, out, chord_spans, notes_of, step_rng)
     if part["passing"]:
         taken = [event for event, _notes in out]
-        added = _passing_notes(bar, taken, chord_spans)[len(taken):]
+        added = _passing_notes(bar, taken, chord_spans, rules_7(settings))[len(taken):]
         # eighth swing's triplet feel, as on the style's own passing notes (a passing note on an "a" joins the "and",
         # or is left out where something already starts there)
         locked = _triplet_lock(added + [(e[0], None) for e in taken], bar, settings["swing"], swing_grid(settings),

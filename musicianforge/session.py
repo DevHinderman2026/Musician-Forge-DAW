@@ -269,7 +269,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if place:
             if self.song.track_by_id(place.get("track")) is not None:
                 self.selected_track_id = place["track"]
-            self._playhead = max(0, min(int(place["playhead"]), self.song.song_end_tick() - 1))
+            # the end of the song itself is a place to be (0.9.11: a song played to its end stays there), so a
+            # project saved there opens there; a place past the end (a damaged file) is pulled in as _clamp_playhead
+            # does, to the start of the last bar, never the very last tick ("beat 4.999")
+            self._playhead = max(0, int(place["playhead"]))
+            self._clamp_playhead()
         self._sync_engine()
         self.engine.locate(self._playhead)
         self.modified = False   # last, so anything tidied while loading is not counted as a change
@@ -492,6 +496,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self._take is not None:
             self._take["undo_open"] = False
             self._take["count"] = 0      # notes said as recorded are only the ones still in the song
+            self._take["notes"] = []     # (and the take's own notes, for _place_take_region: the same ones)
+            self._take.pop("regions", None)     # (and the regions there were before its passes, the same way)
 
     def _replace_song(self, song):
         selected = self.selected_track_id
@@ -824,19 +830,25 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def _clamp_playhead(self):
         """After the song got shorter (a section deleted or shortened, an undo): a playhead past the end goes to the
-        start of the last bar, not to the very last tick ("Bar 4, beat 4.999")."""
+        start of the last bar, not to the very last tick ("Bar 4, beat 4.999"). The end of the song itself, where the
+        song stops when it has played through (_stopped_at_the_end), is a place the playhead may stay."""
         song_end = self.song.song_end_tick()
-        if self._playhead >= song_end:
+        if self._playhead > song_end:
             tl = self.song.timeline
             self._playhead = max(0, tl.bar_to_tick(max(1, self.song.end_bar() - 1)))
         self._playhead = max(0, self._playhead)
 
-    def _clamped_playhead(self):
-        """The playhead, pulled back inside the song if it is past the end."""
+    def _clamped_playhead(self, playing=False):
+        """The playhead, pulled back inside the song if it is at or past the end: for Space (and Record) with All
+        sections on, to the start of the song (Russell, 25 Oct 2026: Space at the end of the song plays it from the
+        start), otherwise to the start of the last section."""
         song_end = self.song.song_end_tick()
         if self._playhead >= song_end:
-            start, _end = self.section_ticks(len(self.song.sections) - 1)
-            self._playhead = start
+            if playing and self.all_sections:
+                self._playhead = 0
+            else:
+                start, _end = self.section_ticks(len(self.song.sections) - 1)
+                self._playhead = start
         return self._playhead
 
     def _plan_region(self, tick, recording):
@@ -860,7 +872,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self.engine.playing:
             self.stop()
             return
-        tick = self._clamped_playhead()
+        # a stop the engine has just made at the end of the song, not yet handled (the window looks ten times a
+        # second), is handled first: otherwise playing started now would be sent back to the end by it and stop
+        self.poll()
+        tick = self._clamped_playhead(playing=True)
         self._play_start = tick
         self._region_play_start = None
         self.new_write_pass()
@@ -926,7 +941,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if speak:
                 self.announce("Recording on {}".format(track.name))
         else:
-            tick = self._clamped_playhead()
+            self.poll()                                      # (a stop at the song's end first, as in toggle_play)
+            tick = self._clamped_playhead(playing=True)     # at the end of the song, as Space: from the start
             self._play_start = tick
             self._region_play_start = None
             self.new_write_pass()
@@ -1025,8 +1041,18 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             return
         tl = self.song.timeline
         tick = self.position_tick()
+        if count > 0 and tick >= self.song.song_end_tick():
+            # at the end of the song, where a song played to its end stays (0.9.11): it stays there, as Forward
+            # does (locate pulled it back to the song's last tick, "beat 4.999")
+            self.announce("End of song")
+            return
         bar, beat = tl.tick_to_position(tick)
         target = tl.position_to_tick(bar, int(beat)) + count * tl.ticks_per_beat(bar)
+        if count > 0 and target >= self.song.song_end_tick():
+            # from the last beat: no beat after it, so it stays, as Forward does on the last bar (it went to the
+            # song's last tick, "beat 4.999")
+            self.announce("End of song")
+            return
         floor = self._floor_tick()
         if count < 0 and target < floor:
             if tick <= floor:
@@ -1125,19 +1151,20 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
 
     def _stopped_at_the_end(self):
         """The engine reached where it was told to stop: the end of the song (All sections), or the end of a region
-        played through on its own (play_note_region). The playhead goes back to the start of the song, or of that
-        region, and the words say where it is. Until the third review of 25 Oct 2026 it was left on the very last
-        tick of the song: Space then played that one tick and said "End of song, stopped" again, and a project saved
-        there opened at "bar 1, beat 4.999"."""
+        played through on its own (play_note_region). At the end of the song the playhead stays there (Russell,
+        25 Oct 2026: "The play had to just stop at the end and not go back to the start"), read as the end of the
+        song, the bar after the last ("End of song, stopped. Bar 121, beat 1"), and Space there plays the song from
+        the start (_clamped_playhead). A region played through on its own goes back to that region's start. Until
+        the third review of 25 Oct 2026 the playhead was left on the very last tick of the song: Space then played
+        that one tick and said "End of song, stopped" again, and a project saved there opened at "beat 4.999"."""
         region_start = self._region_play_start
         self._region_play_start = None
         if region_start is not None:
             self._playhead = max(0, min(int(region_start), self.song.song_end_tick() - 1))
             self.announce("Stopped, {}".format(self.describe_position(self._playhead)))
         else:
-            self._playhead = max(0, min(self._floor_tick(), self.song.song_end_tick() - 1))
-            self.announce("End of song, stopped. {}".format(
-                self.describe_bar(self.song.timeline.tick_to_bar(self._playhead))))
+            self._playhead = self.song.song_end_tick()
+            self.announce("End of song, stopped. {}".format(self.describe_position(self._playhead)))
         self.engine.locate(self._playhead)
         self.notify("transport")
 
@@ -1173,7 +1200,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 section = take["section"]
                 if (not partial and take["automatic"] and section < len(self.song.sections)
                         and self.song.sections[section].automatic):   # Control+Z during the take can change that
-                    arrange.grow_section_for_recording(self.song, section, notes)
+                    self._grow_for_take(section, notes, take)
+                take.setdefault("regions", list(track.note_regions))   # (_place_take_region: before its passes)
+                take.setdefault("notes", []).extend(notes)     # (_place_take_region: the take's own notes)
                 track.notes.extend(notes)
                 track.sort_notes()
                 if not partial and not track.is_audio:
@@ -1213,6 +1242,12 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         went round. It keeps the name of the region it was recorded into, and bars of a muted region stay a muted
         region of their own (a take used to unmute them); a rhythm player region gives way for those bars only. Both
         are said when recording stops (second review, 23 Oct 2026: a take wiped the whole section's rhythm player).
+
+        A looping region the take lands on (its first play or its repeats) carries on after the take exactly as it
+        would have played, and plays as before up to it (0.9.11; Russell, 25 Oct 2026: "the repeats carry on after
+        the recording"; until then the take, being the next region, cut the loop where it began, and the bars after
+        it went silent). The bars the take recorded in a loop's repeats count as that region's bars: its name, muted,
+        or the rhythm player the take replaced there.
         """
         tl = self.song.timeline
         stop = max(take["end"], int(round(self.engine.position_tick())), take["start"] + 1)
@@ -1225,13 +1260,46 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 start, end = max(start, loop_start), min(end, loop_end)
         else:
             start, end = regions.bar_span(tl, take["start"], stop)
-        covered = [r for r in track.note_regions if r.start < end and r.end > start]
-        names = {r.name for r in covered if not r.player and not r.mute}
-        muted = [(max(r.start, start), min(r.end, end), r.name) for r in covered if not r.player and r.mute]
-        replaced = [(max(r.start, start), min(r.end, end)) for r in covered if r.player]
+        from . import arrangement
+
+        # a take that went round the looping section put each pass's notes in the song as it was played, and they got
+        # regions of their own bar (Song.tidy_regions): those are the take's bars, so they are left out here (the
+        # fourth review of 25 Oct 2026: they cut a loop the take lands on at its first note, so the repeats after the
+        # take went silent, and the take lost the region's name)
+        before_passes = {id(r) for r in take.get("regions", track.note_regions)}
+        track.note_regions = [r for r in track.note_regions
+                              if id(r) in before_passes or not (start <= r.start and r.end <= end)]
+        # the regions the take lands on, in their own bars or in a loop's repeats: (region, where its playing stops)
+        song_end = self.song.song_end_tick()
+        playing = []
+        for i, r in enumerate(track.note_regions):
+            until = r.end if r.loops == 1 else arrangement.note_region_repeats(track, i, song_end)[1]
+            if r.start < end and until > start:
+                playing.append((r, until))
+        names = {r.name for r, _until in playing if not r.player and not r.mute}
+        muted = [(max(r.start, start), min(until, end), r.name) for r, until in playing if not r.player and r.mute]
+        replaced = [(max(r.start, start), min(until, end)) for r, until in playing if r.player]
+        # each looping one as it was, with its own notes: the take's notes are told apart by being those very notes
+        # (identity), so a note of the region that happens to be the same as one played in the take is still copied
+        mine = {id(n) for n in take.get("notes", ())}
+        loops = [(copy.deepcopy(r), [copy.copy(n) for n in track.notes
+                                     if r.start <= n.tick < r.end and id(n) not in mine], until)
+                 for r, until in playing if r.loops != 1]
+        # what a rhythm player loop played before the take, for matching what carries it on (_match_loops)
+        before = self._loop_snapshot(take.get("notes", ()), [track]) if any(was.player for was, _o, _u in loops) \
+            else {}
         regions.claim(track, start, end, name=names.pop() if len(names) == 1 else "")
         for first, last, muted_name in muted:          # muted bars stay muted (the take's notes there too)
             regions.claim(track, first, last, name=muted_name, mute=True)
+        carried = arrange.LoopsCarriedOn()
+        for was, own, until in loops:
+            if until > end:                            # after the take, the loop goes on with the phase it had
+                carried.append((track, regions.continue_loop(track, was, own, end, end, until, song_end), was, end, end,
+                                until))
+            if was.start < start:                      # up to the take it plays as it did (its line says so)
+                head = next((r for r in track.note_regions if r.start == was.start), None)
+                if head is not None:
+                    regions.stop_loop_at(track, head, start, own, first_end=was.end)
         words = []
         if replaced:
             bars = []
@@ -1244,7 +1312,97 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if muted:
             words.append("{} of the recording is in a muted region. M in the Regions list unmutes it".format(
                 "All" if [(m[0], m[1]) for m in muted] == [(start, end)] else "Part"))
+        if self._match_loops(before, carried) or take.get("loop_notes"):
+            words.append("The loop carries on after the recording as notes, so it sounds as it did")
         take["words"] = ". ".join(words)
+
+    def _loop_snapshot(self, without=(), tracks=None):
+        """What each instrument track with a looping rhythm player region plays now: {track id: (its notes on the grid,
+        its notes as heard, and the same two with its muted looping rhythm player regions unmuted)}, so that once an
+        edit is done _match_loops can tell whether a rhythm player copy carrying a loop on sounds like the loop.
+        without: notes on a track to leave out (a take's own, already there). tracks: the ones to look at (default:
+        every one)."""
+        skip = {id(n) for n in without}
+        found = {}
+        for track in self.song.tracks if tracks is None else tracks:
+            if track.is_audio or not any(r.player and r.loops != 1 for r in track.note_regions):
+                continue
+            played = track
+            if skip:
+                played = copy.copy(track)
+                played.notes = [n for n in track.notes if id(n) not in skip]
+            found[track.id] = (self.sounding_notes(played, human=False), self.sounding_notes(played))
+            unmuted = self._as_if_unmuted(played)
+            found[track.id] += found[track.id] if unmuted is played else \
+                (self.sounding_notes(unmuted, human=False), self.sounding_notes(unmuted))
+        return found
+
+    @staticmethod
+    def _as_if_unmuted(track, span=None):
+        """The track with its muted looping rhythm player regions unmuted (and, span (start, end), the regions that
+        start there: what carries a loop on), so a muted loop is matched to what it would play unmuted, as Turn into
+        notes writes one out (the fourth review of 25 Oct 2026: muted, the loop and its copy both played nothing, so
+        the copy was never matched, and once unmuted it played other chords than the loop). The track itself when
+        there are none."""
+        def unmute(r):
+            return r.mute and ((r.player and r.loops != 1) or (span is not None and span[0] <= r.start < span[1]))
+
+        if not any(unmute(r) for r in track.note_regions):
+            return track
+        played = copy.copy(track)
+        played.note_regions = []
+        for region in track.note_regions:
+            if unmute(region):
+                region = copy.copy(region)
+                region.mute = False
+            played.note_regions.append(region)
+        return played
+
+    def _match_loops(self, before, carried):
+        """Russell, 25 Oct 2026 ("Match the loop"): what carries a loop on after a take, or after bars put in or taken
+        out in the middle of it, must sound like the loop. A rhythm player copy is performed where it now is, so where
+        the chords there are different, or where it is only the rest of a repeat (it starts its pattern afresh), it
+        would play something else. Each copy is compared, on the grid, with what the loop's own repeats played in those
+        bars before the edit (before: _loop_snapshot); where they differ, those bars become one ordinary note region
+        holding exactly what the loop played there, as it was heard, up to where its playing stopped. carried: an
+        arrange.LoopsCarriedOn. Returns True when a loop was written out as notes."""
+        written = False
+        for track, placed, was, p, q, until in carried:
+            if not was.player or not placed or track.id not in before:
+                continue
+            # (a muted loop: matched to what it would play unmuted, _as_if_unmuted)
+            grid, heard = before[track.id][2:] if was.mute else before[track.id][:2]
+            shift, end = q - p, q + until - p
+            loop = [[n.tick + shift, n.length, n.pitch, n.velocity] for n in grid if p <= n.tick < until]
+            copied = [n.as_list() for n in self.sounding_notes(self._as_if_unmuted(track, (q, end)) if was.mute
+                                                               else track, human=False) if q <= n.tick < end]
+            if copied == loop:
+                continue
+            song_end = self.song.song_end_tick()     # (a note ringing past it would make the song longer: loop_pieces)
+            regions.write_loop_out(track, q, end, [Note(n.tick + shift, min(n.length, song_end - n.tick - shift),
+                                                        n.pitch, n.velocity)
+                                                   for n in heard if p <= n.tick < until], was.name, was.mute)
+            written = True
+        return written
+
+    @contextmanager
+    def _matching_loops(self, without=(), tracks=None):
+        """Around an arrange change that may carry loops on, inside its edit (so it is the same undo step): yields the
+        arrange.LoopsCarriedOn to give it as loops_placed, then matches what it carried on to the loops (_match_loops);
+        its `written` then says whether a loop was written out as notes."""
+        before = self._loop_snapshot(without, tracks)
+        carried = arrange.LoopsCarriedOn()
+        yield carried
+        carried.written = self._match_loops(before, carried)
+
+    def _grow_for_take(self, section, notes, take):
+        """A take in an Automatic section makes the section longer to hold notes played past its end
+        (arrange.grow_section_for_recording). A loop playing across its end carries on after the new bars, matched to
+        the loop (_matching_loops); the take's words say so when it was written out as notes."""
+        with self._matching_loops(take.get("notes", ())) as carried:
+            arrange.grow_section_for_recording(self.song, section, notes, loops_placed=carried)
+        if carried.written:
+            take["loop_notes"] = True
 
     def _wait_for_engine(self, timeout=0.5):
         """After stop: give the audio thread a moment to hand back the recording."""
@@ -1292,9 +1450,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self.engine.recording:
             raise ValueError("Stop recording before changing sections")
         after = self.current_section_index() if after_index is None else after_index
-        with self.edit("add section"):
-            index = arrange.add_section_after(self.song, after, length)
-        self.announce("Added {}".format(self.describe_section(index)))
+        with self.edit("add section"), self._matching_loops() as carried:
+            index = arrange.add_section_after(self.song, after, length, loops_placed=carried)
+        words = ". The loop carries on after the new section as notes, so it sounds as it did" if carried.written \
+            else ""
+        self.announce("Added {}{}".format(self.describe_section(index), words))
         return index
 
     def duplicate_section(self, index):
@@ -1309,10 +1469,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self.engine.recording:
             raise ValueError("Stop recording before changing sections")
         name = self.song.section_name(index)
-        with self.edit("delete section"):
-            arrange.delete_section(self.song, index)
+        with self.edit("delete section"), self._matching_loops() as carried:
+            arrange.delete_section(self.song, index, loops_placed=carried)
         self._clamp_playhead()
-        self.announce("Deleted {}".format(name))
+        self.announce("Deleted {}{}".format(name, ". The loop carries on as notes, so it sounds as it did"
+                                            if carried.written else ""))
         return min(index, len(self.song.sections) - 1)
 
     def move_section(self, index, delta):
@@ -1328,6 +1489,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         """Section settings: name (empty = its number), length in bars, Automatic switch."""
         if self.engine.recording:
             raise ValueError("Stop recording before changing sections")
+        carried = None
         with self.edit("section settings"):
             section = self.song.sections[index]
             if name is not None:
@@ -1335,9 +1497,12 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if automatic is not None:
                 section.automatic = bool(automatic)
             if length is not None and int(length) != section.length:
-                arrange.set_section_length(self.song, index, int(length))
+                with self._matching_loops() as carried:
+                    arrange.set_section_length(self.song, index, int(length), loops_placed=carried)
         self._clamp_playhead()
-        self.announce("Section settings saved. {}".format(self.describe_section(index)))
+        self.announce("Section settings saved. {}{}".format(
+            self.describe_section(index), ". The loop carries on as notes, so it sounds as it did"
+            if carried is not None and carried.written else ""))
 
     def notes_lost_if_shortened(self, index, new_length):
         start, end = self.song.section_bounds(index)
@@ -1668,8 +1833,13 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 ours.add(id(region))
                 last_end = max(last_end, region.end_tick(tl))
             track.sort_regions()
+            loop_notes = False
             if take["automatic"]:
-                arrange.grow_section_to(self.song, take["section"], last_end)
+                # (a loop on another track playing across the section's end carries on after the new bars, matched
+                # to the loop, as with a take of notes: _grow_for_take)
+                with self._matching_loops() as carried:
+                    arrange.grow_section_to(self.song, take["section"], last_end, loops_placed=carried)
+                loop_notes = carried.written
         warning = audiotracks.recording_warning(audio)
         if warning:
             self.announce(warning, interrupt=False)  # always said: something needs attention
@@ -1686,6 +1856,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         for region, index in short_passes:
             self.announce("The last pass was cut short when you stopped, so it is kept as take {} and take {} still "
                           "plays.".format(index + 1, region.active + 1), interrupt=False)
+        if loop_notes:
+            self.announce("The loop carries on after the recording as notes, so it sounds as it did", interrupt=False)
 
     def _new_recording_path(self, stem=None):
         """Where a new recording (or an imported file's copy) goes: the project's Recordings folder, or

@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.10 before its first release.
+For people trying Musician Forge 0.9.11 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -311,6 +311,112 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** It opens and plays as before.
 
+## New in 0.9.11
+
+### Step Z.1: Reforge while the song plays
+
+**What to check:** Add a rock drummer, and a Spark (synth) region with the style Pad on a track of its own. Play the song. While it plays, arrow to the drummer's region in the Regions list and press Control+R (Reforge) a few times. Then stop, and press Control+R once more.
+
+**What to expect:** The song keeps playing where it is. Each Control+R says "Regenerated performance", and the new fills and details come in from there on, so you can try one performance after another. The playhead never jumps back, and the pad's long chords keep sounding. Stopped, Control+R plays the region from its start, as before.
+
+### Step Z.2: Held notes and the EQ while playing
+
+**What to check:** With the pad playing long chords, press Control+Shift+T (Tempo changes), press Enter on the first tempo change, type a slower tempo and press Enter. Then add an EQ to the pad's track (Control+F, Alt+A) and arrow through its presets while the song plays.
+
+**What to expect:** The tempo changes at once and the chord that was sounding keeps sounding, with no new attack and no gap. The EQ presets blend smoothly from one to the next, with no clicks, even when you arrow quickly.
+
+### Step Z.3: The end of the song
+
+**What to check:** Turn on All sections (Transport group) and play the last few bars of the song. Let it play to its end. Press Space. Let it play to its end again, press Control+S, close the project (Control+W) and open it again.
+
+**What to expect:** It stops at the end and stays there: "End of song, stopped. Bar 17, beat 1" in a 16-bar song (the bar after the last). Space plays the song again from bar 1, and Record would record from bar 1 too. The reopened project is at the end of the song, where it was saved.
+
+### Step Z.4: Asking before replacing
+
+**What to check:** In Tempo changes, press Alt+A, type the bar and beat of a tempo change that is already there and press Enter. Press Escape, then Enter again and answer Yes. Press Control+Z. Try the same in Time signature changes (Control+Shift+M), Key changes (Control+Shift+K), the Chord track (Control+Shift+H) and an automation lane's points (Control+Shift+U, then Enter on a lane).
+
+**What to expect:** It asks first, for example "There is already a tempo change at bar 5, beat 1 (90 BPM). Replace it?". Escape (or No) brings the Add window back with what you typed still in it. Yes replaces it, and Control+Z brings the old one back. Editing a change with Enter never asks.
+
+### Step Z.5: Escape on a Yes or No question
+
+**What to check:** Press Delete on a track in the Tracks list, then press Escape. Do the same on a region in the Regions list.
+
+**What to expect:** Escape answers No: nothing is deleted. Before 0.9.11 these questions could not be closed with Escape.
+
+### Step Z.6: A big MIDI file
+
+**What to check:** Import a MIDI file of a few megabytes (Control+Shift+I). Import it again and press Escape while it is being read. Then import a small MIDI file.
+
+**What to expect:** A window called "Importing MIDI file" says "Reading the MIDI file" and the percentage as it goes. Escape closes it and says "Import cancelled", and nothing changes. A small file shows no progress window at all.
+
+### Step Z.7: Trimmed, and Play keeping the focus
+
+**What to check:** In the Regions list, press Alt+Enter on a region, change "Ends at bar" and press Enter. Then open Recordings (Control+L on an audio track) and Chord strips (Control+Shift+J), Tab to Play in each and press Space twice.
+
+**What to expect:** You hear "Trimmed" first, then the region's line once. In both windows the focus stays on Play, so Space plays and Space again stops.
+
+### Step Z.8: A loop keeps looping
+
+**What to check:** Fill the chord track with chords at bars 1 and 2 only. Add a Spark Pad region over bars 1 and 2 and, with Alt+Enter, make it play 4 times. In the Tracks list, on the pad's track, press Control+G and go to bar 5, press R, play a few notes and press R again in bar 6. Then add a 2-bar drummer region that plays 8 times, open Sections (Song group), select Section 1 and press Alt+A. Last, press Enter on a looping player region and choose Turn into notes.
+
+**What to expect:** Your notes replace bars 5 and 6, and the pad carries on in bars 7 and 8 exactly as the loop played; since the chord track has no chords there, it is written out as notes, and Musician Forge says "The loop carries on after the recording as notes, so it sounds as it did". The drummer's loop keeps playing on both sides of the new section and stays a rhythm player. Turn into notes writes out every repeat you hear, as one longer region that no longer loops. Each of these is one Control+Z.
+
+### Step Z.9: The drummer's foot and the percussion
+
+**What to check:** Add a funk drummer, set its Intensity to 90 and play. Then add a rock drummer, turn on its Shaker, tambourine, cowbell and claves with Space, set Fill amount to 100 and play. Last, add a pop drummer and play.
+
+**What to expect:** In funk the hi-hat opens on two and four and the Hi-hat pedal waits there, so the open hi-hat rings instead of being cut off by the foot. The rock tambourine plays every one of its notes, through the fills too, as if a second player had it. The pop drummer's own tambourine on two and four is heard now.
+
+### Step Z.10: The Ride in metal variations 3 and 4
+
+**What to check:** Add a metal drummer and choose variation 3. In its Kit pieces, press Space on the Ride, then Space on the Ride again. Then press Space on the Hi-hat, Space on the Ride, Space on the Ride again, and Space on the Hi-hat again.
+
+**What to expect:** Space on the Ride says "Ride on with eighth notes, crash off", and the Crash cymbals line reads "Crash cymbals: off, the ride keeps time"; Space again says "Ride off, crash on". With the Hi-hat on first, the Ride says "Ride on with the hi-hat's rhythm, hi-hat off", then "Ride off, hi-hat on", and turning the Hi-hat off says "Hi-hat off, crash on". One cymbal always keeps time, and each change is one Control+Z.
+
+### Step Z.11: Following a track that stops
+
+**What to check:** Record a short piano part in bar 1 only. Add Bellows (bass) on a track of its own, and in its editor set Follow to Another track and Track to follow to the piano. Do the same with a drummer. Play.
+
+**What to expect:** In bar 1 the bass and the drummer's kick follow the piano. In the bars after it, where the piano plays nothing, they play their own parts in full instead of two or three scattered notes.
+
+### Step Z.12: 6/8 and arpeggios
+
+**What to check:** Set the time signature to 6/8 (Control+Shift+M). Add Bellows with the style Driving eighths, turn on "Add passing notes into each chord change" in its part's settings, and fill the chord track from a progression. Then add Ember (keys) with the style Ballad arpeggio, put a chord change in the middle of a bar, and play.
+
+**What to expect:** In 6/8 the bass's last eighth before each chord change leads into the new chord. The arpeggio does not go quiet at a chord change in the middle of one of its notes: the next chord's note starts right at the change.
+
+### Step Z.13: Move region keeps its window
+
+**What to check:** In the Regions list, press the Region group's Move region button, type bar 1, beat 9 and press Enter. Then change the beat to 2 and press Enter.
+
+**What to expect:** It says "Bar 1 has 4 beats, so the beat must be from 1 to 4" over the still-open window, with what you typed still in it. The second time the region moves.
+
+## New in 0.9.10
+
+### Step Y.1: A kick under every crash
+
+**What to check:** Add a rock drummer (Anvil, Rock) and set its Fill amount to 100 in its editor. In its Kit pieces, press Space on the Kick ("Kick off") and play the region from its start. Then press Enter on Crash cymbals, set When a crash comes to Never, and play it again.
+
+**What to expect:** With the Kick off the groove plays no kicks, but where the region starts and after every fill the kick still lands with the crash, as a drummer's foot does. With Never there is no crash there, and no kick with it. Each change is one Control+Z.
+
+### Step Y.2: Following a strummed guitar
+
+**What to check:** Add Hammer (guitar) with the style Rock strum, then Bellows (bass) on a track of its own. In the bass's editor, set Follow to Another track and Track to follow to the guitar's track. Play.
+
+**What to expect:** The bass lands with each strum, on the beat, instead of stuttering through the strum's six strings.
+
+### Step Y.3: Duplicating a looping region
+
+**What to check:** In the Regions list, press Alt+Enter on a region and make it play 4 times. Press Control+D (Duplicate) and arrow through the Regions list.
+
+**What to expect:** The copy starts after the last repeat, and the first region's line still says "loops 4 times, to bar ...".
+
+### Step Y.4: Moves that cannot be made
+
+**What to check:** In the Regions list, press the Region group's Move region button and type bar 1, beat 9. Then open Tempo changes (Song group), add changes at bar 5 and bar 9, edit the one at bar 9 and give it bar 5, beat 1.
+
+**What to expect:** Move region says "Bar 1 has 4 beats, so the beat must be from 1 to 4", and the window stays open with what you typed, so you can put it right. The tempo change is not moved: it says "Another tempo change is already at bar 5, beat 1, so this one was not moved", and the window stays open. Nothing is lost.
+
 ## New in 0.9.9
 
 ### Step X.1: Changing the style keeps one cymbal keeping time
@@ -586,7 +692,7 @@ Then add a metal drummer, choose variation 3, and press Space on its Hi-hat, the
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.10
+## Known limits in 0.9.11
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

@@ -6,7 +6,8 @@ control is reached with Tab, buttons have underlined letters, and every change i
 
 import wx
 
-from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
+from .. import automation as auto
+from .common import (DecimalField, Form, ShowAgain, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
                      keep_enter_for_lists, note_text, says_after, show_error, show_items, spin_ctrl)
 
 
@@ -52,7 +53,9 @@ class _ListWindow(wx.Dialog):
 class AutomationDialog(_ListWindow):
     """A track's automation lanes: what changes over time on this track."""
 
-    def __init__(self, parent, session, track_id, run_modal=None, confirm=None):
+    def __init__(self, parent, session, track_id, run_modal=None, confirm=None, confirm_replace=None):
+        """confirm(words) asks Yes or No; confirm_replace(words) is the question before Add takes the place of a point
+        already at that moment, in a lane's Points window (confirm when not given)."""
         track = session.song.track_by_id(track_id)
         super().__init__(parent, title="Automation: {}".format(track.name),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
@@ -60,6 +63,7 @@ class AutomationDialog(_ListWindow):
         self.track_id = track_id
         self.run_modal = run_modal or (lambda dialog: dialog.ShowModal())
         self.confirm = confirm or (lambda message: True)
+        self.confirm_replace = confirm_replace or self.confirm
         body = wx.BoxSizer(wx.VERTICAL)
         body.Add(wx.StaticText(self, label="Automation lanes on {} (what changes over time)".format(track.name)))
         self.list = wx.ListBox(self, size=(540, 180))
@@ -113,7 +117,7 @@ class AutomationDialog(_ListWindow):
         if index is None:
             return self.add()
         with LanePointsDialog(self, self.session, self.track_id, index, run_modal=self.run_modal,
-                              confirm=self.confirm) as dlg:
+                              confirm=self.confirm, confirm_replace=self.confirm_replace) as dlg:
             self.run_modal(dlg)
         self.refresh(index)
 
@@ -156,12 +160,13 @@ class AddLaneDialog(wx.Dialog):
 class LanePointsDialog(_ListWindow):
     """One lane's points, in song order."""
 
-    def __init__(self, parent, session, track_id, lane_index, run_modal=None, confirm=None):
+    def __init__(self, parent, session, track_id, lane_index, run_modal=None, confirm=None, confirm_replace=None):
         self.session = session
         self.track_id = track_id
         self.lane_index = lane_index
         self.run_modal = run_modal or (lambda dialog: dialog.ShowModal())
         self.confirm = confirm or (lambda message: True)
+        self.confirm_replace = confirm_replace or self.confirm
         name = session.lane_name(track_id, lane_index)
         track = session.song.track_by_id(track_id)
         super().__init__(parent, title="{} automation: {}".format(name, track.name),
@@ -224,10 +229,32 @@ class LanePointsDialog(_ListWindow):
     def _set_point(self, dlg, replacing=None):
         """Make the point from what is typed in its window; inside ask_values, so a point the song refuses (moved onto
         another point, or one past the lane's limit) brings the same window back with everything typed still in it,
-        instead of its error coming after the window has closed (the review of 25 Oct 2026)."""
+        instead of its error coming after the window has closed (the review of 25 Oct 2026). A new point at the
+        moment of one already there asks first (_ask_before_replacing)."""
         values = dlg.get_values()
+        asked = replacing is None and self._ask_before_replacing(dlg, values)
         return self.session.set_point(self.track_id, self.lane_index, *values, replacing=replacing,
-                                      tick=dlg.kept_tick)
+                                      tick=dlg.kept_tick, asked=bool(asked))
+
+    def _ask_before_replacing(self, dlg, values):
+        """Add at the exact moment of a point already there would take its place (a lane keeps one point per
+        moment): asked first, Yes or No (Russell, 25 Oct 2026; until then the song replaced it and said so after).
+        No, or Escape, raises ShowAgain: the Add window comes back as it was. Yes replaces it, as one undo step, and
+        returns True (it was asked, so the song does not say "Replaced the point that was there" after it). Writing
+        automation while the song plays still replaces points without asking: that is what it is for."""
+        tl = self.session.song.timeline
+        tick = dlg.kept_tick if dlg.kept_tick is not None else tl.position_to_tick(int(values[0]), float(values[1]))
+        tick = max(0, int(tick))
+        there = next((p for p in self.points_list() if p[0] == tick), None)
+        if there is None:
+            return
+        track = self.session.song.track_by_id(self.track_id)
+        lane = self.session.lanes_of(self.track_id)[self.lane_index]
+        where = tl.describe_position(tick)
+        if not self.confirm_replace("There is already a point at {}{} ({}). Replace it?".format(
+                where[:1].lower(), where[1:], auto.spoken_value(track, lane, there[1]))):
+            raise ShowAgain()
+        return True
 
     def edit(self):
         points = self.points_list()

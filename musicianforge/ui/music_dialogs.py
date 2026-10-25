@@ -12,9 +12,10 @@ from .. import chords, player_pieces, players, theory
 from .. import player_variations as pv
 from ..session_music import FOLLOW_CHOICES, FOLLOW_NAMES, HandMadeSteps
 from ..timeline import MAX_NUMERATOR
-from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, end_dialog, enter_for_lists,
-                     finish_dialog, fit_to_screen, keep_enter_for_lists, note_text, say_after, says_after,
-                     set_note_text, show_error, show_items, silence_name, slider_ctrl, spin_ctrl)
+from .common import (DecimalField, Form, ShowAgain, a_moment_later, ask_values, choice_ctrl, enable_keeping_focus,
+                     end_dialog, enter_for_lists, finish_dialog, fit_to_screen, keep_enter_for_lists, note_text,
+                     say_after, says_after, set_note_text, show_error, show_items, silence_name, slider_ctrl,
+                     spin_ctrl)
 from .effects_dialogs import percent_label
 
 # the highest beat a beat box takes: the last beat of the longest bar (32/16 time), with decimals; each bar's own
@@ -63,11 +64,15 @@ def _button_row(dialog, specs):
 class ChordTrackDialog(wx.Dialog):
     """Every chord change in the song, in order. Rhythm players play these chords."""
 
-    def __init__(self, parent, session, run_modal=None, confirm=None):
+    def __init__(self, parent, session, run_modal=None, confirm=None, confirm_replace=None):
+        """confirm(words) asks Yes or No; confirm_replace(words) is the question before Add takes the place of a chord
+        change already at that moment (confirm when not given; the project window asks it with common.ask_replace,
+        where Escape is No)."""
         super().__init__(parent, title="Chord track", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.session = session
         self.run_modal = run_modal or (lambda dialog: dialog.ShowModal())
         self.confirm = confirm or (lambda message: True)
+        self.confirm_replace = confirm_replace or self.confirm
         body = wx.BoxSizer(wx.VERTICAL)
         body.Add(wx.StaticText(self, label="Chord changes, in song order (each lasts until the next one)"))
         self.list = wx.ListBox(self, size=(520, 220))
@@ -125,10 +130,33 @@ class ChordTrackDialog(wx.Dialog):
         return 0 if index == wx.NOT_FOUND else index
 
     def add(self):
+        def apply():
+            # made inside ask_values, as Edit does: a chord change the song refuses, or No to the question below,
+            # brings this window back with everything typed still in it
+            values = dlg.get_values()
+            self._ask_before_replacing(values)
+            return self.session.set_chord(*values)
+
         with ChordDialog(self, self.session, tick=self.session.position_tick()) as dlg:
-            values = ask_values(self.run_modal, dlg)
-        if values is not None:
-            self.refresh(self.session.set_chord(*values))
+            index = ask_values(self.run_modal, dlg, apply)
+        if index is not None:
+            self.refresh(index)
+
+    def _ask_before_replacing(self, values):
+        """Add at the moment of a chord change already there would take its place (the chord track keeps one chord
+        per moment): asked first, Yes or No (Russell, 25 Oct 2026; until then it was replaced without a word). No, or
+        Escape, raises ShowAgain: the Add window comes back as it was. Yes replaces it, as one undo step."""
+        tl = self.session.song.timeline
+        tick = tl.position_to_tick(int(values[0]), float(values[1]))
+        there = next((c for c in self.session.song.chords if c.tick == tick), None)
+        if there is None:
+            return
+        key = tl.key_at_tick(there.tick)
+        name = chords.name(there, theory.key_prefers_flats(key.tonic, key.scale))
+        where = tl.describe_position(tick)
+        if not self.confirm_replace("There is already a chord change at {}{} ({}). Replace it?".format(
+                where[:1].lower(), where[1:], name)):
+            raise ShowAgain()
 
     def edit(self):
         index = self.selected()
@@ -302,7 +330,10 @@ class ChordStripsDialog(wx.Dialog):
         finish_dialog(self, body, buttons=0)
         self.SetEscapeId(wx.ID_CANCEL)
         for key, action in (("edit", self.edit), ("play", self.play), ("reset", self.reset)):
-            self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
+            # Play leaves the focus on its button, to be pressed again, as the Event list's buttons do (Russell,
+            # 25 Oct 2026; it went back to the list, which the screen reader then read out). Change chord and Use the
+            # key's chords end in the list, whose lines they change (and Use the key's chords is dimmed once pressed)
+            self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action, k=key: self._run(a, keep_focus=k == "play"))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.edit))
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
@@ -321,13 +352,16 @@ class ChordStripsDialog(wx.Dialog):
                                  "your own. Number keys 1 to 8 play their bass notes.", width=460)
 
     @says_after
-    def _run(self, action):
+    def _run(self, action, keep_focus=False):
+        """A command of the list (its keys and buttons); the focus goes back to the list afterwards, unless
+        keep_focus (the Play button, like the Event list's buttons)."""
         try:
             action()
         except ValueError as exc:
             show_error(self, str(exc))
         self.refresh()
-        self.list.SetFocus()
+        if not keep_focus:
+            self.list.SetFocus()
 
     def selected(self):
         index = self.list.GetSelection()
@@ -1597,9 +1631,20 @@ class StepPatternDialog(wx.Dialog, _RegionWindow):
 class RegionSettingsDialog(wx.Dialog):
     """Where a region starts and ends (trim), and how many times it plays in a row (loop)."""
 
+    # After OK, what the change says first ("Trimmed") is said while this window is still open, and the window closes
+    # this long after it: the screen reader stops speaking when the focus moves, and the focus then goes back to the
+    # Regions list, which reads the region's new line (Russell, 25 Oct 2026: "Trimmed" first, then the line, once).
+    SAY_BEFORE_CLOSING_MS = 600
+
     def __init__(self, parent, session, track_id, index):
         super().__init__(parent, title="Region settings: {}".format(session.region_name(track_id, index)))
         self.session = session
+        # apply(): set by the project window. Makes the change from what is typed when OK is pressed, while the
+        # window is still open, and returns (what it made, words to say before the window closes, or None); raises
+        # ValueError in words when the song refuses it. Without it, OK just closes the window.
+        self.apply = None
+        self.applied = None              # what apply() made, once OK has made it
+        self._closing = None
         tl = session.song.timeline
         start, end = session.region_span(track_id, index)
         loops = session.region_loops(track_id, index)
@@ -1629,7 +1674,37 @@ class RegionSettingsDialog(wx.Dialog):
         finish_dialog(self, form.grid)
         self.until_next.Bind(wx.EVT_CHECKBOX, lambda e: self.times.Enable(not self.until_next.GetValue()))
         self.times.Enable(loops != 0)
+        self.Bind(wx.EVT_BUTTON, self.on_ok, id=wx.ID_OK)       # OK, and Enter (the default button)
         self.start_bar.SetFocus()
+
+    def on_ok(self, event):
+        """OK: the change is made now, while the window is open. A change the song refuses (a trim over the next
+        region) is shown over this window, which stays open with everything typed still in it. A trim says
+        "Trimmed" now and the window closes a moment later (SAY_BEFORE_CLOSING_MS); anything else closes it at once,
+        and the project window says a new loop count after the Regions list, as before."""
+        if self.apply is None:
+            event.Skip()                 # as any OK button: the window closes and its caller makes the change
+            return
+        if self.applied is not None:
+            return                       # made already: the window is about to close
+        try:
+            made, words = self.apply()
+        except ValueError as exc:
+            show_error(self, str(exc))
+            return
+        self.applied = made
+        if not words:
+            end_dialog(self, wx.ID_OK)
+            return
+        self.session.announce(words)
+        self._closing = a_moment_later(self.SAY_BEFORE_CLOSING_MS, self._close_after_words)
+
+    def _close_after_words(self):
+        try:
+            if self.IsShown() or self.IsModal():
+                end_dialog(self, wx.ID_OK)
+        except RuntimeError:             # closed already (Escape in the moment): the trim stays, as said
+            pass
 
     def get_values(self):
         """(start tick, end tick, loops: 0 means until the next region); start and end are None when

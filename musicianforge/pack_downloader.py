@@ -42,6 +42,13 @@ class PackDownloader(threading.Thread):
             for pack in lacking:
                 try:
                     path = self.install(pack, self.folder, say=log.info)
+                except packs.PackCheckError as exc:
+                    # it came, but it is not the right file: that is said in its own plain words (0.9.11), which
+                    # also say that it tries again at the next start
+                    log.warning("Downloading %s: %s", pack.name, exc)
+                    self.failed.append((pack, str(exc)))
+                    self.say("{}: {}".format(pack.name, exc))
+                    break
                 except Exception as exc:  # noqa: BLE001 - it tries again at the next start
                     log.exception("Downloading %s failed", pack.name)
                     self.failed.append((pack, str(exc)))

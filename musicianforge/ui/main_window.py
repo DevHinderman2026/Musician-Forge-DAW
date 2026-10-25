@@ -50,8 +50,8 @@ from ..outputwatch import OutputWatch
 from ..song import MAX_TRACKS, NO_TRACK_YET, Instrument, SongFileError
 from ..session import default_song_file_name
 from ..timeline import TimelineError, format_number
-from .common import (SAY_AFTER_MS, ask_yes_no, ask_yes_no_cancel, enable_keeping_focus, fit_to_screen, focused_window,
-                     list_target, say_after, show_error, show_info, show_items, silence_name)
+from .common import (SAY_AFTER_MS, ask_replace, ask_yes_no, ask_yes_no_cancel, enable_keeping_focus, fit_to_screen,
+                     focused_window, list_target, say_after, show_error, show_info, show_items, silence_name)
 from .dialogs import (AudioSettingsDialog, ChangesDialog, EventListDialog, ExportAudioDialog, GoToBarDialog,
                       InstrumentDialog, MidiImportDialog, NewSongDialog, NewTrackDialog, OpenProjectDialog,
                       PreferencesDialog, QuantizeDialog,
@@ -73,6 +73,7 @@ MIDI_WILDCARD = "MIDI files (*.mid;*.midi;*.rmi;*.kar)|*.mid;*.midi;*.rmi;*.kar"
 IMPORT_TITLE = "Import audio or MIDI file"
 RECOVERY_DELAY_MS = 3000
 WINDOW_SAY_MS = 600         # what is said after a window opens or closes waits this long (common.say_after)   # the crash-recovery copy follows the changes this long after the last one
+MIDI_QUIET_MS = 300         # a MIDI file read in less time than this shows no progress window (it would only flash)
 
 
 def import_wildcard():
@@ -1003,6 +1004,12 @@ class MainFrame(wx.Frame):
         """A Yes/No question from a list window (Effects, Sections and so on): it belongs to that window, not to the
         project window behind it, so the screen reader goes back to the list after it (screen reader audit B5)."""
         return ask_yes_no(focused_window(self), message)
+
+    def ask_replace_here(self, message):
+        """The question before Add takes the place of a tempo, time signature or key change, a chord change or an
+        automation point already at that place (Russell, 25 Oct 2026). Like ask_here it belongs to the window with
+        the focus; Yes replaces, and No or Escape goes back to the Add window (common.ask_replace)."""
+        return ask_replace(focused_window(self), message)
 
     def show_modal(self, dialog):
         """All dialogs open through here (tests replace this). While one is open, what is said in it is said as usual:
@@ -2012,17 +2019,67 @@ class MainFrame(wx.Frame):
             raise ValueError("{} could not be imported: {}".format(os.path.basename(path), error)) from error
         return state["result"]
 
+    def make_midi_progress(self, path):
+        """The progress window while a long MIDI file is read (tests replace this)."""
+        return wx.ProgressDialog("Importing MIDI file", "Reading the MIDI file", maximum=100, parent=self,
+                                 style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_ELAPSED_TIME)
+
+    def read_midi_with_progress(self, path):
+        """midiimport.read_file on a worker thread, as an export renders: a big MIDI file froze the program while it
+        was read (Russell, 25 Oct 2026). A progress window says how far it has got, and the percentage is said every
+        10 percent, queued, as for an export; Escape cancels. A file read in less than MIDI_QUIET_MS shows no window
+        at all. Returns what the file holds, or None if it was cancelled (nothing is changed either way); a file that
+        cannot be read raises ValueError in words, as before."""
+        state = {"fraction": 0.0, "cancel": False, "result": None, "error": None}
+
+        def work():
+            try:
+                state["result"] = midiimport.read_file(path, progress=lambda f: state.__setitem__("fraction", f),
+                                                       cancelled=lambda: state["cancel"])
+            except midiimport.ImportCancelled:
+                state["result"] = None
+            except Exception as exc:  # noqa: BLE001 - handed to the window's thread below
+                state["error"] = exc
+
+        worker = threading.Thread(target=work, name="midi-import", daemon=True)
+        worker.start()
+        worker.join(MIDI_QUIET_MS / 1000.0)
+        if worker.is_alive():
+            progress = self.make_midi_progress(path)
+            said = ExportCountdown(lambda words: self.session.announce(words, interrupt=False))
+            try:
+                while worker.is_alive():
+                    keep_going, _skip = progress.Update(min(99, int(state["fraction"] * 100)))
+                    said.reached(min(state["fraction"], 0.99))
+                    if not keep_going:
+                        state["cancel"] = True
+                    wx.MilliSleep(50)
+            finally:
+                progress.Destroy()
+        worker.join()
+        if state["cancel"]:
+            return None                       # (even if it had just finished: Escape was the last word)
+        error = state["error"]
+        if isinstance(error, midiimport.MidiImportError):
+            raise ValueError("{} could not be imported: {}.".format(os.path.basename(path), error)) from None
+        if error is not None:
+            raise error                       # as before: "Something went wrong", with the details in the log
+        if state["result"] is None:           # (the reading stopped without a word: never expected)
+            raise ValueError("{} could not be imported.".format(os.path.basename(path)))
+        return state["result"]
+
     def import_midi_file(self, path=None):
         """Import MIDI file: its tracks become new tracks; its tempo, time signatures, keys and markers replace the
         project's own when chosen (the default for a project with nothing in it yet)."""
         path = path or self.choose_import_file(kind="midi")
         if not path:
             return
-        try:
-            contents = midiimport.read_file(path)
-        except midiimport.MidiImportError as exc:
-            raise ValueError("{} could not be imported: {}.".format(os.path.basename(path), exc)) from None
-        if not contents.tracks:
+        contents = self.read_midi_with_progress(path)
+        if contents is None:
+            with self.session.pressed("window"):     # after the progress window has closed
+                self.session.announce("Import cancelled")
+            return
+        if not contents.tracks and not contents.chords:    # (a file of chords alone brings its chord track in)
             raise ValueError("{} has no notes to import.".format(os.path.basename(path)))
         summary = midiimport.describe(contents, path)
         if contents.warnings:
@@ -2058,7 +2115,7 @@ class MainFrame(wx.Frame):
         """Control+Shift+U: the selected track's automation lanes."""
         track = self._need_track()
         with AutomationDialog(self, self.session, track.id, run_modal=self.show_modal,
-                              confirm=self.ask_here) as dlg:
+                              confirm=self.ask_here, confirm_replace=self.ask_replace_here) as dlg:
             self.show_modal(dlg)
         self.refresh_tracks()
 
@@ -2329,18 +2386,23 @@ class MainFrame(wx.Frame):
         s = self.session
         tid, index = self._need_region()
         def apply():
-            # the trim is made here, inside ask_values: a trim the song refuses (it would overlap the next region,
-            # say) brings the same window back with everything typed still in it, instead of closing it and losing
-            # the bars typed (the review of 24 Oct 2026). Quietly: the Regions list reads the region's new words
-            # when the focus comes back to it, as for a recording's settings (not said twice).
+            # The trim is made when OK is pressed, while the window is still open (RegionSettingsDialog.on_ok): a
+            # trim the song refuses (it would overlap the next region, say) keeps the window open with everything
+            # typed still in it (the review of 24 Oct 2026), and a trim that works says "Trimmed" then, before the
+            # window closes and the Regions list reads the region's new line (Russell, 25 Oct 2026: "Trimmed" first,
+            # then the line, once). The song says nothing more (speak=False): the list's line has the region's words.
             start, end, loops = dlg.get_values()
             new_index = index
             if start is not None:
                 new_index = s.trim_region(tid, index, start, end, speak=False)
-            return new_index, loops
+            return (new_index, loops), ("Trimmed" if start is not None else None)
 
         with RegionSettingsDialog(self, s, tid, index) as dlg:
-            values = self.ask_values(dlg, apply)
+            dlg.apply = apply
+            # (OK without the OK button, as the window tests answer it: the change is made here, quietly)
+            values = self.ask_values(dlg, lambda: dlg.applied if dlg.applied is not None else apply()[0])
+            if values is None:
+                values = dlg.applied                 # Escape in the moment after "Trimmed": the trim was made
         if values is None:
             return
         index, loops = values
@@ -2367,7 +2429,7 @@ class MainFrame(wx.Frame):
     def chord_track(self):
         """Control+Shift+H: the chord changes rhythm players play."""
         with ChordTrackDialog(self, self.session, run_modal=self.show_modal,
-                              confirm=self.ask_here) as dlg:
+                              confirm=self.ask_here, confirm_replace=self.ask_replace_here) as dlg:
             self.show_modal(dlg)
         self.refresh_status_text()
 
@@ -2376,8 +2438,16 @@ class MainFrame(wx.Frame):
         tid, index = self._need_region()
         indices = s.regions_for_action(current=index)
         bar, beat = s.song.timeline.tick_to_position(s.region_span(tid, indices[0])[0])
+
+        def checked():
+            # a beat the bar does not have is refused while the window is still open, with what was typed still in
+            # it, as in the other windows (0.9.11; it closed first, so the bar and beat had to be typed again)
+            to_bar, to_beat = dlg.get_values()
+            s._bar_beat_tick(to_bar, to_beat)
+            return to_bar, to_beat
+
         with GoToBarDialog(self, bar, int(beat), title="Move region") as dlg:
-            values = self.ask_values(dlg, dlg.get_values)
+            values = self.ask_values(dlg, checked)
         if values is None:
             return
         to_bar, to_beat = values
@@ -2463,7 +2533,7 @@ class MainFrame(wx.Frame):
         s.quantize(ids, values["grid"], values["strength"], values["lengths"])
 
     def changes(self, kind):
-        with ChangesDialog(self, self.session, kind) as dlg:
+        with ChangesDialog(self, self.session, kind, confirm_replace=self.ask_replace_here) as dlg:
             self.show_modal(dlg)
         self.refresh_status_text()
 

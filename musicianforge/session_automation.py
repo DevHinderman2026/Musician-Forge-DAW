@@ -118,12 +118,13 @@ class AutomationMixin:
         track, lane = self._lane(track_id, lane_index)
         return auto.value_range(track, lane)
 
-    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None, tick=None):
+    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None, tick=None, asked=False):
         """Add a point (or change the one at `replacing`). Returns its place in the lane.
 
         tick: the exact moment, used instead of bar and beat (the point window passes the point's own moment
         when its place was left as shown, since the beat it shows is rounded to two decimals; the review of
-        25 Oct 2026)."""
+        25 Oct 2026). asked: the window has just asked whether to replace the point there and was told Yes (0.9.11),
+        so "Replaced the point that was there" is not said again."""
         track, lane = self._lane(track_id, lane_index)
         tl = self.song.timeline
         if tick is None:
@@ -159,7 +160,7 @@ class AutomationMixin:
             points = [p for i, p in enumerate(target["points"]) if i != replacing]
             target["points"] = auto.sort_points(points + [[tick, value, bool(glide)]])
         index = next(i for i, p in enumerate(self.lanes_of(track_id)[lane_index]["points"]) if p[0] == tick)
-        self.announce(("Replaced the point that was there. " if replaced else "")
+        self.announce(("Replaced the point that was there. " if replaced and not asked else "")
                       + self.describe_point(track_id, lane_index, index))
         return index
 

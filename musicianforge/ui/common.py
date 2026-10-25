@@ -36,16 +36,29 @@ def say_after(say, text, delay_ms=SAY_AFTER_MS):
             waiting.Stop()
         except Exception:  # noqa: BLE001 - already said
             pass
-    app_class = getattr(wx, "App", None)
-    running = getattr(app_class, "IsMainLoopRunning", None)
-    try:
-        later = bool(running()) if running is not None else False
-    except Exception:  # noqa: BLE001
-        later = False
-    if later:
+    if _loop_running():
         _waiting[0] = wx.CallLater(delay_ms, say, text, False)     # (Stop() on it takes the words back)
         return _waiting[0]
     say(text, False)
+    return None
+
+
+def _loop_running():
+    """True while Musician Forge's event loop runs (wx.CallLater then fires); False in the automated tests."""
+    app_class = getattr(wx, "App", None)
+    running = getattr(app_class, "IsMainLoopRunning", None)
+    try:
+        return bool(running()) if running is not None else False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def a_moment_later(delay_ms, func, *args):
+    """func(*args) delay_ms from now while the event loop runs, or at once while none does (the automated tests), as
+    say_after does with words. Returns the wx.CallLater (Stop() takes it back), or None."""
+    if _loop_running():
+        return wx.CallLater(delay_ms, func, *args)
+    func(*args)
     return None
 
 
@@ -353,15 +366,24 @@ def show_error(parent, message, title="Musician Forge"):
     wx.MessageBox(message, title, wx.OK | wx.ICON_ERROR, parent)
 
 
+class ShowAgain(Exception):
+    """Raised by ask_values' get_values when the person answered No to a question about what was typed ("There is
+    already a tempo change at bar 5, beat 1 (90 BPM). Replace it?"): the same window comes back with everything typed
+    still in it, so it can be changed, and nothing else is shown (Russell, 25 Oct 2026)."""
+
+
 def ask_values(run_modal, dialog, get_values=None, on_error=None):
     """Show a dialog (with run_modal) until what was typed in it makes sense: get_values() (the dialog's own by
     default) raises ValueError in words, and the dialog comes back with everything still in it. Returns the values,
     or None if it was cancelled. (Before the review of 9 Oct 2026 a mistyped number closed the window.)
-    on_error(words): how the mistake is shown (a message box over the dialog by default)."""
+    on_error(words): how the mistake is shown (a message box over the dialog by default). get_values() raising
+    ShowAgain brings the dialog back with no message at all (a question about it was answered No)."""
     get_values = get_values or dialog.get_values
     while run_modal(dialog) == wx.ID_OK:
         try:
             return get_values()
+        except ShowAgain:
+            continue
         except ValueError as exc:
             if on_error is not None:
                 on_error(str(exc))
@@ -386,9 +408,24 @@ def focused_window(default=None):
     return window if window is not None else default
 
 
-def ask_yes_no(parent, message, title="Musician Forge"):
-    with wx.MessageDialog(parent, message, title, wx.YES_NO | wx.ICON_QUESTION) as dlg:
-        return dlg.ShowModal() == wx.ID_YES
+def ask_yes_no(parent, message, title="Musician Forge", escape=True):
+    """A Yes or No question: True for Yes, the default button. Escape answers No (0.9.11). Windows cannot close a box
+    that has only Yes and No buttons with Escape (wxPython: "the user will be forced to answer it"), so until 0.9.11
+    every Yes or No question had to be answered; now it is an OK and Cancel box whose buttons say Yes and No, as the
+    Change the variation question is. escape False keeps the box that must be answered, for the one question where No
+    throws something away (the crash recovery question at start-up)."""
+    if not escape:
+        with wx.MessageDialog(parent, message, title, wx.YES_NO | wx.ICON_QUESTION) as dlg:
+            return dlg.ShowModal() == wx.ID_YES
+    with wx.MessageDialog(parent, message, title, wx.OK | wx.CANCEL | wx.ICON_QUESTION) as dlg:
+        dlg.SetOKCancelLabels("&Yes", "&No")
+        return dlg.ShowModal() in (wx.ID_OK, wx.ID_YES)
+
+
+def ask_replace(parent, message, title="Musician Forge"):
+    """The question before Add takes the place of a change or point already there ("There is already a chord change
+    at bar 5, beat 1 (G major). Replace it?"; Russell, 25 Oct 2026): True for Yes; Escape answers No (ask_yes_no)."""
+    return ask_yes_no(parent, message, title)
 
 
 def ask_yes_no_cancel(parent, message, title="Musician Forge"):

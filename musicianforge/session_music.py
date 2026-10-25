@@ -8,7 +8,7 @@ import logging
 import os
 
 from . import arrangement, chords, keyboard_map, onsets, player_pieces, players, regions, theory
-from .song import AUDIO_RATE, NO_TRACK_YET, Instrument
+from .song import AUDIO_RATE, NO_TRACK_YET, Instrument, Note
 from .timeline import format_number
 
 log = logging.getLogger("musicianforge.session")
@@ -75,7 +75,7 @@ def for_each_selected_region(method):
                         stayed, len(group[1]), "it" if stayed == 1 else "they", "was" if stayed == 1 else "were"))
         finally:
             self._in_player_group = False
-        if reforging and kwargs.get("play", True):
+        if reforging and kwargs.get("play", True) and not self.engine.playing:
             settings = players.clean_settings(self.song.track_by_id(track_id).note_regions[index].player)
             if settings and settings.get("play_after_reforge", True):
                 self.play_note_region(track_id, index)
@@ -84,6 +84,13 @@ def for_each_selected_region(method):
     wrapped.__doc__ = method.__doc__
     return wrapped
 
+
+
+def builds_into(settings):
+    """Whether a looping drummer region's last repeat builds into the louder drummer that starts where the loop's
+    playing stops (Russell, 25 Oct 2026, 0.9.11: "Yes, in the last repeat"): rules 7. Before, only a drummer that
+    started where the region's first play ends was seen, so a looping region never built."""
+    return bool(settings) and settings["player"] == "anvil" and players.rules_7(settings)
 
 
 def leads_into_a_chord(settings):
@@ -435,7 +442,10 @@ class MusicMixin:
         text = REFORGE_WORDS                    # all it says (Russell, 21 Oct 2026)
         if speak:
             self.announce(text)
-        if play and settings.get("play_after_reforge", True):
+        # while the song plays, the new performance comes in where the playhead is and the playing goes on (Russell,
+        # 25 Oct 2026: "it should just keep playing, even when you regenerate it ... so you can rapidly sample
+        # different generations"); stopped, Play after Reforge plays the region once from its start
+        if play and settings.get("play_after_reforge", True) and not self.engine.playing:
             self.play_note_region(track_id, index)
         return text
 
@@ -627,7 +637,15 @@ class MusicMixin:
                            and not in_the_groove(settings, "ride"))
             if now and not then and crash_rides and player_pieces.piece_on(settings, "crash", True):
                 change("crash", on=False, off_for=piece_key)
-            elif then and not now and pieces.get("crash", {}).get("off_for") == piece_key:
+        # the crash gave way to a cymbal that stopped (turned off, or giving way to the other one: Hi-hat on, then
+        # the Ride): it stays off for the one keeping time now, and comes back once neither keeps time (0.9.11, the
+        # Ride taking the crash's turn as the Hi-hat does)
+        crash_for = pieces.get("crash", {}).get("off_for")
+        if crash_for in player_pieces.CRASH_GIVES_WAY_TO and not hand(settings, crash_for):
+            keeper = next((key for key in player_pieces.CRASH_GIVES_WAY_TO if hand(settings, key)), None)
+            if keeper:
+                change("crash", off_for=keeper)
+            else:
                 change("crash", on=True, off_for="")
         return rhythm
 
@@ -981,18 +999,53 @@ class MusicMixin:
         self.notify("transport")
 
     def turn_into_notes(self, track_id, index):
-        """Make a rhythm player region's performance into ordinary notes you can edit."""
+        """Make a rhythm player region's performance into ordinary notes you can edit.
+
+        A looping region becomes one longer region, from its start to where its playing stops, that plays once and
+        holds every repeat as it is heard (0.9.11; Russell, 25 Oct 2026): what arrangement.sounding_notes plays for
+        it, each repeat leading on as it does there, cut where its playing stops. Until then the loop was kept over
+        one performance, so every repeat led into the chord that follows the region's first play."""
         track, region = self._player_region(track_id, index)
-        notes = list(self.performance(track, region).notes)
+        stop = None
+        if region.loops == 1:
+            notes = list(self.performance(track, region).notes)
+        else:
+            song_end = self.song.song_end_tick()
+            _count, stop = arrangement.note_region_repeats(track, index, song_end)
+            # (a note of the last repeat ringing past the song's end ends there, as it is heard: it would make the song
+            # longer; regions.loop_pieces)
+            notes = [n if n.end <= song_end else Note(n.tick, song_end - n.tick, n.pitch, n.velocity)
+                     for n in self._heard_in_loop(track, region, stop)]
         with self.edit("turn into notes"):
             target = self.song.track_by_id(track_id)
             spot = target.note_regions[index]
             target.notes.extend(copy.deepcopy(notes))
             target.sort_notes()
             spot.player = None
-        self.announce("Turned into {}. The region is now ordinary notes; Enter lists them.".format(
-            self._count_words(len(notes), "note")))
+            if stop is not None:
+                spot.end, spot.loops = stop, 1
+        if stop is None:
+            self.announce("Turned into {}. The region is now ordinary notes; Enter lists them.".format(
+                self._count_words(len(notes), "note")))
+        else:
+            tl = self.song.timeline
+            bars = tl.tick_to_bar(stop - 1) - tl.tick_to_bar(region.start) + 1
+            self.announce("Turned into {} over {}. The region is now ordinary notes; Enter lists them.".format(
+                self._count_words(len(notes), "note"), self._count_words(bars, "bar")))
         return len(notes)
+
+    def _heard_in_loop(self, track, region, stop):
+        """What a looping region plays, every repeat up to `stop` (where its playing stops), as it is heard, apart from
+        its own notes in its first play (they are on the track already). It is the track's sounding_notes there, so it
+        is always what plays; a muted region gives what it would play unmuted."""
+        own = {id(n) for n in track.notes if region.start <= n.tick < region.end}
+        heard_on = track
+        if region.mute:
+            heard_on = copy.copy(track)
+            unmuted = copy.copy(region)
+            unmuted.mute = False
+            heard_on.note_regions = [unmuted if r is region else r for r in track.note_regions]
+        return [n for n in self.sounding_notes(heard_on) if region.start <= n.tick < stop and id(n) not in own]
 
     def player_summary(self, track_id, index):
         """'Anvil, dubstep, 8 bars, 31 notes. Fills in bars 4 and 8.' and what Follow did."""
@@ -1124,11 +1177,14 @@ class MusicMixin:
         return [tick for tick in starts if region.start <= tick < region.end]
 
     @staticmethod
-    def _next_intensity(track, region):
+    def _next_intensity(track, region, at=None):
         """The Intensity of the drummer region that starts where this one ends on the same track (None: none
-        there, or it is muted, or not a drummer). A louder one gets a hi-hat build in this region's last bars."""
+        there, or it is muted, or not a drummer). A louder one gets a hi-hat build in this region's last bars.
+        at: where to look instead of the region's end (where a looping region's playing stops, for its last repeat;
+        rules 7)."""
+        end = region.end if at is None else at
         for other in track.note_regions:
-            if other is region or other.start != region.end or other.mute or not other.player:
+            if other is region or other.start != end or other.mute or not other.player:
                 continue
             found = players.clean_settings(other.player)
             if found and found["player"] == "anvil":
@@ -1159,15 +1215,16 @@ class MusicMixin:
         chain: the tracks whose players are being worked out and wait for this one (they are not followed back).
         human: False for the notes on the grid, with no human feel (what another player follows).
         lead_into: the tick whose chord the last bar leads into (players.perform; None: the region's end). Only a
-        rules-4 bass, keys, synth or guitar region leads into a chord, so for any other it is left out."""
+        rules-4 bass, keys, synth or guitar region leads into a chord, and a rules-7 drummer builds into the region
+        that starts there (a looping region's last repeat, builds_into); for any other it is left out."""
         settings = players.clean_settings(region.player)
-        if not leads_into_a_chord(settings) or lead_into == region.end:
+        if not (leads_into_a_chord(settings) or builds_into(settings)) or lead_into == region.end:
             lead_into = None
         # (the chord at the region's end too: from 0.9.8 the last bar leads into it, players._chord_after_the_region)
         span_chords = [c.to_list() for c in self.song.chords if c.tick <= region.end]
         hits = self._follow_hits(track, region, settings, chain)
         sections = self._section_starts(region)
-        coming = self._next_intensity(track, region) if settings["player"] == "anvil" else None
+        coming = self._next_intensity(track, region, lead_into) if settings["player"] == "anvil" else None
         if human is None:
             human = getattr(self, "human_feel", True)      # tests that check the grid itself turn it off
         mix = self.kit_levels(track) if settings["player"] == "anvil" else {}
@@ -1252,13 +1309,13 @@ class MusicMixin:
 
         def perform_for(t, region, lead_into=None):
             settings = players.clean_settings(region.player)
-            if not leads_into_a_chord(settings) or lead_into == region.end:
+            if not (leads_into_a_chord(settings) or builds_into(settings)) or lead_into == region.end:
                 lead_into = None
             if settings and settings["follow"] == "track" and settings.get("follow_track") in chain:
                 settings = dict(settings, follow="chords")
                 return players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords,
                                        None, self._section_starts(region),
-                                       next_intensity=self._next_intensity(t, region),
+                                       next_intensity=self._next_intensity(t, region, lead_into),
                                        humanize=feel,
                                        kit_levels=self.kit_levels(t) if settings["player"] == "anvil" else None,
                                        lead_into=lead_into).notes

@@ -187,13 +187,25 @@ class FilterCascade:
         self._key = None
         self._bank = None
         self._fade = None          # (the filters as they were, frames faded so far, fade length) while crossfading
+        self._pending = None       # a change of shape waiting for that crossfade to finish (set_sections)
         self._ran = False          # has any sound gone through yet? (a fresh EQ starts on its settings, no fade)
-        self.fade_seconds = 0.01   # how long the old filters fade into the new ones when the bands change shape
+        # how long the old filters fade into the new ones when the bands change shape: a twentieth of a second
+        # since 0.9.11 (Russell, 25 Oct 2026: "a bit slower"; it was 10 ms)
+        self.fade_seconds = 0.05
         self.set_sections(sections)
 
     def set_sections(self, sections):
         """sections: a list of (shape, frequency, Q, gain in dB)."""
         key = tuple((s[0], float(s[1]), float(s[2]), float(s[3])) for s in sections)
+        if self._fade is not None:
+            if tuple(s[0] for s in key) != tuple(s[0] for s in self._key or ()):
+                # Another change of shape while the last one is still fading in (arrowing through the presets while
+                # playing: key repeat is faster than the fade): it waits for that fade to finish, then fades in the
+                # same way (process). Filters that had only begun to fade in were dropped, and the newest ones came
+                # in at their weight from a state they never had: up to 20 times the normal step on a bass note.
+                self._pending = key
+                return
+            self._pending = None   # back to the shapes now fading in: a setting moves (glides) as always
         if key == self._key:
             return
         old_key = self._key or ()
@@ -272,6 +284,9 @@ class FilterCascade:
         self.state[:] = 0.0
         self._fade = None
         self._ran = False
+        if self._pending is not None:      # nothing to fade from now: the change that was waiting applies at once
+            pending, self._pending = self._pending, None
+            self.set_sections(pending)
 
     def _system(self):
         """Everything that runs the filters as they are now, with their state (kept while they fade out)."""
@@ -309,6 +324,9 @@ class FilterCascade:
             y = y_old + (y - y_old) * weight
             done += frames
             self._fade = [old, done, length] if done < length else None
+            if self._fade is None and self._pending is not None:
+                pending, self._pending = self._pending, None
+                self.set_sections(pending)       # the change that waited fades in from here
         return y
 
 

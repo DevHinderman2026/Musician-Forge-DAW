@@ -1,5 +1,93 @@
 # Musician Forge release notes
 
+## 0.9.11 (25 October 2026, in testing)
+
+### New features and improvements
+
+- Reforge while the song plays: the song keeps playing from where it is, and the new performance comes in at once,
+  so you can try one performance after another and hear each in place. The playhead no longer jumps back to the
+  region's start. When the song is stopped, Reforge plays the region from its start, as before (Play the region
+  after Reforge).
+- Notes that are sounding keep sounding through a change made while the song plays: a tempo change, a Reforge or any
+  edit. A held chord or a long bass note goes on with no new attack and no gap; a note the change takes away stops,
+  and a note it brings in starts at once if enough of it is left (a tenth of a second), so there is never a blip.
+- When the whole song has played to its end (All sections on), it stops there and stays there: Musician Forge says
+  "End of song, stopped" and where the song ends (in a 16-bar song, "Bar 17, beat 1"), and Space, or Record, starts
+  again from the start of the song. A project saved there opens there. (In 0.9.10 the playhead went back to the
+  start at once.) Playing one region through still puts the playhead back at that region's start.
+- Adding a tempo, time signature, key or chord change, or an automation point, where one already is asks first, for
+  example "There is already a tempo change at bar 5, beat 1 (90 BPM). Replace it?". Yes replaces it (one Control+Z
+  brings it back); No, or Escape, brings the Add window back with what you typed still in it. Editing a change in
+  place does not ask.
+- Every Yes or No question can now be answered No with Escape. Windows cannot close a box that has only Yes and No
+  buttons with Escape, so until now each one had to be answered. (The question about recovering a project after a
+  crash still has to be answered, since No throws the recovered project away.)
+- Importing a big MIDI file shows a progress window while the file is read ("Reading the MIDI file", with the
+  percentage), as exporting does, and Escape cancels it ("Import cancelled"; nothing changes). A small file shows
+  no window.
+- Region settings: a trim is said as "Trimmed" first, and then the Regions list reads the region's line once.
+- Play keeps the focus where it is in the Recordings and Chord strips windows, so Space there plays and stops.
+- Changing an EQ preset, or turning an EQ band on or off, while the song plays now blends over a twentieth of a
+  second (it was a hundredth), and quick changes one after another wait for each other, so arrowing through the
+  presets never clicks.
+- Looping regions:
+  - Recording over part of a looping region's repeats replaces only the bars you recorded, and the repeats carry on
+    after the recording as the loop would have played them.
+  - Adding a section inside a looping region's repeats keeps the loop playing on both sides of the new section.
+    Deleting or shortening a section inside it keeps the music on each side.
+  - What carries on sounds exactly like the loop: it stays a rhythm player region when it plays the same notes, and
+    where a bass, keys, synth or guitar would follow other chords there, it is written out as notes that sound like
+    the loop (Musician Forge says so).
+  - Turn into notes on a looping region writes out every repeat you hear, as one longer region that no longer
+    loops.
+  - A looping drummer that is followed by a louder drummer builds into it in its last repeat, as a drummer playing
+    once does (new and changed regions).
+- Drummers (new and changed regions):
+  - The hi-hat pedal waits where the hand plays an open hi-hat, as a drummer's foot is up then; until now the foot
+    landed with the open hi-hat on two and four in funk and pop and cut it off at once. A step you set by hand stays
+    and the other sound gives way.
+  - The shaker, tambourine, cowbell, claves, congas and bongos are a second player's: they always play, are never
+    left out for the drummer's two hands, and play on through the drummer's fills. Pop's own tambourine on two and
+    four is now heard.
+  - In metal variations 3 and 4, which keep time on the crash, the Ride takes over from the crash as the Hi-hat
+    does: "Ride on with eighth notes, crash off". The crash comes back once neither the Hi-hat nor the Ride keeps
+    time.
+  - A drummer that follows another track plays its own groove in a bar where that track plays nothing, instead of
+    a few scattered kicks.
+- Bass, keys, synth and guitar (new and changed regions):
+  - A player that follows another track plays its own part in a bar where that track plays nothing, instead of two
+    or three scattered notes.
+  - In meters counted in threes (3/8, 6/8, 9/8 and 12/8), the passing note into a chord change comes an eighth
+    before it instead of a sixteenth; where the bass already plays that eighth, its own note there leads into the
+    new chord.
+  - An arpeggio or picked note that a chord change cuts gives way to the new chord at once: the arpeggio's note,
+    on the new chord, starts right at the change instead of leaving a gap until the next note.
+  - A hand-made step "as the style plays it" plays the style's own notes at the step's loudness even when the
+    part's Loudness is 0 (it played the player's main sound instead: a full chord on the keys).
+- The guitar sound pack check says what is wrong in plain words when a download is not right.
+
+### Bug fixes
+
+- Fixes a looping player region that the next region cuts short leading back into its own first chord in the last
+  repeat you hear, instead of into the region that comes next (new and changed regions).
+- Fixes Move region closing its window before it said that the bar does not have the beat you typed: the window now
+  stays open with what you typed still in it, as the other windows do.
+- Fixes Import MIDI file refusing a MIDI file that holds only a chord track ("has no notes to import"): its chords
+  now come into the chord track.
+- Fixes making the last section shorter under a looping region: the section grew straight back to hold the whole
+  loop. It now stays as long as you set it, and the loop stops at its end.
+- Fixes duplicating a section that a looping region plays across: the copy's loop played all its repeats from the
+  copy's start and made the song longer. The copy now holds what the loop plays in those bars.
+
+### Older projects
+
+- They play the same notes as before; this version's changes to the players come to a region once you change
+  something in it.
+
+### New projects
+
+- New and changed rhythm player regions use this version's rules.
+
 ## 0.9.10 (25 October 2026, in testing)
 
 ### New features and improvements

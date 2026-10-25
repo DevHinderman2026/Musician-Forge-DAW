@@ -6,7 +6,8 @@ shows); regions mark out stretches of it, like boxes laid along the timeline:
 - Recording makes a region that covers exactly what was recorded: the
   looping section, or from the bar where recording started to the bar after it
   stopped (across sections when All sections is on). Regions it overlaps get
-  shorter, or are split around it.
+  shorter, or are split around it; a looping region it lands on carries on
+  after it as it would have played (0.9.11, continue_loop below).
 - Pasting or moving a region replaces whatever was in that spot.
 - Regions never overlap, and every note is inside one: tidy() makes sure, so a
   note added in the event list gets a region of its own bar if it needs one.
@@ -196,3 +197,155 @@ def join_regions(track, indices):
     track.note_regions.append(joined)
     track.note_regions.sort(key=lambda r: r.start)
     return next(i for i, r in enumerate(track.note_regions) if r is joined)
+
+
+# ----------------------------------------------------------------------
+# a looping region's playing, carried on somewhere else (0.9.11)
+# ----------------------------------------------------------------------
+# Russell, 25 Oct 2026: a take recorded over a looping region's repeats replaces only the bars it recorded, and the
+# repeats carry on after it exactly as they would have played; bars inserted in the middle of a loop leave it playing
+# on both sides of them (and bars deleted from it, or a section moved, keep each side's music). Until then the take
+# (being the next region) cut the loop where it started, so the repeats after it went silent, and inserted bars either
+# split the region into two halves that played once or let its repeats run on into the new bars. These work out the
+# regions that do it: session._place_take_region and arrange (insert_clip, delete_bars, extract) use them.
+MAX_LOOPS = 999       # the most a region plays (Session.set_region_loops; NoteRegion.from_list keeps a saved one to it)
+
+
+def loop_pieces(region, notes, p, until, carry_on=True, song_end=None):
+    """The regions that play what a looping `region` plays from tick p on, with the phase it has there, up to tick
+    `until` (where its playing stops: arrangement.note_region_repeats). Returns [(start, end, loops, notes)] with
+    ticks counted from p; notes [(tick from the piece's start, length, pitch, velocity)] are the region's own notes
+    (`notes`: those that start in it, as they were) as each piece plays them.
+
+    The first piece is the rest of the repeat that p falls in (none where a repeat starts). Then comes the region
+    itself, looping the repeats left. carry_on True: it keeps the loop's setting (the count left, or 0: until the next
+    region), so the loop goes on as before and the next region, or the song end, still cuts it where it did.
+    carry_on False: the pieces end exactly at `until` (whole repeats, then the part of one that `until` cuts), for a
+    loop that has to stop there with no region after it to cut it. A piece that would reach past `until` is cut there
+    and plays once. The pieces of a rhythm player region are rhythm player regions with the same settings; one shorter
+    than the region (the rest of a repeat, or the part of one) starts its pattern afresh, as any shorter region does,
+    so it plays the pattern's first bars, not the bars of the repeat it stands for.
+    song_end: where the song ends (counted as `until` is): a note that would ring past it ends there, as it is heard,
+    or the song would grow a bar to hold it (the fourth review of 25 Oct 2026: a riff's held note in the last repeat,
+    cut by the song's end, made the song longer once it was carried on as a region)."""
+    length = region.length
+    if length <= 0 or not region.start <= p < until:
+        return []
+    repeat, offset = divmod(p - region.start, length)
+    left = None if region.loops == 0 else region.loops - repeat      # repeats still to start (with the current one)
+    if left is not None and left <= 0:
+        return []                                     # it had played all its repeats by p
+    own = sorted(((n.tick - region.start, n.length, n.pitch, n.velocity) for n in notes
+                  if region.start <= n.tick < region.end), key=lambda n: (n[0], n[2]))
+    span = until - p
+    pieces = []
+    at = 0
+    if offset:
+        pieces.append((0, length - offset, 1,
+                       [(tick - offset, ln, pitch, velocity) for tick, ln, pitch, velocity in own if tick >= offset]))
+        at = length - offset
+        left = None if left is None else left - 1
+    if carry_on:
+        if left is None or left > 0:
+            pieces.append((at, at + length, 0 if left is None else left, own))
+    else:
+        whole = max(0, (span - at) // length)
+        if left is not None:
+            whole = min(whole, left)
+        while whole > 0:                              # (a count over MAX_LOOPS goes on in another copy)
+            count = min(whole, MAX_LOOPS)
+            pieces.append((at, at + length, count, own))
+            at += count * length
+            whole -= count
+            left = None if left is None else left - count
+        if at < span and (left is None or left > 0):
+            pieces.append((at, at + length, 1, own))      # the part of a repeat that `until` cuts (just below)
+    found = []
+    for start, end, loops, piece_notes in pieces:
+        if start >= span:
+            break
+        if end > span:
+            end, loops = span, 1
+            piece_notes = [n for n in piece_notes if n[0] < end - start]
+        if song_end is not None:
+            last = song_end - p - start
+            piece_notes = [(tick, min(ln, last - tick), pitch, velocity) for tick, ln, pitch, velocity in piece_notes]
+        found.append((start, end, loops, piece_notes))
+    return found
+
+
+def place_pieces(track, region, pieces, at):
+    """Put loop_pieces of `region` on a track from tick `at`. Each piece takes the region's name, mute and rhythm player
+    settings, and replaces whatever was in its stretch (the callers place them where only the region's own music was).
+    Returns the new regions."""
+    placed = []
+    for start, end, loops, piece_notes in pieces:
+        first, last = at + start, at + end
+        clear_span(track, first, last)
+        placed.append(claim(track, first, last, region.name, region.mute, copy.deepcopy(region.player), loops))
+        track.notes.extend(Note(first + tick, length, pitch, velocity) for tick, length, pitch, velocity in piece_notes)
+    track.sort_notes()
+    return placed
+
+
+def continue_loop(track, region, notes, p, q, until, song_end=None):
+    """Carry a looping region's playing on from tick q with the phase it had at tick p, up to where its playing
+    stopped (`until`, which moves with q): after a take recorded over it (p == q: the take's end), after bars inserted
+    in the middle of it (q = p + their length), or where bars deleted from it were (q < p).
+    region: the region as it was (a copy: the edit may have changed or removed it); notes: its own notes as they were.
+    song_end: where the song ended (counted as p is; loop_pieces). Returns the new regions."""
+    return place_pieces(track, region, loop_pieces(region, notes, p, until, song_end=song_end), q)
+
+
+def write_loop_out(track, start, end, notes, name="", mute=False):
+    """Make ticks start .. end one ordinary region holding `notes` (Note objects at song ticks) in place of the regions
+    that carried a loop on there: what a rhythm player copy that would not sound like the loop becomes
+    (Session._match_loops; Russell, 25 Oct 2026, "Match the loop"). Returns the region."""
+    clear_span(track, start, end)
+    region = claim(track, start, end, name, mute)
+    track.notes.extend(notes)
+    track.sort_notes()
+    return region
+
+
+def count_is_heard(region):
+    """Whether a looping region sounds the same when its count comes down to the repeats heard before the region that
+    cuts it: every region but a rhythm player region of rules older than 7, whose count picks the repeat that leads
+    into what follows (arrangement.sounding_notes counts the repeats heard from rules 7 on). Those keep their count, so
+    they play the same notes as before; their line in the Regions list says where the loop stops."""
+    return not region.player or region.player.get("rules", 1) >= 7
+
+
+def stop_loop_at(track, region, tick, notes=None, ends_there=False, first_end=None):
+    """Make a looping region on the track stop playing at `tick`, keeping everything before it as it was.
+
+    Inside its first play it ends there and plays once (first_end: where that ended before the edit shortened the
+    region to `tick`; default: where it ends now). Further on it plays its repeats up to there. When a region
+    starts at `tick`, it cuts the repeat it lands in, as it always did: the count comes down to the repeats heard
+    (count_is_heard), and Loops 0 (until the next region) stays. Loops 0 also stays when the song ends at `tick`
+    (ends_there). Otherwise (bars were inserted or deleted there, with no region after them) the region plays its whole
+    repeats up to `tick`, and a region of its own plays the part of the next repeat before it.
+    notes: the region's own notes as they were (default: those on the track now). Returns the regions added."""
+    length = region.length
+    if length <= 0 or tick <= region.start:
+        return []
+    if tick < (region.end if first_end is None else first_end):
+        region.end, region.loops = min(region.end, tick), 1
+        return []
+    repeats, offset = divmod(tick - region.start, length)
+    if region.loops >= 1 and region.loops * length <= tick - region.start:
+        return []                                     # it had stopped by then
+    if region.loops == 0 and ends_there:
+        return []
+    if any(r.start == tick for r in track.note_regions if r is not region):
+        if region.loops >= 1 and count_is_heard(region):
+            region.loops = min(region.loops, repeats + (1 if offset else 0))
+        return []
+    was = copy.deepcopy(region)
+    if notes is None:
+        notes = [n for n in track.notes if region.start <= n.tick < region.end]
+    pieces = loop_pieces(was, notes, region.start, tick, carry_on=False, song_end=tick if ends_there else None)
+    if not pieces:
+        return []
+    region.loops = pieces[0][2]                       # the region itself: its whole repeats up to `tick`
+    return place_pieces(track, was, pieces[1:], region.start)

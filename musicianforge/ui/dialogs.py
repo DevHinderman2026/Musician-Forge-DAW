@@ -11,11 +11,10 @@ from .. import audiotracks, instruments, player_pieces, projects, theory
 from ..exportcheck import FADE_SECONDS_DEFAULT, FADE_SECONDS_RANGE
 from ..quantize import DEFAULT_GRID, GRID_NAMES, grid_ticks
 from ..song import Note
-from ..timeline import (MAX_BPM, MAX_NUMERATOR, MIN_BPM, NOTE_LENGTHS, PPQ, TimelineError,
-                        describe_length, format_number)
-from .common import (BORDER, Form, ask_values, choice_ctrl, enable_keeping_focus, end_dialog, finish_dialog,
-                     keep_enter_for_lists, note_text, say_after, says_after, show_error, show_items, slider_ctrl,
-                     spin_ctrl, text_ctrl)
+from ..timeline import MAX_BPM, MAX_NUMERATOR, MIN_BPM, NOTE_LENGTHS, PPQ, describe_length, format_number
+from .common import (BORDER, Form, ShowAgain, ask_values, choice_ctrl, enable_keeping_focus, end_dialog,
+                     finish_dialog, keep_enter_for_lists, note_text, say_after, says_after, show_error, show_items,
+                     slider_ctrl, spin_ctrl, text_ctrl)
 
 log = logging.getLogger("musicianforge.ui")
 
@@ -324,10 +323,13 @@ class ChangesDialog(wx.Dialog):
 
     TITLES = {"tempo": "Tempo changes", "time": "Time signature changes", "key": "Key changes"}
 
-    def __init__(self, parent, session, kind):
+    def __init__(self, parent, session, kind, confirm_replace=None):
+        """confirm_replace(words): the Yes or No question before Add takes the place of a change already at that
+        bar (and beat); True replaces it (the project window asks for real, common.ask_replace)."""
         super().__init__(parent, title=self.TITLES[kind], style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.session = session
         self.kind = kind
+        self.confirm_replace = confirm_replace or (lambda message: True)
         body = wx.BoxSizer(wx.VERTICAL)
         body.Add(wx.StaticText(self, label=self.TITLES[kind]))
         self.list = wx.ListBox(self, size=(420, 220))
@@ -419,6 +421,8 @@ class ChangesDialog(wx.Dialog):
             if index == 0 and values[0] != 1:
                 raise ValueError("The first change must stay at bar 1")
             self._refuse_moving_onto_another(values, index)
+            if index is None:
+                self._ask_before_replacing(values)         # No: this window comes back as it is (ShowAgain)
             self._apply(values, replacing=index)           # (TimelineError is a ValueError)
             return values
 
@@ -441,6 +445,26 @@ class ChangesDialog(wx.Dialog):
             what = {"tempo": "tempo change", "time": "time signature change", "key": "key change"}[self.kind]
             raise ValueError("Another {} is already at {}, so this one was not moved. Choose another {}, or edit "
                              "that one instead".format(what, where, "beat" if self.kind == "tempo" else "bar"))
+
+    def _ask_before_replacing(self, values):
+        """Add at a bar (and beat, for a tempo) that already has a change of this kind would take its place (the
+        timeline keeps one per place): asked first, Yes or No (Russell, 25 Oct 2026; until then it was replaced
+        without a word). No, or Escape, raises ShowAgain: the Add window comes back with everything typed still in
+        it, so the place can be changed. Yes replaces it, as one undo step."""
+        found = self._find(values, missing=None)
+        if found is not None and not self.confirm_replace(self.replace_question(self._items()[found])):
+            raise ShowAgain()
+
+    def replace_question(self, item):
+        """'There is already a tempo change at bar 5, beat 1 (90 BPM). Replace it?'"""
+        if self.kind == "tempo":
+            what = "a tempo change at bar {}, beat {} ({} BPM)".format(item.bar, format_number(item.beat),
+                                                                       format_number(item.bpm))
+        elif self.kind == "time":
+            what = "a time signature change at bar {} ({} time)".format(item.bar, item.spoken())
+        else:
+            what = "a key change at bar {} ({})".format(item.bar, item.name())
+        return "There is already {}. Replace it?".format(what)
 
     def _find(self, values, missing=0):
         for i, item in enumerate(self._items()):
@@ -974,7 +998,10 @@ class RecordingsDialog(wx.Dialog):
         self.SetEscapeId(wx.ID_CANCEL)
         actions = {"play": self.play, "edit": self.edit, "import": self.import_audio, "delete": self.delete}
         for key, action in actions.items():
-            self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
+            # Play or stop leaves the focus on its button, to be pressed again, as the Event list's buttons do
+            # (Russell, 25 Oct 2026; it went back to the list, which the screen reader then read out); the others
+            # end in the list, whose lines they change
+            self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action, k=key: self._run(a, keep_focus=k == "play"))
         self.buttons["import"].Enable(import_file is not None)
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
         keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
@@ -987,7 +1014,9 @@ class RecordingsDialog(wx.Dialog):
         return self.session.song.track_by_id(self.track_id).regions
 
     @says_after
-    def _run(self, action):
+    def _run(self, action, keep_focus=False):
+        """A command of the list (its keys and buttons); the focus goes back to the list afterwards, unless
+        keep_focus (the Play or stop button, like the Event list's buttons)."""
         try:
             action()
         except ValueError as exc:
@@ -996,7 +1025,8 @@ class RecordingsDialog(wx.Dialog):
             log.exception("Recordings list action failed")
             show_error(self, "Something went wrong: {}\n\nThe details were saved in the logs folder "
                              "(musicianforge.log).".format(exc))
-        self.list.SetFocus()
+        if not keep_focus:
+            self.list.SetFocus()
 
     def refresh(self, select=0):
         regions = self.regions

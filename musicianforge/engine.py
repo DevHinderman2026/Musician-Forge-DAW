@@ -45,6 +45,10 @@ TrackMix = namedtuple("TrackMix", "kind volume pan effects track_id")
 MIN_RECORDED_LENGTH = 60          # ticks: very short taps still make a sound
 RECORD_GRACE_TICKS = PPQ // 4     # a note up to a sixteenth early is pulled onto the start
 END_OF_SONG_SECONDS = 2.0         # keep playing this long after the last note ends
+# A note that a change made while playing starts late (Engine._carry_notes) must have at least this much of it left
+# from the moment it starts, or it is left out: less would be a blip, not a note, and the next note comes soon
+# (25 Oct 2026: Russell tries performance after performance of a player while the song plays)
+LATE_START_SECONDS = 0.1
 
 
 def volume_to_cc(percent):
@@ -152,9 +156,18 @@ class PlaybackData:
             self.pitches = np.concatenate([p[3] for p in parts])[order]
             self.velocities = np.concatenate([p[4] for p in parts])[order]
             self.end_sample = int(self.samples[-1])
+            # each note as a whole, in the order it was added: where it starts and ends (its note-off sample, moved
+            # by end_at_restrike), channel, pitch and velocity (Engine._carry_notes, 0.9.11)
+            self.note_on = np.concatenate([p[0] for p in parts[0::2]])
+            self.note_off = np.concatenate([p[0] for p in parts[1::2]])
+            self.note_channel = np.concatenate([p[2] for p in parts[0::2]])
+            self.note_pitch = np.concatenate([p[3] for p in parts[0::2]])
+            self.note_velocity = np.concatenate([p[4] for p in parts[0::2]])
         else:
             self.samples = self.kinds = self.channels = self.pitches = self.velocities = np.zeros(0, np.int64)
             self.end_sample = 0
+            self.note_on = self.note_off = self.note_channel = self.note_pitch = self.note_velocity = \
+                np.zeros(0, np.int64)
         if self.audio:
             self.end_sample = max(self.end_sample, max(part[0] + len(part[1]) for part in self.audio))
         if song is not None and effects_used:
@@ -377,6 +390,10 @@ class Engine:
         self.playing = False
         self.recording = False
         self.count_in_end = None     # sample where the count-in finishes
+        # Where playback last started starting notes: Play or Record (the end of the count-in), a move of the
+        # playhead, the loop going round. Playback never starts a note in its middle, so a note that began before
+        # here is not heard, and a change made while playing (_carry_notes) does not start it either.
+        self._heard_from = None
         self.recorder = None
 
         # settings the user interface may change at any time
@@ -729,6 +746,7 @@ class Engine:
             self.messages.put(("recorded", self.recorder.track_id, notes, True))
             self.recorder = Recorder(self.recorder.track_id, self.recorder.channel, start_tick)
         self.position = loop_start
+        self._heard_from = loop_start
 
     def _render(self, out, a, b):
         """Render frames a to b of every channel into its own rows (mixed in _mix_channels)."""
@@ -938,6 +956,7 @@ class Engine:
                 if self.playing:
                     self._arp_resync(self._current_tick())
                 self.position = self.data.tick_to_sample(cmd[1])
+                self._heard_from = self.position
             elif kind == "audition":
                 _, channel, pitch, velocity, seconds = cmd
                 self.synth.noteon(channel, pitch, velocity)
@@ -1041,14 +1060,16 @@ class Engine:
 
     def _swap_data(self, new):
         old = self.data
+        notes_changed = False
         if self.playing:
             # keep the same musical position even if tempos changed
             tick = old.sample_to_tick(self.position)
             self.position = new.tick_to_sample(tick)
             if self.count_in_end is not None:
                 self.count_in_end = new.tick_to_sample(old.sample_to_tick(self.count_in_end))
-            if not _same_notes(old, new):
-                self._release_playback_notes()    # (a change of volume, pan or automation leaves notes sounding)
+            if self._heard_from is not None:
+                self._heard_from = new.tick_to_sample(old.sample_to_tick(self._heard_from))
+            notes_changed = not _same_notes(old, new)    # (a change of volume, pan or automation leaves notes alone)
         else:
             self.position = new.tick_to_sample(old.sample_to_tick(self.position))
         self.data = new
@@ -1059,6 +1080,7 @@ class Engine:
                 self.recorder.channel = channel
         self.automation = new.automation
         self._region_to_samples()
+        starting = self._carry_notes(old, new) if notes_changed else ()
         self._sync_chains(new)
         self._update_effect_units(new.setups)
         for channel, setup in new.setups.items():
@@ -1079,6 +1101,78 @@ class Engine:
         for channel in [c for c in self._applied if c not in new.setups]:
             self.synth.all_notes_off(channel)
             del self._applied[channel]
+        for channel, pitch, velocity in starting:    # once the instruments are set: on its track's own instrument
+            self._fire(1, channel, pitch, velocity)
+
+    def _carry_notes(self, old, new):
+        """The notes changed while playing (a tempo change, an edit, a Reforge): which notes go on sounding.
+
+        Until 0.9.11 every sounding note was let go here, so a held chord or a long bass note went quiet until its
+        next note (Russell, 25 Oct 2026: they keep sounding). Now a sounding note that the new data still has
+        sounding at the playhead (the same track on the same channel, the same pitch, begun before the playhead and
+        ending after it) goes on without a new attack, and its note-off comes where it ends now; a sounding note
+        that is not there any more stops here. A note the new data has sounding here that is not sounding starts
+        at once, as if the new song had been playing since playback last started starting notes (_heard_from): one
+        that began before that place stays silent, as when you press Play in the middle of a long note. A track
+        that moved in the list plays its sounding notes again on its new channel. A note started late needs at
+        least LATE_START_SECONDS (0.1 s) of it left, in the new data's own time (its tempo), or it is left out:
+        less would be a blip (left: until it ends, or until the loop goes round or the playing stops, if sooner).
+        Nothing starts late on a drum kit or on the track being recorded (below). Called with the new data in
+        place; returns the notes to start, (channel, pitch, velocity), once the instruments are set."""
+        held = self._held_at(new, self.position)
+        recording_on = self.recorder.channel if self.recorder is not None else None
+        old_tracks = {channel: mix.track_id for channel, mix in old.mix.items()}
+        new_tracks = {channel: mix.track_id for channel, mix in new.mix.items()}
+        was_sounding = set()                  # (track, pitch)
+        for channel, pitch in sorted(self._sounding):
+            track = old_tracks.get(channel)
+            if track is not None:
+                was_sounding.add((track, pitch))
+                if new_tracks.get(channel) == track and (channel, pitch) in held:
+                    continue                  # it goes on
+            self.synth.noteoff(channel, pitch)
+            self._sounding.discard((channel, pitch))
+        heard_from = self._heard_from if self._heard_from is not None else -1
+        shortest = LATE_START_SECONDS * self.sample_rate
+        # where every note stops anyway: the loop going round, or the playing stopping at its end (a note started
+        # late just before it is cut off there, a blip too; it plays from its start the next time round)
+        cut = self._end_sample
+        if self._loop is not None and self._loop[0] <= self.position < self._loop[1]:
+            cut = self._loop[1] if cut is None else min(cut, self._loop[1])
+        starting = []
+        for (channel, pitch), (on, off, velocity) in sorted(held.items()):
+            if (channel, pitch) in self._sounding:
+                continue
+            if (off if cut is None else min(off, cut)) - self.position < shortest:
+                continue                      # too little of it left: started now it would be a blip, not a note
+            setup = new.setups.get(channel)
+            if (setup is not None and setup.drum) or channel == recording_on:
+                # Not on a drum kit: a drum hit is all attack, and started late it is a hit in the wrong place. Nor
+                # on the track being recorded: it is the part being played, and a looped take's last pass (put into
+                # the song as the loop goes round) would come in late over what is being played now.
+                continue
+            if on >= heard_from or (new_tracks.get(channel), pitch) in was_sounding:
+                starting.append((channel, pitch, velocity))
+        return starting
+
+    def _held_at(self, data, position):
+        """{(channel, pitch): (note-on sample, note-off sample, velocity)} of the notes that playback of `data` has
+        sounding at `position`: begun before it and ending after it, and heard (not begun in the count-in, not
+        muted for a long take: see _play_segment)."""
+        on = data.note_on
+        if not len(on):
+            return {}
+        live = (on < position) & (data.note_off > position) & (data.note_velocity > 0)
+        if self.count_in_end is not None:
+            live &= on >= self.count_in_end
+        if self._mute_from_sample is not None:
+            live &= on < self._mute_from_sample
+        held = {}
+        for i in np.nonzero(live)[0]:
+            key = (int(data.note_channel[i]), int(data.note_pitch[i]))
+            if key not in held or int(on[i]) > held[key][0]:
+                held[key] = (int(on[i]), int(data.note_off[i]), int(data.note_velocity[i]))
+        return held
 
     def _start(self, from_tick, record_track, kind="notes"):
         self._release_playback_notes()
@@ -1108,6 +1202,8 @@ class Engine:
                 self.count_in_end = start_sample
                 start_sample = data.tick_to_sample(from_tick - count_in_ticks)
         self.position = start_sample
+        # (the count-in plays no notes: those begun in it stay silent after it, as they always have)
+        self._heard_from = self.count_in_end if self.count_in_end is not None else start_sample
         self.playing = True
 
     def _punch_in(self, track_id, kind="notes"):
