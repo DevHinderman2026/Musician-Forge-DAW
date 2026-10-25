@@ -88,6 +88,21 @@ class ReadCancelled(Exception):
     """read_wav was asked to stop (a long import cancelled)."""
 
 
+# the sample rates a WAV file can sensibly have: a damaged header saying 0 Hz divided by zero, and one saying 1 Hz
+# made converting it to the song's rate ask for tens of thousands of times its size in memory (the review of
+# 25 Oct 2026)
+LOWEST_RATE, HIGHEST_RATE = 1000, 384000
+
+
+class BadSampleRate(ValueError):
+    """The file's header gives a sample rate no real recording has."""
+
+
+def check_rate(rate, what="This WAV file"):
+    if not LOWEST_RATE <= rate <= HIGHEST_RATE:
+        raise BadSampleRate("{} says its sample rate is {} Hz, which cannot be right".format(what, rate))
+
+
 READ_CHUNK = 1 << 18          # frames converted at a time, so a long file never sits in memory more than once
 
 
@@ -101,6 +116,7 @@ def read_wav(path, dtype=np.float64, check=None, progress=None, cancelled=None):
         channels, width, rate, frames = wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getnframes()
         if width not in (2, 3):
             raise ValueError("Unsupported sample width {}".format(width))
+        check_rate(rate)
         # a header can promise more than the file holds (a recorder that stopped before finishing it, or a cut-off
         # copy): never more than the file's size allows (the review of 9 Oct 2026)
         frames = min(frames, os.path.getsize(path) // max(1, width * channels))

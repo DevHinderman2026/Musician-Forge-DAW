@@ -274,6 +274,15 @@ class Player:
             pan = lanes[1].at(tick)
         return volume, pan
 
+    def forget_applied(self):
+        """The effect chains were built afresh (after a block of NaN): every automated setting is put in again at
+        the next block, since a fresh chain holds the effect's saved settings, not the automated ones (before this
+        the lane kept its remembered value and the effect stayed at its saved setting until the value changed; the
+        review of 25 Oct 2026)."""
+        for lanes in self.effect_lanes.values():
+            for _index, lane in lanes:
+                lane.applied_tick = lane.applied_value = None
+
     def apply_effects(self, track_id, chain, tick):
         """Put the automated settings at `tick` into the track's effect chain (rounded to each
         setting's own precision, so a glide changes an effect only as often as it can be heard)."""

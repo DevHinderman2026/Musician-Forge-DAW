@@ -581,6 +581,7 @@ class DistortionProcessor(Processor):
 
 class DelayProcessor(Processor):
     MAX_SECONDS = 4.0
+    MAX_FEEDBACK = 0.95     # the most of each echo fed back into the next
 
     def __init__(self, sample_rate, params):
         super().__init__(sample_rate, params)
@@ -592,10 +593,14 @@ class DelayProcessor(Processor):
 
     @property
     def tail_seconds(self):
-        feedback = min(0.9, self.params["feedback"] / 100.0)
-        repeats = 1 if feedback <= 0.001 else math.log(1e-4) / math.log(feedback)
+        # The echoes go on until they are below -90 dB, worked out with the feedback the delay really uses. Until
+        # the review of 25 Oct 2026 this counted feedback as at most 0.9 (the delay allows 0.95), stopped at -80 dB
+        # and at 60 seconds, so with a high feedback the chain's silence shortcut cut the echoes off while still
+        # clearly heard (around -59 dB). The longest is about 13 minutes (a 4-second echo at full feedback).
+        feedback = min(self.MAX_FEEDBACK, self.params["feedback"] / 100.0)
+        repeats = 1 if feedback <= 0.001 else math.log(dsp.db_to_gain(-90.0)) / math.log(feedback)
         seconds = (self._delay or self.sample_rate) / self.sample_rate
-        return min(60.0, seconds * (repeats + 1))
+        return seconds * (repeats + 1)
 
     def delay_frames(self, context):
         p = self.params
@@ -613,7 +618,7 @@ class DelayProcessor(Processor):
         target = self.delay_frames(context)
         old = self._delay if self._delay is not None else target
         self._delay = target
-        feedback = min(0.95, p["feedback"] / 100.0)
+        feedback = min(self.MAX_FEEDBACK, p["feedback"] / 100.0)
         fb_ramp = dsp.ramp(self._feedback, feedback, frames)
         if isinstance(fb_ramp, float):
             fb_ramp = np.full((frames, 1), fb_ramp)
@@ -738,8 +743,10 @@ class ReverbProcessor(Processor):
         frames = len(block)
         mono = block.mean(axis=1)
         delay = int(p["predelay"] / 1000.0 * self.sample_rate)
+        # written every block, so a pre-delay turned up while playing starts from what was just played, not from
+        # what was left in it the last time it was used (the review of 25 Oct 2026)
+        self.predelay.write(mono[:, None])
         if delay > 0:
-            self.predelay.write(mono[:, None])
             mono = self.predelay.read(delay + frames, frames)[:, 0] if delay + frames <= self.predelay.length \
                 else mono
         mono = self._diffuse(mono)

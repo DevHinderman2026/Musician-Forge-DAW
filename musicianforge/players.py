@@ -176,13 +176,20 @@ MAX_PERFORMANCE = 2 ** 53 - 1
 # Forge Dubstep and Trap kits crash after a fill instead of playing their reverse-cymbal swell). A region saved before
 # has no "rules", so it keeps 1 until it is changed in the editor (session_music.py); a region with 2 keeps 2 the same
 # way; 4: from 0.9.8 (24 Oct 2026: the Hi-hat pedal plays by itself in funk and pop; the melodic players' fixes of
-# 0.9.8, see rules_4). New regions get 4.
-RULES = 4
+# 0.9.8, see rules_4); 5: from 0.9.9 (25 Oct 2026: every drummer crashes where the region starts and after every
+# fill, jazz and the hand percussion styles too, and after fills whatever the Crash's When is, unless it is Never;
+# see rules_5). New regions get 5.
+RULES = 5
 
 
 def rules_4(settings):
     """The fixes of 0.9.8 (RULES): only for regions made or changed since."""
     return settings.get("rules", 1) >= 4
+
+
+def rules_5(settings):
+    """The changes of 0.9.9 (RULES): only for regions made or changed since."""
+    return settings.get("rules", 1) >= 5
 
 
 def to_todays_rules(settings):
@@ -194,6 +201,7 @@ def to_todays_rules(settings):
     if isinstance(hat, dict):
         hat.pop("open_busy", None)              # (the Open hi-hat's own Complexity: the one Hi-hat has one)
         hat.pop("old_steps", None)              # (whose steps they were: the one Hi-hat's now)
+        hat.pop("old_bars", None)               # (how long each old piece's steps were)
     if isinstance(hat, dict) and hat.get("old_off"):
         gone = hat.pop("old_off")
         pattern = hat.get("pattern", "style")
@@ -1292,13 +1300,15 @@ class _KitPieces:
             # or its Open hi-hat (pp old_steps): each old piece's steps replace that piece's sounds, as they did (a
             # set with nothing in it is a hand-made silence). The Step pattern view shows today's pieces instead.
             hat_steps, pedal_steps = full["hat"]["steps"], full["pedal"]["steps"]
+            # (old steps of different lengths: each old piece's own bars, repeating on their own; pp old_bars)
+            closed_bars, open_bars = full["hat"].get("old_bars") or (None, None)
             if old_steps in ("hat", "both"):
-                group = pp._merge_steps(pp._steps_of(hat_steps, (HAT,)), pedal_steps)
+                group = pp._merge_steps(pp.first_bars(pp._steps_of(hat_steps, (HAT,)), closed_bars), pedal_steps)
                 hits = self._hand_made(bar, hits, {HAT, PEDAL},
                                        group or pp._silent_steps(hat_steps, pedal_steps or {"bars": [[]]}),
                                        fill_start, thinned)
             if old_steps in ("open", "both"):
-                group = pp._steps_of(hat_steps, (OPEN_HAT,))
+                group = pp.first_bars(pp._steps_of(hat_steps, (OPEN_HAT,)), open_bars)
                 hits = self._hand_made(bar, hits, {OPEN_HAT}, group or pp._silent_steps(hat_steps or {"bars": [[]]}),
                                        fill_start, thinned)
         old_off = full["hat"].get("old_off") if not rules_4(self.settings) else ""
@@ -1386,6 +1396,8 @@ class _KitPieces:
         for h in hits:
             rim = self.rim and self._rim_click(h)
             level = self.mix.get(pp.VOICE_PIECE.get(h[1]))
+            if h[1] == OPEN_HAT and pp.OLD_OPEN_HAT in self.mix:
+                level = self.mix[pp.OLD_OPEN_HAT]        # an older project's Open hi-hat loudness (pp.old_kit_levels_to_new)
             if level is not None and h[3] != CHOKE:
                 velocity = pp.level_velocity(h[2], level)
                 if velocity is None:
@@ -1438,8 +1450,8 @@ class _KitPieces:
             return hits                  # nothing is followed: as the style plays them
         steps = []
         after_fill = bar.index > 0 and (bar.number - 1) in fill_bars
-        if when in ("fills", "sections") and after_fill:
-            steps.append(0)
+        if after_fill and (when in ("fills", "sections") or rules_5(self.settings)):
+            steps.append(0)             # (rules 5: after every fill, whatever When is, but Never; Russell, 25 Oct 2026)
         if when == "sections":
             steps += [(t - bar.start) // STEP for t in self.section_starts
                       if bar.start <= t < bar.end and (t - bar.start) % STEP == 0]
@@ -1722,8 +1734,10 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
             # 23 Oct 2026, every project)
             first = _fill_from(hits) if style_key in LIVE_DRUMMER_STYLES else None
             hits += [h for h in built if first is None or h[0] < first]
-        # a crash on the region's first beat, and after a fill
-        if style_key not in ("hand_percussion", "shakers", "jazz"):
+        # a crash on the region's first beat, and after a fill (rules 5: every drummer; Russell, 25 Oct 2026: "think
+        # of an actual drummer, a lot of fills have crashes ... when there's fills, there should always be a crash,
+        # always"; until then jazz and the hand percussion styles played none)
+        if style_key not in ("hand_percussion", "shakers", "jazz") or rules_5(settings):
             if bar.crash_step is not None:
                 hits.append((bar.crash_step, CRASH, _velocity(105, settings["intensity"], rng), ACCENT))
             elif bar.index > 0 and (bar.number - 1) in fill_bars:
@@ -2193,7 +2207,9 @@ def _chord_tone(change, sound, low):
 SHELLS = {"major": ((4, "7?"), "9?"), "minor": ((3, "b7?"), "9?"), "7": ((4, 10), "9?"), "maj7": ((4, 11), "9?"),
           "m7": ((3, 10), "9?"), "sus2": ((2, 7), "b7?"), "sus4": ((5, 10), "9?"), "dim": ((3, 6), "b7?"),
           "m7b5": ((3, 6, 10), None), "dim7": ((3, 6, 9), None), "aug": ((4, 8), None), "6": ((4, 9), "9?"),
-          "m6": ((3, 9), "9?"), "add9": ((4, 14), 7), "5": ((7, 12), None)}
+          "m6": ((3, 9), "9?"), "add9": ((4, 14), 7), "5": ((7, 12), None),
+          # the two chord types added in the review of 25 Oct 2026: the third and the major seventh (and the sharp fifth)
+          "mmaj7": ((3, 11), "9?"), "maj7#5": ((4, 8, 11), None)}
 
 
 def _shell(change, complexity, key_notes):

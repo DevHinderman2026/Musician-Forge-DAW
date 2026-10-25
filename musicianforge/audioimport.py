@@ -64,6 +64,11 @@ class TooLong(AudioImportError):
     """The file is longer than Musician Forge imports: no other reader is tried."""
 
 
+class BadRate(AudioImportError):
+    """The file gives a sample rate no real recording has (refused at once: another reader would only read the
+    same damaged header)."""
+
+
 class ImportCancelled(Exception):
     """The person cancelled a long import."""
 
@@ -106,12 +111,14 @@ def read(path, progress=None, cancelled=None):
         except _Unavailable as exc:
             log.info("Import of %s: %s", path, exc)
             continue
-        except TooLong:
+        except (TooLong, BadRate):
             raise
         except AudioImportError as exc:
             log.info("Import of %s: %s", path, exc)
             problems.append(str(exc))
             continue
+        _check_rate(int(decoded.rate), os.path.basename(path),
+                    "This WAV file" if ext in ("wav", "wave") else "This file")
         audio = np.asarray(decoded.audio, dtype=np.float32)
         if audio.ndim == 1:
             audio = audio[:, None]
@@ -138,6 +145,15 @@ def read(path, progress=None, cancelled=None):
                            "WAV, MP3, M4A, FLAC, Ogg, AIFF and Windows Media Audio files work.".format(name))
 
 
+def _check_rate(rate, name, what):
+    from . import wavfile
+
+    try:
+        wavfile.check_rate(rate, what)
+    except wavfile.BadSampleRate as exc:
+        raise BadRate("{} could not be imported. {}.".format(name, exc)) from None
+
+
 def _check_length(frames, rate, name):
     if rate > 0 and frames / float(rate) > MAX_SECONDS:
         raise TooLong("{} is longer than {} minutes, which is more than Musician Forge imports in one go"
@@ -156,6 +172,8 @@ def _read_simple_wav(path, progress=None, cancelled=None):
             frames, rate, name), progress=progress, cancelled=cancelled)
     except TooLong:
         raise
+    except wavfile.BadSampleRate as exc:
+        raise BadRate("{} could not be imported. {}.".format(name, exc)) from None
     except wavfile.ReadCancelled:
         raise ImportCancelled() from None
     except Exception as exc:  # noqa: BLE001 - another decoder may manage

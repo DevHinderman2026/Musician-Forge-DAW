@@ -118,18 +118,29 @@ class AutomationMixin:
         track, lane = self._lane(track_id, lane_index)
         return auto.value_range(track, lane)
 
-    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None):
-        """Add a point (or change the one at `replacing`). Returns its place in the lane."""
+    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None, tick=None):
+        """Add a point (or change the one at `replacing`). Returns its place in the lane.
+
+        tick: the exact moment, used instead of bar and beat (the point window passes the point's own moment
+        when its place was left as shown, since the beat it shows is rounded to two decimals; the review of
+        25 Oct 2026)."""
         track, lane = self._lane(track_id, lane_index)
         tl = self.song.timeline
-        if int(bar) < 1:
-            # (a point before bar 1 was saved and then silently dropped when the project was opened again; the
-            # review, 24 Oct 2026)
-            raise ValueError("A point must be at bar 1 or later")
-        beats = tl.time_signature_at_bar(int(bar)).numerator
-        if not 1.0 <= float(beat) < beats + 1.0:
-            raise ValueError("Bar {} has {} beats, so the beat must be from 1 to {}".format(bar, beats, beats))
-        tick = tl.position_to_tick(int(bar), float(beat))
+        if tick is None:
+            if int(bar) < 1:
+                # (a point before bar 1 was saved and then silently dropped when the project was opened again; the
+                # review, 24 Oct 2026)
+                raise ValueError("A point must be at bar 1 or later")
+            beats = tl.time_signature_at_bar(int(bar)).numerator
+            if not 1.0 <= float(beat) < beats + 1.0:
+                raise ValueError("Bar {} has {} beats, so the beat must be from 1 to {}".format(bar, beats, beats))
+            tick = tl.position_to_tick(int(bar), float(beat))
+        tick = max(0, int(tick))
+        if replacing is not None and any(p[0] == tick for i, p in enumerate(lane["points"]) if i != replacing):
+            # a lane keeps one point per moment, so moving a point onto another one silently deleted the other
+            # (two points a few ticks apart show the same rounded beat; the review of 25 Oct 2026)
+            raise ValueError("Another point is already at {}, so this point was not moved. Choose another beat, "
+                             "or edit that point instead".format(tl.spoken_bar_position(tick)))
         low, high, _decimals, _unit = auto.value_range(track, lane)
         try:
             number = float(value)

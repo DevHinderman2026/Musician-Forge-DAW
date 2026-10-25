@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.8 before its first release.
+For people trying Musician Forge 0.9.9 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -311,19 +311,41 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** It opens and plays as before.
 
+## New in 0.9.9
+
+### Step X.1: Changing the style keeps one cymbal keeping time
+
+**What to check:** Add a jazz drummer. In its Kit pieces, open the Ride's settings (Enter) and choose eighth notes in its Pattern list, then close the window. Change the region's Style to Rock and listen to the Kit pieces list. Press Control+Z.
+
+**What to expect:** After the style change you hear "Hi-hat off", and the Hi-hat line reads "Hi-hat: off, the ride keeps time": the ride keeps time, and the hi-hat does not play over it. Control+Z brings back the jazz drummer as it was.
+
+### Step X.2: A piece that is on always plays
+
+**What to check:** In a jazz drummer's Kit pieces, press Space on the Hi-hat. In a house drummer's Kit pieces, press Space on the Snare, the Toms and the Ride. Read the list.
+
+Then add a metal drummer, choose variation 3, and press Space on its Hi-hat, then Space again.
+
+**What to expect:** No line says "not in this groove": a piece that is off just says "off". The jazz Hi-hat says "Hi-hat on with eighth notes, ride off", and you hear eighth notes on the hi-hat. Each house piece turned on plays the first of its patterns and its line says "on, pattern changed". In metal variation 3, where the crash keeps time, the Hi-hat says "Hi-hat on with eighth notes, crash off" and takes over (the crash still plays where the region starts and after fills); Space again says "Hi-hat off, crash on". Each change is one Control+Z.
+
+### Step X.3: An older project still sounds the same
+
+**What to check:** Open a project saved with 0.9.7 or earlier that has a drummer, especially one where you set the open hi-hat's loudness in Track settings or made hand-made steps for the hi-hats, and play it.
+
+**What to expect:** It sounds exactly as it did in 0.9.7: the open hi-hats at their own loudness, and hand-made hi-hat steps in their places.
+
 ## New in 0.9.8
 
 ### Step W.1: The ride and the hi-hat take turns
 
 **What to check:** In a rock drummer's Kit pieces, arrow to Ride and press Space, and play. Press Space on the Ride again. Press Space on the Ride once more, so it is on, then arrow to Hi-hat and press Space, and Space on Hi-hat once more. Press Control+Z five times, so the Hi-hat is on and the Ride off as at the start. Then open the Ride's settings (Enter), tick and untick Play this piece, tick it again, and tick the check box under it, "Play the hi-hat". Try a jazz drummer and a house drummer too.
 
-**What to expect:** Space on the Ride says "Ride on with the hi-hat's rhythm, hi-hat off": the ride keeps time with the hi-hat's rhythm, and the Hi-hat line in the list reads "Hi-hat: off, the ride keeps time". Space again says "Ride off, hi-hat on", and the Hi-hat is back on. Space a third time says "Ride on, hi-hat off" (the ride has its rhythm now). Space on the Hi-hat says "Hi-hat on, ride off", and the Ride's line reads "Ride: off, the hi-hat keeps time"; Space on it again says "Hi-hat off, ride on", because the Hi-hat had turned the Ride off. In the Ride's window, ticking Play this piece says "Ride on with the hi-hat's rhythm, hi-hat off", unticking it says "Ride off, hi-hat on", and ticking it again says "Ride on, hi-hat off"; right under it is "Play the hi-hat (the ride and the hi-hat take turns)", which unticks itself when the ride goes on and ticks itself again when the ride goes off, and ticking it yourself while the ride is on turns the ride off ("Hi-hat on, ride off"). The Hi-hat's window has "Play the ride" the same way. A piece you turned off yourself stays off: the other one going on and off again does not bring it back. In jazz the Ride is on from the start and the Hi-hat off ("Hi-hat: off, not in this groove", since the jazz grooves keep time on the ride), so Space on the Ride only turns it off and on, and the Hi-hat pedal keeps the foot going. A house drummer's Ride and Hi-hat windows have no second check box, since those two do not take turns there: on house, trap or dubstep, Space on the Ride just turns it on and the Hi-hat keeps playing. The Hi-hat pedal never changes with any of these: in jazz, funk and pop it stays on and keeps the foot going under the ride; in rock, hard rock, metal and the drum machines it stays off until you turn it on. Each change is one Control+Z.
+**What to expect:** Space on the Ride says "Ride on with the hi-hat's rhythm, hi-hat off": the ride keeps time with the hi-hat's rhythm, and the Hi-hat line in the list reads "Hi-hat: off, the ride keeps time". Space again says "Ride off, hi-hat on", and the Hi-hat is back on. Space a third time says "Ride on, hi-hat off" (the ride has its rhythm now). Space on the Hi-hat says "Hi-hat on, ride off", and the Ride's line reads "Ride: off, the hi-hat keeps time"; Space on it again says "Hi-hat off, ride on", because the Hi-hat had turned the Ride off. In the Ride's window, ticking Play this piece says "Ride on with the hi-hat's rhythm, hi-hat off", unticking it says "Ride off, hi-hat on", and ticking it again says "Ride on, hi-hat off"; right under it is "Play the hi-hat (the ride and the hi-hat take turns)", which unticks itself when the ride goes on and ticks itself again when the ride goes off, and ticking it yourself while the ride is on turns the ride off ("Hi-hat on, ride off"). The Hi-hat's window has "Play the ride" the same way. A piece you turned off yourself stays off: the other one going on and off again does not bring it back. In jazz the Ride is on from the start and the Hi-hat off ("Hi-hat: off", since the jazz grooves keep time on the ride), so Space on the Ride only turns it off and on, and the Hi-hat pedal keeps the foot going. Space on the jazz Hi-hat turns it on with eighth notes and turns the Ride off ("Hi-hat on with eighth notes, ride off"). A house drummer's Ride and Hi-hat windows have no second check box, since those two do not take turns there: on house, trap or dubstep, Space on the Ride just turns it on and the Hi-hat keeps playing. The Hi-hat pedal never changes with any of these: in jazz, funk and pop it stays on and keeps the foot going under the ride; in rock, hard rock, metal and the drum machines it stays off until you turn it on. Each change is one Control+Z.
 
 ### Step W.2: The Hi-hat pedal is its own piece
 
 **What to check:** In a jazz drummer's Kit pieces, arrow to Hi-hat pedal and listen to its line. Press Space on it, then Space again. Turn the Ride on and off. Then look at a rock drummer's Hi-hat pedal, a funk drummer's and a house drummer's, and open the pedal's settings with Enter.
 
-**What to expect:** The list has Hi-hat (the hand, closed and open sounds) and, right after it, Hi-hat pedal (the foot); there is no separate piece for the open sound any more, and the Hi-hat is simply on or off. In jazz the pedal's line reads "Hi-hat pedal: on" (the groove has the foot in it); in funk and pop it reads "Hi-hat pedal: on, the foot on two and four". Space turns it off (the line reads "Hi-hat pedal: off" in jazz, "Hi-hat pedal: off, not in this groove" in funk and pop) and the foot stops; Space again turns it back on. The Ride going on and off leaves the pedal as it was. In rock, hard rock, metal, house, trap and dubstep the pedal's line reads "Hi-hat pedal: off, not in this groove" until you turn it on; then it reads "Hi-hat pedal: on, the foot on two and four" and plays that. The pedal's window has Play this piece, Pattern (the foot on two and four, on every beat, or on one and three), Complexity and Step pattern, and nothing about how open the hi-hat is (that is the Hi-hat's). Each change is one Control+Z.
+**What to expect:** The list has Hi-hat (the hand, closed and open sounds) and, right after it, Hi-hat pedal (the foot); there is no separate piece for the open sound any more, and the Hi-hat is simply on or off. In jazz the pedal's line reads "Hi-hat pedal: on" (the groove has the foot in it); in funk and pop it reads "Hi-hat pedal: on, the foot on two and four". Space turns it off (the line reads "Hi-hat pedal: off" in jazz, "Hi-hat pedal: off" in funk and pop too) and the foot stops; Space again turns it back on. The Ride going on and off leaves the pedal as it was. In rock, hard rock, metal, house, trap and dubstep the pedal's line reads "Hi-hat pedal: off" until you turn it on; then it reads "Hi-hat pedal: on, the foot on two and four" and plays that. The pedal's window has Play this piece, Pattern (the foot on two and four, on every beat, or on one and three), Complexity and Step pattern, and nothing about how open the hi-hat is (that is the Hi-hat's). Each change is one Control+Z.
 
 ## New in 0.9.7
 
@@ -564,7 +586,7 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.8
+## Known limits in 0.9.9
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

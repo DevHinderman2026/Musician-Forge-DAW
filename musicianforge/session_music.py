@@ -392,6 +392,9 @@ class MusicMixin:
             settings["swing"] = players.PLAYERS[player_key].style(settings["style"]).swing
             if "swing_note" not in changes:          # a new style starts on its own swing feel, as its own swing
                 settings["swing_note"] = players.natural_swing_note(player_key, settings["style"])
+        self.turn_words = None
+        if settings["style"] != old_style and settings["player"] == "anvil":
+            self.turn_words = self._turns_after_a_change(before, settings)
         merge = len(changes) == 1 and next(iter(changes)) in COALESCE
         what = SETTING_WORDS.get(next(iter(changes)), "settings") if len(changes) == 1 else "settings"
         label = "{} {}".format(players.PLAYERS[settings["player"]].name, what)
@@ -484,6 +487,8 @@ class MusicMixin:
                 given = self._take_turns(before, settings, key, {"steps": None})
                 rhythm = given or rhythm
                 words.append(player_pieces.turns_words(key, states, self._turn_states(settings), given))
+        if settings["player"] == "anvil":
+            words.append(self._turns_after_a_change(before, settings))
         with self.edit("variation"):
             players.to_todays_rules(settings)               # changed by hand: it plays by today's rules
             self.song.track_by_id(track_id).note_regions[index].player = settings
@@ -542,9 +547,9 @@ class MusicMixin:
 
     @staticmethod
     def _turn_states(settings):
-        """{piece key: 'on' or 'off'} for the ride and the hi-hat (player_pieces.turn_state)."""
+        """{piece key: 'on' or 'off'} for the ride, the hi-hat and the crash (player_pieces.turn_state)."""
         return {key: player_pieces.turn_state(settings, key, in_the_groove(settings, key))
-                for key in player_pieces.TAKES_TURNS}
+                for key in tuple(player_pieces.TAKES_TURNS) + ("crash",)}
 
     def _take_turns(self, before, settings, piece_key, changes):
         """The ride and the hi-hat taking turns (player_pieces.TAKES_TURNS; every project, Russell, 23 and 24 Oct
@@ -586,6 +591,14 @@ class MusicMixin:
                 and not player_pieces.piece_on(before, "ride", in_the_groove(before, "ride"))
                 and not hand(settings, "ride")):
             rhythm = self._give_the_ride_a_rhythm(settings)     # turned on with nothing of its own to play
+        if (piece_key == "hat" and changes.get("on")
+                and player_pieces.piece_on(settings, "hat", in_the_groove(settings, "hat"))
+                and not player_pieces.piece_on(before, "hat", in_the_groove(before, "hat"))
+                and not hand(settings, "hat")):
+            # Russell, 25 Oct 2026: "In every drummer, if the hihat turns on, it must keep time regardless": a Hi-hat
+            # turned on with nothing of its own to play (jazz's grooves have no hi-hat) plays eighth notes, and so
+            # takes the ride's turn (until then it read on, played nothing, and the ride stayed on)
+            rhythm = self._give_the_hat_a_rhythm(settings)
         now, then = hand(settings, piece_key), hand(before, piece_key)
         if now and not then:
             change(piece_key, off_for="")                   # on by hand: not the other's to give back
@@ -599,6 +612,17 @@ class MusicMixin:
                     change(other, on=True, off_for="")      # it took the other's turn: the other comes back
                     if other == "ride":
                         rhythm = self._give_the_ride_a_rhythm(settings)
+                    elif not hand(settings, "hat"):
+                        rhythm = self._give_the_hat_a_rhythm(settings)   # (it keeps time when it comes back)
+        if piece_key in player_pieces.CRASH_GIVES_WAY_TO:
+            # where the crash keeps time (no hi-hat and no ride in the groove: metal 3 and 4), the Hi-hat turned on
+            # takes its turn, and turned off again gives it back (player_pieces.CRASH_GIVES_WAY_TO)
+            crash_rides = (in_the_groove(settings, "crash") and not in_the_groove(settings, "hat")
+                           and not in_the_groove(settings, "ride"))
+            if now and not then and crash_rides and player_pieces.piece_on(settings, "crash", True):
+                change("crash", on=False, off_for=piece_key)
+            elif then and not now and pieces.get("crash", {}).get("off_for") == piece_key:
+                change("crash", on=True, off_for="")
         return rhythm
 
     @staticmethod
@@ -608,6 +632,11 @@ class MusicMixin:
         (hand-made steps all silent, say) takes no hand. The Hi-hat pedal is the foot, never a hand."""
         if piece_key not in player_pieces.TAKES_TURNS:
             return False
+        return MusicMixin._plays_something(settings, piece_key)
+
+    @staticmethod
+    def _plays_something(settings, piece_key):
+        """Whether a drum piece is on and what it plays (its groove, pattern or steps) has its sounds in it."""
         if not player_pieces.piece_on(settings, piece_key, in_the_groove(settings, piece_key)):
             return False
         sounds = player_pieces.PIECE_BY_KEY[piece_key].voices
@@ -649,6 +678,7 @@ class MusicMixin:
             own["steps"] = steps
             given = "the hi-hat's steps"
         else:
+            own["auto"] = True                      # (given: the new groove's ride takes over after a change)
             pattern = hat["pattern"] if hat["pattern"] not in ("none",) else "style"
             own["pattern"] = player_pieces.HAT_RHYTHM + pattern
             if player_pieces.hand_hat_row(settings["style"], settings["variation"], pattern,
@@ -661,15 +691,89 @@ class MusicMixin:
         settings["pieces"]["ride"] = own
         return given
 
+    @staticmethod
+    def _give_the_hat_a_rhythm(settings):
+        """A Hi-hat turned on with nothing of its own to play (not in the groove, no other pattern, no steps): eighth
+        notes, the first of its patterns, as a ride is given a rhythm (_give_the_ride_a_rhythm). Returns what it was
+        given, or None."""
+        hat = player_pieces.piece_settings(settings, "hat")
+        if hat["steps"] or hat["pattern"] not in ("style", "none"):
+            return None
+        own = dict(settings["pieces"].get("hat", {}))
+        own["pattern"] = "g:eighths"
+        own["auto"] = True
+        MusicMixin._store_on(settings, "hat", own, True)
+        settings["pieces"]["hat"] = own
+        return "eighth notes"
+
+    def _turns_after_a_change(self, before, settings):
+        """After a change of style or variation. A pattern a piece was given for having nothing to play
+        (player_pieces "auto") goes where the new groove has the piece, so it plays the groove. On a drummer a real
+        drummer plays: if the ride and the hi-hat would both keep time now and did not both before, the one that kept
+        time before keeps it (the Hi-hat when neither did) and the other is turned off for it, as turning a piece on
+        does (_take_turns; the review of 25 Oct 2026: changing the style left both playing). Where the new groove
+        keeps time on the crash, a Hi-hat that plays turns the crash off for it; a crash turned off for the hi-hat
+        comes back where it no longer keeps time, or the hi-hat no longer plays. Changes settings; returns what to
+        say ("Hi-hat off") or None."""
+        if settings["player"] != "anvil":
+            return None
+        for key, own in list(settings["pieces"].items()):
+            if own.get("auto") and in_the_groove(settings, key):
+                own = {k: v for k, v in own.items() if k not in ("auto", "pattern")}
+                if own:
+                    settings["pieces"][key] = own
+                else:
+                    settings["pieces"].pop(key)
+        states = self._turn_states(settings)
+        words = []
+        was = {key: self._hand(before, key) for key in player_pieces.TAKES_TURNS}
+        now = {key: self._hand(settings, key) for key in player_pieces.TAKES_TURNS}
+        # (both kept time before only where they do not take turns, a drum machine, or in a region from before
+        # 0.9.7, which keeps them both until changed by hand: from a drum machine the Hi-hat keeps time)
+        if settings["style"] in player_pieces.LIVE_DRUMMER_STYLES and all(now.values()) and not (
+                all(was.values()) and before["style"] in player_pieces.LIVE_DRUMMER_STYLES):
+            keep = "ride" if was["ride"] and not was["hat"] else "hat"
+            other = "hat" if keep == "ride" else "ride"
+            own = dict(settings["pieces"].get(other, {}))
+            self._store_on(settings, other, own, False)
+            own["off_for"] = keep
+            settings["pieces"][other] = own
+            words.append(player_pieces.turns_words(keep, states, self._turn_states(settings)))
+        crash_rides = (in_the_groove(settings, "crash") and not in_the_groove(settings, "hat")
+                       and not in_the_groove(settings, "ride"))
+        crash = dict(settings["pieces"].get("crash", {}))
+        hat_plays = self._plays_something(settings, "hat")
+        if crash_rides and hat_plays and player_pieces.piece_on(settings, "crash", True):
+            self._store_on(settings, "crash", crash, False)
+            crash["off_for"] = "hat"
+            settings["pieces"]["crash"] = crash
+            words.append("Crash off")
+        elif crash.get("off_for") == "hat" and not (crash_rides and hat_plays):
+            crash.pop("off_for")
+            crash.pop("on", None)               # back to what it does by itself in this groove
+            if crash:
+                settings["pieces"]["crash"] = crash
+            else:
+                settings["pieces"].pop("crash", None)
+            if player_pieces.piece_on(settings, "crash", in_the_groove(settings, "crash")) and states.get(
+                    "crash") == "off":
+                words.append("Crash on")
+        return ". ".join(w for w in words if w) or None
+
     def pieces_turned_off(self, track_id, index, piece_key, on=True, **changes):
         """What turning this piece on (on True), or another change (pattern=..., steps=...), would stop the hand
         playing in this region (the ride and the hi-hats taking turns): [piece key]. Nothing is changed."""
         if not changes:
             changes = {"on": on}
         settings = self.player_settings(track_id, index)
-        after = self._apply_piece_change(settings, piece_key, changes)
-        return [key for key in player_pieces.takes_turns(settings["style"], piece_key)
-                if self._hand(settings, key) and not self._hand(after, key)]
+        after = self._apply_piece_change(settings, piece_key, changes, self.kit_notes(track_id))
+        found = [key for key in player_pieces.takes_turns(settings["style"], piece_key)
+                 if self._hand(settings, key) and not self._hand(after, key)]
+        if piece_key in player_pieces.CRASH_GIVES_WAY_TO:
+            was, now = (player_pieces.piece_on(s, "crash", in_the_groove(s, "crash")) for s in (settings, after))
+            if was and not now:
+                found.append("crash")           # (where the crash keeps time; the review of 25 Oct 2026)
+        return found
 
     @staticmethod
     def _store_on(settings, piece_key, stored, on):
@@ -681,7 +785,7 @@ class MusicMixin:
         if stored["on"] == player_pieces.piece_on(by_itself, piece_key, in_the_groove(settings, piece_key)):
             stored.pop("on")
 
-    def _apply_piece_change(self, settings, piece_key, changes):
+    def _apply_piece_change(self, settings, piece_key, changes, kit_notes=None):
         """The region's settings with this change to one piece made, the ride and the hi-hats taking turns included
         (a copy; settings are left as they were). Sets self._last_rhythm to what a ride with nothing to play was
         given (_take_turns)."""
@@ -703,7 +807,17 @@ class MusicMixin:
                 stored.pop(key, None)
             else:
                 stored[key] = value
+        if "pattern" in changes:
+            stored.pop("auto", None)                    # chosen by hand: yours (player_pieces "auto")
         if "on" in changes:
+            # on or off by hand: no longer another piece's to give back (the review of 25 Oct 2026: a crash turned
+            # off by hand came back on with the hi-hat)
+            stored.pop("off_for", None)
+            if changes["on"] and piece.kind != "part" and stored.get("steps") and not any(
+                    hit[2] in piece.voices for bar in stored["steps"]["bars"] for hit in bar):
+                # hand-made steps with nothing in them, turned on: the silence goes, so it plays (the review of
+                # 25 Oct 2026: it read on and played nothing)
+                stored.pop("steps")
             self._store_on(settings, piece_key, stored,
                            player_pieces.clean_value(piece, "on", changes["on"], settings["player"]))
         elif steps_turn_on:
@@ -712,8 +826,43 @@ class MusicMixin:
             settings["pieces"][piece_key] = stored
         else:
             settings["pieces"].pop(piece_key, None)
+        if ("pattern" in changes and "on" not in changes and settings["player"] == "anvil" and piece.kind not in
+                ("part", "crash", "pedal")
+                and player_pieces.piece_on(settings, piece_key, in_the_groove(settings, piece_key))
+                and not self._plays_something(settings, piece_key)):
+            # a Pattern with nothing in it for this piece (the variation's own where it has none): off, since a
+            # piece that is on always plays (Russell, 25 Oct 2026)
+            own = dict(settings["pieces"].get(piece_key, {}))
+            self._store_on(settings, piece_key, own, False)
+            settings["pieces"][piece_key] = own
+        if (changes.get("on") and settings["player"] == "anvil" and piece_key != "hat"
+                and not (piece_key == "ride" and player_pieces.takes_turns(settings["style"], "ride"))
+                and piece.kind not in ("part", "crash", "pedal")
+                and player_pieces.piece_on(settings, piece_key, in_the_groove(settings, piece_key))
+                and not player_pieces.piece_on(before, piece_key, in_the_groove(before, piece_key))
+                and not self._plays_something(settings, piece_key)):
+            # Russell, 25 Oct 2026: "The only time something is not in the groove is if it's off": a piece turned on
+            # with nothing of its own to play (its variation's groove has none of it) plays the first of its
+            # patterns. (The hi-hat, and the ride where it takes turns, are given theirs by _take_turns; the pedal
+            # plays the foot on two
+            # and four by itself; the crash plays where sections start and after fills.)
+            self._give_a_pattern(settings, piece_key, kit_notes)
         self._last_rhythm = self._take_turns(before, settings, piece_key, changes)
         return settings
+
+    @staticmethod
+    def _give_a_pattern(settings, piece_key, kit_notes=None):
+        """A piece turned on with nothing to play: the first of its common patterns (player_pieces.GENERIC) whose
+        sounds the kit has (the review of 25 Oct 2026: the shaker on a kit without one was silent)."""
+        found = [key for key, _words, rows in player_pieces.GENERIC.get(piece_key, ())
+                 if kit_notes is None or all(voice in kit_notes for voice in rows)]
+        if not found:
+            return                                      # (the kit has none of this piece: "not in this kit")
+        own = dict(settings["pieces"].get(piece_key, {}))
+        own["pattern"] = "g:" + found[0]
+        own["auto"] = True
+        MusicMixin._store_on(settings, piece_key, own, True)
+        settings["pieces"][piece_key] = own
 
     @for_each_selected_region
     def update_piece(self, track_id, index, piece_key, speak=True, **changes):
@@ -724,7 +873,7 @@ class MusicMixin:
         track, region = self._player_region(track_id, index)
         settings = players.clean_settings(region.player)
         states = self._turn_states(settings)
-        after = self._apply_piece_change(settings, piece_key, changes)
+        after = self._apply_piece_change(settings, piece_key, changes, self.kit_notes(track_id))
         piece = player_pieces.PIECE_BY_KEY[piece_key]
         merge = len(changes) == 1 and next(iter(changes)) in PIECE_COALESCE
         label = "{} {}".format(piece.name if piece.kind != "part" else "part", next(iter(changes)) if len(changes) == 1

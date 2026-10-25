@@ -218,8 +218,9 @@ class LanePointsDialog(_ListWindow):
         with PointDialog(self, self.session, self.track_id, self.lane_index, tick, value, True,
                          title="Add automation point") as dlg:
             values = ask_values(self.run_modal, dlg)
+            kept = dlg.kept_tick
         if values is not None:
-            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values))
+            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values, tick=kept))
 
     def edit(self):
         points = self.points_list()
@@ -229,8 +230,9 @@ class LanePointsDialog(_ListWindow):
         tick, value, glide = points[index]
         with PointDialog(self, self.session, self.track_id, self.lane_index, tick, value, glide) as dlg:
             values = ask_values(self.run_modal, dlg)
+            kept = dlg.kept_tick
         if values is not None:
-            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values, replacing=index))
+            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values, replacing=index, tick=kept))
 
     def delete(self):
         index = self.selected(len(self.points_list()))
@@ -266,6 +268,11 @@ class PointDialog(wx.Dialog):
         from .music_dialogs import LAST_BEAT, _bar_and_beat
 
         bar, beat = _bar_and_beat(session.song.timeline, tick)
+        # the place as shown and the exact moment behind it: a place left as shown keeps the exact moment (the
+        # shown beat is rounded, so a change of value alone could move the point onto its neighbour; the review of
+        # 25 Oct 2026)
+        self.tick, self.shown = tick, (bar, beat)
+        self.kept_tick = None
         low, high, decimals, unit = session.value_range(track_id, lane_index)
         name = session.lane_name(track_id, lane_index)
         form = Form(self)
@@ -294,4 +301,6 @@ class PointDialog(wx.Dialog):
 
         bar, beat = self.bar.GetValue(), self.beat.GetValue()
         _tick_from(self.session.song.timeline, bar, beat, "Beat")
+        unchanged = int(bar) == self.shown[0] and round(float(beat), 2) == round(self.shown[1], 2)
+        self.kept_tick = self.tick if unchanged else None
         return bar, beat, self.value.GetValue(), self.glide.GetValue()

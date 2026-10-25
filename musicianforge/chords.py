@@ -32,6 +32,12 @@ QUALITIES = [
     ("m6", "minor six", "m6", (0, 3, 7, 9)),
     ("add9", "add nine", "add9", (0, 4, 7, 14)),
     ("5", "power chord (root and fifth)", "5", (0, 7)),
+    # (the review of 25 Oct 2026) the seventh chords of harmonic minor, melodic minor, Phrygian dominant and
+    # Hungarian minor that had no chord type, so progressions with sevenths can name them on their own root.
+    # Added at the end, so every older chord keeps its place in the lists, and left out of working out chords from
+    # notes (_TEMPLATES), so chords found from notes are the same as before.
+    ("mmaj7", "minor major seven", "mMaj7", (0, 3, 7, 11)),
+    ("maj7#5", "augmented major seven", "maj7#5", (0, 4, 8, 11)),
 ]
 QUALITY_KEYS = [q[0] for q in QUALITIES]
 _BY_KEY = {q[0]: q for q in QUALITIES}
@@ -173,21 +179,76 @@ def progression_chords(timeline, start_bar, end_bar, degrees, bars_per_chord=1, 
     while bar < end_bar:
         key = timeline.key_at_bar(bar)
         chord = theory.diatonic_chords(key.tonic, key.scale)[(degrees[index % len(degrees)] - 1) % 7]
-        quality = quality_of(chord.intervals)
-        if sevenths and quality in ("major", "minor", "dim"):
-            third = chord.intervals[1]
-            scale_pcs = theory.scale_pitch_classes(key.tonic, theory.chord_scale(key.scale))
-            seventh_major = (chord.root + 11) % 12 in scale_pcs
-            if quality == "major":
-                quality = "maj7" if seventh_major else "7"
-            elif quality == "minor":
-                quality = "m7"
-            elif third == 3:
-                quality = "m7b5"
-        changes.append(ChordChange(timeline.bar_to_tick(bar), chord.root, quality))
+        scale_pcs = theory.scale_pitch_classes(key.tonic, theory.chord_scale(key.scale))
+        root, quality, bass = _in_key_chord(chord, scale_pcs)
+        if sevenths:
+            degree = (degrees[index % len(degrees)] - 1) % 7
+            steps = theory.scale_intervals(theory.chord_scale(key.scale))
+            root, quality, bass = _in_key_seventh(chord, (key.tonic + steps[(degree + 6) % 7]) % 12, scale_pcs,
+                                                  (root, quality, bass))
+        changes.append(ChordChange(timeline.bar_to_tick(bar), root, quality, bass))
         bar += bars_per_chord
         index += 1
     return changes
+
+
+def _in_key_chord(chord, scale_pcs):
+    """(root, chord type, bass or None) for a key's chord, with every note in the key.
+
+    Most triads are a chord type of their own. A few in Hungarian minor are not (in C: D, F sharp, A flat and
+    F sharp, A flat, C), and until the review of 25 Oct 2026 they were called major, so a progression put D major
+    (with an A the key does not have) on the chord track. No chord type has exactly those notes, so the nearest
+    one that holds all three and stays in the key is used, with the degree's own note in the bass: A flat half
+    diminished over D, and A flat seven over F sharp."""
+    if tuple(chord.intervals) in _BY_INTERVALS:
+        return chord.root, _BY_INTERVALS[tuple(chord.intervals)], None
+    triad = {(chord.root + i) % 12 for i in chord.intervals}
+    best = None
+    for quality, _spoken, _symbol, intervals in QUALITIES:
+        for root in range(12):
+            notes = {(root + i) % 12 for i in intervals}
+            if triad <= notes <= scale_pcs and (best is None or len(notes) < best[0]):
+                best = (len(notes), root, quality)
+    if best is None:  # (no such scale today) keep the old behaviour rather than fail
+        return chord.root, "major", None
+    return best[1], best[2], chord.root % 12
+
+
+def _in_key_seventh(chord, seventh, scale_pcs, triad):
+    """(root, chord type, bass or None) for a key's chord with its seventh: the triad plus the key's own note
+    six steps above the root (`seventh`), with every note in the key.
+
+    Until the review of 25 Oct 2026 the seventh was picked as if every key were major or natural minor, so some
+    scales got a note they do not have (C minor seven in C harmonic minor, whose seventh is B, not B flat). Now a
+    chord type with exactly those four notes is used (on the degree's own root when one fits, else with that root
+    in the bass; "minor major seven" and "augmented major seven" were added for this, so C harmonic minor's first
+    chord is C minor major seven). If no chord type has the four notes (Hungarian minor's second degree, D, F sharp, A flat,
+    C), the nearest in-key one is used: the in-key chord (with the degree's root in the bass if it is not the
+    chord's own) that holds the triad and the most of the four notes, on the degree's own root when possible, with
+    the fewest extra notes: A flat seven over D, which holds all four plus E flat. If nothing fits, the chord
+    without its seventh is used."""
+    own_root = chord.root % 12
+    triad_notes = {(own_root + i) % 12 for i in chord.intervals}
+    four = triad_notes | {seventh % 12}
+
+    def entry(root, quality):
+        return root, quality, None if root == own_root else own_root
+
+    exact, nearest = [], []
+    for quality, _spoken, _symbol, intervals in QUALITIES:
+        for root in range(12):
+            notes = {(root + i) % 12 for i in intervals}
+            if notes == four:
+                exact.append(((root != own_root,), entry(root, quality)))
+            elif triad_notes <= notes | {own_root} and notes <= scale_pcs:
+                # the degree's root is always heard (as the root or in the bass), so it need not be in the chord
+                heard = notes | {own_root}
+                nearest.append(((-len(heard & four), root != own_root, len(heard - four)), entry(root, quality)))
+    if exact:
+        return min(exact)[1]
+    if nearest:
+        return min(nearest)[1]
+    return triad  # (no such scale today) the chord without its seventh
 
 
 # ----------------------------------------------------------------------

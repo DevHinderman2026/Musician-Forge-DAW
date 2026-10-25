@@ -66,6 +66,11 @@ def extract(song, start_bar, end_bar):
     starting = chordtrack.chord_at(song.chords, t0)
     if starting is not None:
         clip_chords.append((0, copy.deepcopy(starting)))
+    else:
+        # bars before the first chord change play the key's own chord; the copy says so, or wherever it lands it
+        # would play the chord sounding there instead (the review of 25 Oct 2026)
+        first = min([c.tick for c in song.chords if t0 < c.tick < t1], default=t1)
+        clip_chords += [(c.tick - t0, c) for c in _key_chord_changes(tl, t0, first)]
     clip_chords += [(c.tick - t0, copy.deepcopy(c)) for c in song.chords if t0 < c.tick < t1]
     lanes = {track.id: _extract_lanes(track, t0, t1) for track in song.tracks}
     return Clip(end_bar - start_bar, t1 - t0, sigs, tempos, keys, notes, regions, spans, clip_chords,
@@ -162,6 +167,13 @@ def insert_clip(song, at_bar, clip):
         # (only when the chord there would be another one: until 24 Oct 2026 every added or deleted section left a
         # chord change nobody placed, repeating the chord already playing, in the chord track)
         moved.append(chordtrack.ChordChange(at_tick + clip.ticks, after.root, after.quality, after.bass))
+    elif after is None and clip.chords:
+        # the bars after the clip came before the first chord change, so they played the key's own chord; the
+        # clip's last chord would carry on over them instead (the review of 25 Oct 2026)
+        upcoming = [c.tick for c in moved if c.tick >= at_tick + clip.ticks]
+        for change in _key_chord_changes(tl, at_tick + clip.ticks, min(upcoming, default=None)):
+            if not _same_chord(chordtrack.chord_at(moved, change.tick), change):
+                moved = chordtrack.sort(moved + [change])
     song.chords = chordtrack.sort(moved)
 
 
@@ -234,6 +246,19 @@ def delete_bars(song, start_bar, end_bar):
     if at_end is not None and at_end.tick < t1 and not _same_chord(chordtrack.chord_at(chordtrack.sort(kept), t0), at_end):
         kept.append(chordtrack.ChordChange(t0, at_end.root, at_end.quality, at_end.bass))
     song.chords = chordtrack.sort(kept)
+
+
+def _key_chord_changes(timeline, start, end=None):
+    """Chord changes for the key's own chord (I or i) from `start` up to `end` (None: on and on), one wherever
+    it changes with the key: what players use where the chord track has no chord (the review of 25 Oct 2026)."""
+    later = sorted(timeline.bar_to_tick(k.bar) for k in timeline.keys)
+    ticks = [start] + [t for t in later if start < t and (end is None or t < end)]
+    changes = []
+    for tick in ticks:
+        found = chordtrack.spans([], tick, tick + 1, timeline)[0][2]
+        if not changes or not _same_chord(changes[-1], found):
+            changes.append(chordtrack.ChordChange(tick, found.root, found.quality, found.bass))
+    return changes
 
 
 def _same_chord(a, b):

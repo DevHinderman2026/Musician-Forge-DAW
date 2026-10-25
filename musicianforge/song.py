@@ -558,9 +558,27 @@ class Song:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        if os.path.exists(path) and (not os.path.exists(path + ".bak") or Song.is_worth_keeping(path)):
-            paths.replace_file(path, path + ".bak")       # a damaged file never takes a good backup's place
+        backup = path + ".bak"
+        if (os.path.exists(path) and (not os.path.exists(backup) or Song.is_worth_keeping(path))
+                and not Song.is_from_a_newer_version(backup)):
+            # a damaged file never takes a good backup's place, and nothing takes the place of a backup saved by a
+            # newer Musician Forge (the review of 25 Oct 2026: the second save after opening the backup of a newer
+            # project wrote over that project in the .bak file, and it was lost)
+            paths.replace_file(path, backup)
         paths.replace_file(tmp, path)
+
+    @staticmethod
+    def is_from_a_newer_version(path):
+        """True if path is a project saved by a newer Musician Forge (False if it is not there or not one)."""
+        if not os.path.exists(path):
+            return False
+        try:
+            Song.load(path)
+        except NewerVersionError:
+            return True
+        except Exception:  # noqa: BLE001 - damaged in any way
+            return False
+        return False
 
     @staticmethod
     def is_readable(path):

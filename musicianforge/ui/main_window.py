@@ -2909,8 +2909,8 @@ Control+R or the editor's Reforge button: a new performance of the same variatio
 small details, and Musician Forge says "Regenerated performance"; the variation never changes, and Control+Z
 goes back to the one before. Alt+S says
 the summary. Turn into notes makes ordinary notes you can edit. Control+Z and Control+Y work inside the editor.
-Kit pieces: a piece the variation's groove does not use is off by itself ("off, not in this groove"; the toms and crash
-usually are), until you choose a pattern or make steps for it. Off takes a piece out of the groove only: fills always use
+Kit pieces: a piece the variation's groove does not use is off by itself (it just says "off"; the toms and crash
+usually are). Turned on, it plays the first of its patterns, so a piece that is on always plays. Off takes a piece out of the groove only: fills always use
 the whole kit, and the crash where a section starts follows its When setting. Space turns a piece on or off; Enter opens
 its settings: Pattern (the variation's own, another
 variation's, or a common one), a Complexity slider for that piece alone (Loudness only for a region from an older version that has its own),

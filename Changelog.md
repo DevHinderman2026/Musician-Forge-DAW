@@ -1,5 +1,63 @@
 # Musician Forge release notes
 
+## 0.9.9 (25 October 2026, in testing)
+
+### New features and improvements
+
+- Changing a drummer's style or variation keeps one hand on one cymbal: if the Ride and the Hi-hat would both keep
+  time in the new style, the one that kept time before goes on doing it and the other turns off for it ("Hi-hat
+  off"), as turning a piece on does. One Control+Z brings back the style as it was.
+- A drum piece that is on always plays: turning on a piece the variation's groove has none of (the hi-hat in jazz,
+  the snare in house, say) gives it the first of its patterns, eighth notes on the hi-hat, so the jazz Hi-hat turned
+  on keeps time and turns the Ride off. The Kit pieces list no longer says "not in this groove"; a piece that is off
+  just says "off" (new and changed regions; older projects play as before until you change them).
+- Where a metal groove keeps time on the crash (variations 3 and 4), turning the Hi-hat on takes over: the crash's
+  groove goes off ("Hi-hat on with eighth notes, crash off"; its line reads "Crash cymbals: off, the hi-hat keeps
+  time") and comes back when the Hi-hat is turned off again. The crash where a section starts and after fills stays.
+- Every drummer crashes where the region starts and after every fill, jazz and the hand percussion styles too, and
+  after fills whatever the Crash's When setting is, unless it is Never. The Crash toggle turns only the groove's own
+  crashes on and off (new and changed regions).
+- A piece you turn on whose hand-made steps are all silent plays again, a pattern given to a piece that had nothing
+  to play gives way to the new groove when you change the style or variation, the pattern given is one your kit has
+  the sounds for, and a Pattern that has nothing in it for a piece turns the piece off. The Pattern list no longer
+  offers "None in the groove": to take a piece out of the groove, turn it off.
+- Two new chord types, minor major seven (mMaj7) and augmented major seven (maj7#5), in the chord windows and the
+  chord strips. Chord progressions with sevenths now use the key's own seventh, so harmonic minor, melodic minor,
+  Phrygian dominant and Hungarian minor progressions stay in the key (C harmonic minor starts on C minor major
+  seven). Working out chords from notes is unchanged.
+- A MIDI export with more than one drum track puts each on channel 10 of its own MIDI port, so each keeps its own
+  kit, volume, pan and automation.
+
+### Bug fixes
+
+- Fixes older projects (saved before 0.9.8) where the open hi-hat's loudness in Track settings differed from the
+  closed hi-hat's: the open hi-hats played at the hi-hat's loudness instead of their own. It is kept now, until you
+  change the kit's loudness in Track settings.
+- Fixes older projects whose closed and open hi-hats had hand-made steps of different lengths (3 bars and 2 bars,
+  say): the open hi-hat drifted out of step after a few bars.
+- Fixes older projects with the closed hi-hat turned off but holding hand-made steps: they started to play under an
+  open hi-hat that was on.
+- Fixes older projects with "foot only" and the closed hi-hat's Pattern set to None: the foot on two and four went
+  silent.
+- Fixes a project saved by a newer Musician Forge being lost: after opening its backup instead, the second save
+  wrote over it in the .bak file. A backup saved by a newer version is never written over now.
+- Fixes a take being lost, or going into the next project, when New or Open stopped a recording: the program
+  stopped waiting for the take before it arrived.
+- Fixes a crash cymbal you turned off yourself coming back on when the Hi-hat was turned off, and a style or
+  variation change into a groove that keeps time on the crash leaving the hi-hat and the crash both playing.
+- Fixes moving or duplicating a song section before the first chord change: it played the chord where it landed
+  instead of its own.
+- Fixes chord progressions in Hungarian Minor putting chords with notes outside the key on the chord track.
+- Fixes editing an automation point's value moving it onto the point next to it, which was lost; moving a point
+  onto another is now refused with a message.
+- Fixes effect automation stopping after the sound engine recovered from a glitch.
+- Fixes a WAV file with a damaged sample rate using up all the memory or failing with "Something went wrong"; it is
+  refused with a plain message.
+- Fixes long delay echoes with high feedback being cut off while still heard.
+- Fixes the reverb's pre-delay, turned up while playing, bringing back a moment of old audio.
+- Fixes an audio export reading the project's live keys for pitch correction while it ran, so a key changed during
+  the export, or closing the program, could reach the exported file.
+
 ## 0.9.8 (24 October 2026, in testing)
 
 ### New features and improvements

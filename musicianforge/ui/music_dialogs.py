@@ -794,12 +794,19 @@ class PlayerEditorDialog(wx.Dialog):
         if self._filling:
             return
         before = self.settings()["variation"]
+        self.session.turn_words = None
         self.change(style=self.player.styles[self.style.GetSelection()].key)
         settings = self.settings()
+        words = []
         if settings["variation"] != before:
-            # after the Style list's own reading of the new style, not over it (screen reader audit D3)
-            say_after(self.session.announce, "This style has {} variations, so it is on variation 1".format(
+            words.append("This style has {} variations, so it is on variation 1".format(
                 players.variation_count(settings)))
+        turns = getattr(self.session, "turn_words", None)
+        if turns:                   # the ride and the hi-hat take turns in the new style too (the review, 25 Oct 2026)
+            words.append(turns)
+        if words:
+            # after the Style list's own reading of the new style, not over it (screen reader audit D3)
+            say_after(self.session.announce, ". ".join(words))
 
     def go_to_variation(self, number, speak=True):
         """Another variation; with hand-made steps, the warning first (Cancel keeps everything as it was). Previous
@@ -1179,7 +1186,7 @@ class PieceSettingsDialog(wx.Dialog, _RegionWindow):
             # in "This piece now" (Russell, 10 Oct 2026: changing a pattern read everything out).
             names = [self.short_name(words) for _key, words in self.options]
             chosen = self.options[keys.index(full["pattern"])][1]
-            if self.short_name(chosen) != chosen and not chosen.endswith("none in the groove"):
+            if self.short_name(chosen) != chosen and not chosen.endswith(("none in the groove", "plays it: off")):
                 about += ". Pattern: " + chosen
             self.about.SetValue(about)
             if [self.pattern.GetString(i) for i in range(self.pattern.GetCount())] != names:

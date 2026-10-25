@@ -167,16 +167,21 @@ def midi_places(song, notes_by_track=None):
     on the other 15 channels. Since 23 Oct 2026 a track without notes takes no channel (it used to, so an empty
     track could take a channel another track then shared), and from the 16th instrument track on the tracks go on
     a second MIDI port (a third from the 31st, and so on), so no two share a channel on one port. A program that
-    ignores ports plays them on the channels of the first 15 (see ports_used)."""
+    ignores ports plays them on the channels of the first 15 (see ports_used). A second drum track goes on channel 10
+    of the second port, a third on the third, and so on (the review of 25 Oct 2026: they all shared channel 10 of the
+    first port, so the last one's kit, volume and pan, and either one's automation, went for all of them); General
+    MIDI has only the one drum channel, so a program that ignores ports still plays them all on channel 10."""
     places = {}
     melodic_index = 0
+    drum_index = 0
     for track in song.tracks:
         if getattr(track, "is_audio", False):
             continue  # recordings cannot go into a MIDI file
         if not (notes_by_track or {}).get(track.id, track.notes):
             continue
         if is_kit(track.instrument):
-            places[track.id] = (0, DRUM_CHANNEL)
+            places[track.id] = (drum_index, DRUM_CHANNEL)
+            drum_index += 1
         else:
             places[track.id] = (melodic_index // len(MELODIC_CHANNELS),
                                 MELODIC_CHANNELS[melodic_index % len(MELODIC_CHANNELS)])

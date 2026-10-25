@@ -656,6 +656,9 @@ class Engine:
         np.nan_to_num(out, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
         self._chains.clear()
         self._sync_chains(self.data)
+        if self.automation is not None:
+            # the fresh chains hold the saved settings: the automated ones go in again (the review of 25 Oct 2026)
+            self.automation.forget_applied()
         self.bad_blocks += 1
         if self.bad_blocks <= 3:
             log.error("A block of sound held NaN or infinity: it was silenced and the effects were reset")
@@ -1127,7 +1130,9 @@ class Engine:
             return
         stop_tick = self.data.sample_to_tick(self.position)
         self._arp_resync(stop_tick)  # ends any arpeggio note while the recorder can still take it
-        self.playing = False
+        # playing stays True until the takes are handed back (below): the window waits while it is True, and the
+        # FluidSynth calls in between let it run (the review of 25 Oct 2026: it stopped waiting too soon, so a take
+        # stopped by New or Open arrived after the new project and went into it, or was lost)
         self._release_playback_notes()
         if self.recorder is not None:
             notes = self.recorder.finish(stop_tick)
@@ -1141,6 +1146,7 @@ class Engine:
         self.count_in_end = None
         if announce:
             self.messages.put(("stopped", announce))
+        self.playing = False
 
     def _release_playback_notes(self):
         for channel, pitch in self._sounding:

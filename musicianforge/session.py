@@ -623,6 +623,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("A track needs a name")
         if kit_levels is not None:
             kit_levels = player_pieces.clean_kit_levels(kit_levels)
+            current = self.song.track_by_id(track_id)
+            kept = player_pieces.clean_kit_levels(current.kit_levels)
+            if (player_pieces.OLD_OPEN_HAT in kept and player_pieces.OLD_OPEN_HAT not in kit_levels
+                    and player_pieces.visible_kit_levels(kit_levels) == player_pieces.visible_kit_levels(kept)):
+                kit_levels[player_pieces.OLD_OPEN_HAT] = kept[player_pieces.OLD_OPEN_HAT]   # the kit unchanged
         if self._writing():
             current = self.song.track_by_id(track_id)
             if volume is not None and int(volume) != self._heard_setting(current, "volume"):
@@ -2661,9 +2666,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 return effect
         return None
 
-    def _key_spans(self, region, frames):
-        """The song's keys during a recording: [(first sample, allowed pitch classes)]."""
-        tl = self.song.timeline
+    def _key_spans(self, region, frames, timeline=None):
+        """The song's keys during a recording: [(first sample, allowed pitch classes)]. timeline: the song's being
+        exported (a copy), so a key changed while it runs, or the program closing, does not reach the export (the
+        review of 25 Oct 2026); the project's own when None."""
+        tl = timeline if timeline is not None else self.song.timeline
         start_seconds = tl.tick_to_seconds(region.tick)
         spans = []
         for change in tl.keys:
@@ -2680,8 +2687,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             spans = [(0, frozenset(theory.scale_pitch_classes(key.tonic, key.scale)))]
         return tuple(spans)
 
-    def _take_audio(self, track, region):
-        """A recording as it should play: pitch-corrected when the track has pitch correction on."""
+    def _take_audio(self, track, region, timeline=None):
+        """A recording as it should play: pitch-corrected when the track has pitch correction on (timeline: see
+        _key_spans)."""
         take = region.take
         data = self.load_audio(take.file) if take is not None else None
         if data is None or not len(data):
@@ -2689,7 +2697,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         effect = self._pitch_effect(track)
         if effect is None:
             return data
-        spans = self._key_spans(region, len(data))
+        spans = self._key_spans(region, len(data), timeline)
         params = effect["params"]
         key = (os.path.normcase(self.audio_path(take.file)), tuple(sorted(params.items())), spans)
         corrected = self._corrected.get(key)
@@ -3002,9 +3010,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         """The 8 strips as [root, chord type, bass or None]: yours, or the key's at the playhead."""
         if self.song.strips:
             return [list(e) for e in self.song.strips]
+        # Named the way progressions name the key's chords (the review of 25 Oct 2026): a triad with no chord type
+        # of its own (Hungarian minor's second and fourth) was called major until now, so changing one strip
+        # turned it into a major chord with a note the key does not have. Now it is the nearest in-key chord type
+        # with the degree's note in the bass. The 8th strip (a borrowed chord) is always a chord type of its own.
+        key = self.current_key()
+        scale_pcs = theory.scale_pitch_classes(key.tonic, theory.chord_scale(self.typing.scale_for(key)))
         found = []
-        for chord in self.typing.chords_for(self.current_key()):
-            found.append([chord.root % 12, chords_module.quality_of(chord.intervals), None])
+        for chord in self.typing.chords_for(key):
+            found.append(list(chords_module._in_key_chord(chord, scale_pcs)))
         return found
 
     def chord_strip_words(self, index):
@@ -3423,7 +3437,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         try:
             for block in render_offline(song, synth, sample_rate, progress=progress, cancelled=cancelled,
                                         audio_loader=self.load_audio, tail_seconds=MAX_TAIL_SECONDS if tail else 0.0,
-                                        until_silent=tail and only_track is None, take_loader=self._take_audio,
+                                        until_silent=tail and only_track is None,
+                                        take_loader=lambda t, r: self._take_audio(t, r, song.timeline),
                                         notes_by_track=notes_by_track, fade_seconds=fade_seconds,
                                         on_levels=levels_heard):
                 peak = max(peak, float(abs(block).max()))
@@ -3493,7 +3508,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                     progress((number + min(1.0, fraction)) / float(len(tracks)))
             try:
                 for block in render_offline(alone, synth, rate, cancelled=cancelled, audio_loader=self.load_audio,
-                                            tail_seconds=0.0, take_loader=self._take_audio,
+                                            tail_seconds=0.0,
+                                            take_loader=lambda t, r, tl=alone.timeline: self._take_audio(t, r, tl),
                                             notes_by_track=notes_by_track, fade_seconds=fade_seconds,
                                             on_levels=heard.append):
                     levels = heard.pop() if heard else np.max(np.abs(block), axis=1)
