@@ -418,6 +418,7 @@ class ChangesDialog(wx.Dialog):
             values = dlg.get_values()
             if index == 0 and values[0] != 1:
                 raise ValueError("The first change must stay at bar 1")
+            self._refuse_moving_onto_another(values, index)
             self._apply(values, replacing=index)           # (TimelineError is a ValueError)
             return values
 
@@ -426,11 +427,26 @@ class ChangesDialog(wx.Dialog):
         if values is not None:
             self.refresh(self._find(values))
 
-    def _find(self, values):
+    def _refuse_moving_onto_another(self, values, index):
+        """A change edited and moved onto another change's bar (and beat, for a tempo) would quietly take that
+        one's place (session.edit_change puts it there, and the timeline keeps one change per place): refuse it in
+        words instead, so nothing is lost without being asked (the review of 25 Oct 2026, as for automation points)."""
+        if index is None:
+            return
+        found = self._find(values, missing=None)
+        if found is not None and found != index:
+            where = "bar {}".format(values[0])
+            if self.kind == "tempo":
+                where += ", beat {}".format(format_number(values[1]))
+            what = {"tempo": "tempo change", "time": "time signature change", "key": "key change"}[self.kind]
+            raise ValueError("Another {} is already at {}, so this one was not moved. Choose another {}, or edit "
+                             "that one instead".format(what, where, "beat" if self.kind == "tempo" else "bar"))
+
+    def _find(self, values, missing=0):
         for i, item in enumerate(self._items()):
             if item.bar == values[0] and (self.kind != "tempo" or abs(item.beat - values[1]) < 1e-9):
                 return i
-        return 0
+        return missing
 
     @says_after
     def add(self):

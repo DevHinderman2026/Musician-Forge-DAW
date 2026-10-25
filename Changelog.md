@@ -1,5 +1,52 @@
 # Musician Forge release notes
 
+## 0.9.10 (25 October 2026, in testing)
+
+### New features and improvements
+
+- A kick under every crash: in every drummer, where the region starts and after every fill, the kick (bass drum)
+  lands with the crash cymbal, as a drummer's foot does, even when the Kick piece is turned off (new and changed
+  regions). It follows the Crash's When setting (a crash moved to the sections or every few bars brings its kick
+  along; Never means none), and a kick you set softly by hand on that beat keeps the loudness you gave it.
+- A player following a strummed guitar now hears each strum as one hit, where its first string is, instead of six
+  hits a few ticks apart: the bass, keys, synth, pad and the drummer's kick lock to the strum, on the beat (new and
+  changed regions).
+- When the whole song has played to its end (All sections on), the playhead goes back to the start of the song
+  and Musician Forge says so ("End of song, stopped. Bar 1, start of Section 1"), so Space plays it again. Playing
+  one region through puts the playhead back at that region's start.
+- Changing an EQ preset, or turning an EQ band on or off, while the song plays blends from the old sound to the new
+  one over a hundredth of a second instead of jumping.
+
+### Bug fixes
+
+- Fixes the playhead stopping on the very last tick of the song, so that Space played that one tick and said "End of
+  song" again, and a project saved there opened at "beat 4.999".
+- Fixes Duplicate on a looping region putting the copy inside the region's own repeats, so the region played once
+  and the Regions list said it still looped: the copy goes after the repeats.
+- Fixes Move region accepting a beat the bar does not have ("bar 1, beat 9" quietly became bar 3): it is refused
+  with a message, as a chord change is.
+- Fixes adding an automation point at the exact moment of an existing point replacing it without a word: it now
+  says "Replaced the point that was there".
+- Fixes the pushed pad (synth pad and keys, variation 4) being cut to a sixteenth when the chord track changed to
+  that very chord on the last sixteenth of the bar (new and changed regions).
+- Fixes hit detection missing most of the hits in a recording that sits off centre (an interface with a DC offset):
+  the offset is taken out first.
+
+- Fixes the automation point window closing before it said why a point could not be moved (onto another point, or
+  past the lane's limit): the window now stays open with what you typed still in it, like Region settings, so you
+  can put the place right.
+- Fixes editing a tempo, time signature, key or chord change and moving it onto the bar (and beat) of another one,
+  which quietly took that one's place, so a change was lost: the move is refused with a message, and the window
+  stays open with what you typed still in it.
+
+### Older projects
+
+- They play the same notes as before; the kick under the crash comes to a region once you change something in it.
+
+### New projects
+
+- New and changed rhythm player regions use this version's rules.
+
 ## 0.9.9 (25 October 2026, in testing)
 
 ### New features and improvements

@@ -56,6 +56,12 @@ def find_hits(audio, sample_rate, sensitivity=50):
         audio = audio.mean(axis=1)
     if len(audio) < WINDOW:
         return []
+    # A steady offset (a microphone or interface that sits off centre) is taken out first: it counted as loudness,
+    # so the rise a hit makes looked small beside it and hits went unfound (the review of 25 Oct 2026). A tiny
+    # offset is left: the lopsided sum of ordinary notes, which changes nothing.
+    offset = float(np.mean(audio))
+    if abs(offset) > 0.02 * float(np.max(np.abs(audio))):
+        audio = audio - offset
     # silence in front, so a hit right at the very start of a recording is found too
     hits = _find_hits(np.concatenate([np.zeros(WINDOW), audio]), sample_rate, sensitivity)
     for hit in hits:

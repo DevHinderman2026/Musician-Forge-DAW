@@ -149,14 +149,18 @@ class AutomationMixin:
         if not low <= number <= high:
             raise ValueError("The value must be from {} to {}".format(fx.format_value(low), fx.format_value(high)))
         value = auto.clamp_value(track, lane, number)
-        if replacing is None and len(lane["points"]) >= auto.MAX_POINTS:
+        # Add at the moment of a point already there takes that point's place: said, since until the third review
+        # of 25 Oct 2026 the old point went without a word (the lane keeps one point per moment)
+        replaced = replacing is None and any(p[0] == tick for p in lane["points"])
+        if replacing is None and not replaced and len(lane["points"]) >= auto.MAX_POINTS:
             raise ValueError("A lane can have up to {} points".format(auto.MAX_POINTS))
         with self.edit("automation point"):
             target = self.song.track_by_id(track_id).automation[lane_index]
             points = [p for i, p in enumerate(target["points"]) if i != replacing]
             target["points"] = auto.sort_points(points + [[tick, value, bool(glide)]])
         index = next(i for i, p in enumerate(self.lanes_of(track_id)[lane_index]["points"]) if p[0] == tick)
-        self.announce(self.describe_point(track_id, lane_index, index))
+        self.announce(("Replaced the point that was there. " if replaced else "")
+                      + self.describe_point(track_id, lane_index, index))
         return index
 
     def remove_point(self, track_id, lane_index, point_index):

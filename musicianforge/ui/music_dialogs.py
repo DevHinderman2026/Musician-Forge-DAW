@@ -135,10 +135,23 @@ class ChordTrackDialog(wx.Dialog):
         if index is None:
             return self.add()
         change = self.session.song.chords[index]
+
+        def apply():
+            # a chord change moved onto another one's moment would quietly take its place (the chord track keeps one
+            # chord per moment): refused in words, and the window comes back with the typed place still in it (the
+            # review of 25 Oct 2026, as for automation points)
+            values = dlg.get_values()
+            tl = self.session.song.timeline
+            tick = tl.position_to_tick(int(values[0]), float(values[1]))
+            if any(i != index and c.tick == tick for i, c in enumerate(self.session.song.chords)):
+                raise ValueError("Another chord change is already at {}, so this one was not moved. Choose another "
+                                 "beat, or edit that one instead".format(tl.spoken_bar_position(tick)))
+            return self.session.set_chord(*values, replacing=index)
+
         with ChordDialog(self, self.session, change=change, title="Edit chord change") as dlg:
-            values = ask_values(self.run_modal, dlg)
-        if values is not None:
-            self.refresh(self.session.set_chord(*values, replacing=index))
+            new_index = ask_values(self.run_modal, dlg, apply)
+        if new_index is not None:
+            self.refresh(new_index)
 
     def delete(self):
         index = self.selected()

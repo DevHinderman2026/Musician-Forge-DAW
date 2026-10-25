@@ -1,6 +1,6 @@
 # Musician Forge
 
-An accessible digital audio workstation for Windows, version 0.9.9
+An accessible digital audio workstation for Windows, version 0.9.10
 
 Musician Forge records what you play on the laptop keyboard into tracks of realistic instruments, and records your voice or any instrument through a microphone into audio tracks. It handles tempo changes, time signature changes and key changes, and it can export WAV or M4A audio, or standard MIDI files that other music programs can open. It imports audio files (WAV, MP3, M4A and more) and MIDI files too. Every control is a standard Windows control, so NVDA, JAWS and Narrator read it, and Musician Forge announces what happens (stop, octave, layout and so on; starting playback and recording stay quiet unless Options, Preferences turns them on) through whichever screen reader is running.
 

@@ -185,6 +185,10 @@ class FilterCascade:
         self.order = 0
         self.state = np.zeros((0, self.channels))
         self._key = None
+        self._bank = None
+        self._fade = None          # (the filters as they were, frames faded so far, fade length) while crossfading
+        self._ran = False          # has any sound gone through yet? (a fresh EQ starts on its settings, no fade)
+        self.fade_seconds = 0.01   # how long the old filters fade into the new ones when the bands change shape
         self.set_sections(sections)
 
     def set_sections(self, sections):
@@ -197,10 +201,19 @@ class FilterCascade:
         parts = [svf_section(self.sample_rate, *s) for s in key]
         A, B, C, D = cascade(parts)
         order = len(B)
-        if order != self.order:
+        shapes, old_shapes = tuple(s[0] for s in key), tuple(s[0] for s in old_key)
+        if shapes != old_shapes and self._fade is None and self.fade_seconds > 0 and self._ran:
+            # The row of filters changed shape (an EQ preset switched while sound plays, a band turned on or off).
+            # A filter that is new, or gone, cannot carry on from the old one's state: the sound jumped (up to full
+            # scale: Telephone to Flat on a bass note, the review of 25 Oct 2026). The old filters keep running
+            # and fade into the new ones over the next few milliseconds (process).
+            self._fade = [self._system(), 0, max(1, int(round(self.fade_seconds * self.sample_rate)))]
+        if order != self.order or shapes != old_shapes:
             # A filter was added or taken away (an EQ band turned on or off while playing). The others keep
             # their state: starting them all from silence clicked (23 Oct 2026). The state is each filter's own
-            # integrators, one after another, so each kept filter's rows move to where it now is.
+            # integrators, one after another, so each kept filter's rows move to where it now is. (Before the
+            # review of 25 Oct 2026 the rows were only moved when the count changed: a low shelf swapped for a
+            # high pass, say, went on feeding the shelf's integrators to the new filter, and that clicked too.)
             state = np.zeros((order, self.channels))
             old_sizes = [len(svf_section(self.sample_rate, *s)[1]) for s in old_key]
             old_starts = np.concatenate([[0], np.cumsum(old_sizes)]).astype(int) if old_sizes else [0]
@@ -257,23 +270,45 @@ class FilterCascade:
 
     def reset(self):
         self.state[:] = 0.0
+        self._fade = None
+        self._ran = False
+
+    def _system(self):
+        """Everything that runs the filters as they are now, with their state (kept while they fade out)."""
+        if self._bank is None:
+            return {"D": self.D, "bank": None, "state": self.state}
+        return {"D": self.D, "bank": self._bank, "feed": self._feed, "out": self._out, "to_modes": self._to_modes,
+                "to_state": self._to_state, "kept": self._kept, "state": self.state}
+
+    def _run(self, system, x):
+        """Filter x through a system; returns (y, the state afterwards)."""
+        frames = x.shape[0]
+        if system["bank"] is None:
+            return x * system["D"], system["state"]
+        if frames == 0:
+            return x.copy(), system["state"]
+        c, k = self.channels, system["kept"]
+        start = (system["to_modes"] @ system["state"].astype(np.complex128)).reshape(-1)   # (modes * channels)
+        modes, end = system["bank"].run(x @ system["feed"], start)
+        before = np.empty_like(modes)       # the output uses the modes as they were before each sample
+        before[0] = start
+        before[1:] = modes[:-1]
+        y = system["D"] * x + np.real(before @ system["out"])
+        return y, np.real(system["to_state"] @ end.reshape(k, c))
 
     def process(self, x):
         """Filter a block shaped (frames, channels); returns a new float64 array."""
         x = np.asarray(x, dtype=np.float64)
         frames = x.shape[0]
-        if self._bank is None:
-            return x * self.D
-        if frames == 0:
-            return x.copy()
-        c, k = self.channels, self._kept
-        start = (self._to_modes @ self.state.astype(np.complex128)).reshape(-1)   # (modes * channels)
-        modes, end = self._bank.run(x @ self._feed, start)
-        before = np.empty_like(modes)       # the output uses the modes as they were before each sample
-        before[0] = start
-        before[1:] = modes[:-1]
-        y = self.D * x + np.real(before @ self._out)
-        self.state = np.real(self._to_state @ end.reshape(k, c))
+        self._ran = self._ran or frames > 0
+        y, self.state = self._run(self._system(), x)
+        if self._fade is not None and frames:
+            old, done, length = self._fade
+            y_old, old["state"] = self._run(old, x)
+            weight = np.clip((np.arange(done + 1, done + frames + 1) / float(length)), 0.0, 1.0)[:, None]
+            y = y_old + (y - y_old) * weight
+            done += frames
+            self._fade = [old, done, length] if done < length else None
         return y
 
 

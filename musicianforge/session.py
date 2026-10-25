@@ -99,6 +99,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.selected_track_id = None
         self._playhead = 0
         self._play_start = 0
+        self._region_play_start = None    # a region playing through on its own (play_note_region): its start
         self._held = {}
         self._take = None
         self._stopping = False         # inside stop(): words about the take wait for "Stopped" (_say_after_stop)
@@ -861,6 +862,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             return
         tick = self._clamped_playhead()
         self._play_start = tick
+        self._region_play_start = None
         self.new_write_pass()
         self.engine.set_region(*self._plan_region(tick, recording=False))
         self.engine.play(tick)
@@ -874,6 +876,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         tick = self.position_tick()
         if self.engine.recording and self.engine.in_count_in():
             tick = self._play_start     # stopped during the count-in: back where recording was to start
+        self._region_play_start = None  # stopped by hand: the playhead stays where it is
         self.engine.stop()
         self._playhead = min(tick, max(0, self.song.song_end_tick() - 1))
         self._stopping = True           # what the take's end has to say comes after "Stopped"
@@ -925,6 +928,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         else:
             tick = self._clamped_playhead()
             self._play_start = tick
+            self._region_play_start = None
             self.new_write_pass()
             self._take = self._new_take(track.id, tick)
             plan = self._plan_region(tick, recording=True)
@@ -950,6 +954,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self._playhead = tick
         self.engine.locate(tick)
         if self.engine.playing:
+            self._region_play_start = None      # moved on: an ordinary play-through from here
             self.engine.set_region(*self._plan_region(tick, recording=False))
         if speak:
             self.announce(self.describe_position(tick))
@@ -1104,10 +1109,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             elif kind == "audio_recorded":
                 self._finish_audio_recording(*message[1:])
             elif kind == "stopped":
-                self._playhead = max(0, min(int(round(self.engine.position_tick())),
-                                            self.song.song_end_tick() - 1))
-                self.announce("End of song, stopped")
-                self.notify("transport")
+                self._stopped_at_the_end()
             elif kind == "delay_measured":
                 self._finish_measurement(*message[1:])
             elif kind == "soundfont_loaded":
@@ -1120,6 +1122,24 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             elif kind == "error":
                 self.announce(message[1], interrupt=False)
         return handled
+
+    def _stopped_at_the_end(self):
+        """The engine reached where it was told to stop: the end of the song (All sections), or the end of a region
+        played through on its own (play_note_region). The playhead goes back to the start of the song, or of that
+        region, and the words say where it is. Until the third review of 25 Oct 2026 it was left on the very last
+        tick of the song: Space then played that one tick and said "End of song, stopped" again, and a project saved
+        there opened at "bar 1, beat 4.999"."""
+        region_start = self._region_play_start
+        self._region_play_start = None
+        if region_start is not None:
+            self._playhead = max(0, min(int(region_start), self.song.song_end_tick() - 1))
+            self.announce("Stopped, {}".format(self.describe_position(self._playhead)))
+        else:
+            self._playhead = max(0, min(self._floor_tick(), self.song.song_end_tick() - 1))
+            self.announce("End of song, stopped. {}".format(
+                self.describe_bar(self.song.timeline.tick_to_bar(self._playhead))))
+        self.engine.locate(self._playhead)
+        self.notify("transport")
 
     def _soundfont_loaded(self, path, presets):
         """A guitar pack finished downloading and is loaded: tracks that used the stand-in now play it."""
@@ -2020,7 +2040,18 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return new_index
 
     def move_region(self, track_id, index, bar, beat=1.0):
-        return self.update_region(track_id, index, tick=self.song.timeline.position_to_tick(int(bar), float(beat)))
+        return self.update_region(track_id, index, tick=self._bar_beat_tick(bar, beat))
+
+    def _bar_beat_tick(self, bar, beat):
+        """The tick of a bar and beat typed in (Move region), refused in words when the bar does not have that beat:
+        until the third review of 25 Oct 2026 bar 1, beat 9 quietly became bar 3, beat 1."""
+        tl = self.song.timeline
+        if int(bar) < 1:
+            raise ValueError("A region must start at bar 1 or later")
+        beats = tl.time_signature_at_bar(int(bar)).numerator
+        if not 1.0 <= float(beat) < beats + 1.0:
+            raise ValueError("Bar {} has {} beats, so the beat must be from 1 to {}".format(int(bar), beats, beats))
+        return tl.position_to_tick(int(bar), float(beat))
 
     def set_region_gain(self, track_id, index, gain_db):
         return self.update_region(track_id, index, gain_db=gain_db)
@@ -2410,7 +2441,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.copy_regions(track_id, indices, speak=False)
             clip = self.clipboard
             starts = [self.region_span(track_id, i)[0] for i in indices]
-            ends = [self.region_span(track_id, i)[1] for i in indices]
+            ends = [self._plays_until(track_id, i) for i in indices]
             at = min(starts) + (max(ends) - min(starts))
             first = self._place_clipboard(track, clip, at, "duplicate regions")
         finally:
@@ -2419,10 +2450,24 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                                                              self.describe_position(at)))
         return first
 
+    def _plays_until(self, track_id, index):
+        """Where a region's playing stops: its end, or after its repeats when it is set to play several times (so
+        Duplicate puts the copy after them; until the third review of 25 Oct 2026 the copy landed inside the repeats
+        and cut them short: "loops 4 times, to bar 2"). A region that loops until the next region ends at its own end:
+        the copy becomes the next region."""
+        from . import arrangement
+
+        track, region = self._region(track_id, index)
+        if region.loops <= 1:
+            return self.region_span(track_id, index)[1]
+        if track.is_audio:
+            return arrangement.audio_region_repeats(track, index, self.song.timeline, self.song.song_end_tick())[1]
+        return arrangement.note_region_repeats(track, index, self.song.song_end_tick())[1]
+
     def move_regions(self, track_id, indices, bar, beat=1.0):
         """Move regions so the first starts at bar and beat (what was there is replaced)."""
         track = self._need_regions(track_id, indices)
-        tick = self.song.timeline.position_to_tick(int(bar), float(beat))
+        tick = self._bar_beat_tick(bar, beat)
         saved = self.clipboard
         try:
             self.copy_regions(track_id, indices, speak=False)
@@ -3092,8 +3137,23 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         it was. (Before 9 Oct 2026 the old one was removed first, as a step of its own, and stayed removed when its
         new place was refused; trying again then removed the next one.)"""
         attr, remove, put, label = self._CHANGE_KINDS[kind]
-        old = getattr(self.song.timeline, attr)[index]
+        tl = self.song.timeline
+        changes = getattr(tl, attr)
+        old = changes[index]
         moved = (values[0], values[1]) != (old.bar, old.beat) if kind == "tempo" else values[0] != old.bar
+        if moved:
+            # moved onto another change: refused in words, like an automation point (the third review of 25 Oct
+            # 2026; it silently took that change's place). Adding a change at a bar that has one still replaces it.
+            if kind == "tempo":
+                at = tl.position_to_tick(int(values[0]), float(values[1]))
+                taken = any(tl.position_to_tick(t.bar, t.beat) == at for i, t in enumerate(changes) if i != index)
+                place, choose = "bar {}, beat {}".format(int(values[0]), format_number(float(values[1]))), "beat"
+            else:
+                taken = any(c.bar == int(values[0]) for i, c in enumerate(changes) if i != index)
+                place, choose = "bar {}".format(int(values[0])), "bar"
+            if taken:
+                raise ValueError("Another {} is already at {}, so this one was not moved. Choose another {}, or edit "
+                                 "that one instead".format(label, place, choose))
         lost = 0
         with self.edit(label):
             timeline = self.song.timeline

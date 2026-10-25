@@ -217,10 +217,17 @@ class LanePointsDialog(_ListWindow):
         value = self.session.lane_value_at(self.track_id, self.lane_index, tick)
         with PointDialog(self, self.session, self.track_id, self.lane_index, tick, value, True,
                          title="Add automation point") as dlg:
-            values = ask_values(self.run_modal, dlg)
-            kept = dlg.kept_tick
-        if values is not None:
-            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values, tick=kept))
+            index = ask_values(self.run_modal, dlg, lambda: self._set_point(dlg))
+        if index is not None:
+            self.refresh(index)
+
+    def _set_point(self, dlg, replacing=None):
+        """Make the point from what is typed in its window; inside ask_values, so a point the song refuses (moved onto
+        another point, or one past the lane's limit) brings the same window back with everything typed still in it,
+        instead of its error coming after the window has closed (the review of 25 Oct 2026)."""
+        values = dlg.get_values()
+        return self.session.set_point(self.track_id, self.lane_index, *values, replacing=replacing,
+                                      tick=dlg.kept_tick)
 
     def edit(self):
         points = self.points_list()
@@ -229,10 +236,9 @@ class LanePointsDialog(_ListWindow):
             return self.add()
         tick, value, glide = points[index]
         with PointDialog(self, self.session, self.track_id, self.lane_index, tick, value, glide) as dlg:
-            values = ask_values(self.run_modal, dlg)
-            kept = dlg.kept_tick
-        if values is not None:
-            self.refresh(self.session.set_point(self.track_id, self.lane_index, *values, replacing=index, tick=kept))
+            new_index = ask_values(self.run_modal, dlg, lambda: self._set_point(dlg, replacing=index))
+        if new_index is not None:
+            self.refresh(new_index)
 
     def delete(self):
         index = self.selected(len(self.points_list()))

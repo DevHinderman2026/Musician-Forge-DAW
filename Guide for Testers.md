@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.9 before its first release.
+For people trying Musician Forge 0.9.10 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -586,7 +586,7 @@ Then add a metal drummer, choose variation 3, and press Space on its Hi-hat, the
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.9
+## Known limits in 0.9.10
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

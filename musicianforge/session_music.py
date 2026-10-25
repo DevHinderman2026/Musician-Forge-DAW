@@ -9,6 +9,7 @@ import os
 
 from . import arrangement, chords, keyboard_map, onsets, player_pieces, players, regions, theory
 from .song import AUDIO_RATE, NO_TRACK_YET, Instrument
+from .timeline import format_number
 
 log = logging.getLogger("musicianforge.session")
 
@@ -140,6 +141,11 @@ class MusicMixin:
         if quality not in chords.QUALITY_KEYS:
             raise ValueError("Unknown chord type")
         tick = tl.position_to_tick(int(bar), float(beat))
+        if replacing is not None and any(c.tick == tick for i, c in enumerate(self.song.chords) if i != replacing):
+            # moved onto another chord change: refused in words, like an automation point (the third review of 25 Oct
+            # 2026; it silently took that change's place). Adding a chord at a beat that has one still replaces it.
+            raise ValueError("Another chord change is already at bar {}, beat {}, so this one was not moved. Choose "
+                             "another beat, or edit that one instead".format(int(bar), format_number(float(beat))))
         change = chords.ChordChange(tick, int(root) % 12, quality, None if bass is None else int(bass) % 12)
         with self.edit("chord change"):
             items = [c for i, c in enumerate(self.song.chords) if i != replacing]
@@ -967,6 +973,7 @@ class MusicMixin:
             self.stop(speak=False)
         self._playhead = start
         self._play_start = start
+        self._region_play_start = start      # played through: the playhead comes back here (session.poll)
         self.new_write_pass()
         self.engine.locate(start)
         self.engine.set_region(None, end, None)
