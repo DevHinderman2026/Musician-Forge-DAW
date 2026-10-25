@@ -116,6 +116,8 @@
 - Fixes editing a tempo change that a MIDI import put between beats (bar 2, beat 2.5): the Beat box showed beat 2,
   and changing only the tempo moved the change or refused it. The box now takes decimals.
 - Fixes Rename track closing its window when the name was empty: it stays open with what you typed.
+- Fixes Control+Z after Delete track (or Control+Y after undoing New track) leaving another track selected: the
+  track that comes back is selected.
 - Fixes the keyboard's description in the Scale and Chord strips layouts naming the wrong note for the A key.
 - Fixes Move region, with the bar and beat left as shown, moving a region that starts between beats onto the beat.
 - Fixes deleting a tempo, time signature or key change landing on the change before it: it lands on the next one,
@@ -131,6 +133,8 @@
 - Fixes a failed export (a full disk, or the old file open in another program) leaving a temporary file beside it.
 - Fixes a guitar pack download that is the wrong file being downloaded whole, three times, before it was refused: it
   now stops as soon as its size shows it is wrong, and a full disk is said in words.
+- Fixes some kinds of damage in a downloaded guitar pack stopping its unpacking with a program error instead of
+  saying that the download is damaged.
 - Fixes the Windows voice (when no screen reader is running) reading text that starts with "<" as markup.
 
 ### Older projects
