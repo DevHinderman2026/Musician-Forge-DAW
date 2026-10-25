@@ -164,6 +164,14 @@ class MusicalTyping:
         return self.mode
 
     def describe_octave(self):
+        """'Octave 3, the A key plays C 3'. Only the Piano layout's A key plays C: in the Scale layout it plays the
+        scale's root note, and in the Chord strips layout a chord with its bass an octave lower (the fifth review of
+        25 Oct 2026: in G major the A key plays G 3, and the words said C 3)."""
+        if self.mode == MODE_SCALE:
+            return "Octave {}, the A key plays the scale's root note".format(self.octave)
+        if self.mode == MODE_CHORDS:
+            return "Octave {}, the chords play in octave {} with their bass notes in octave {}".format(
+                self.octave, self.octave, self.octave - 1)
         return "Octave {}, the A key plays {}".format(self.octave, theory.spoken_note_name(self.base))
 
     # -- scales and chords ---------------------------------------------

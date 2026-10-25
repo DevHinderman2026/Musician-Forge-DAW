@@ -657,6 +657,12 @@ class ReverbProcessor(Processor):
     LINES_MS = (29.7, 37.1, 41.1, 43.7, 53.3, 61.9, 71.3, 79.7)
     DIFFUSERS_MS = (7.1, 9.3)
     DIFFUSER_GAIN = 0.6
+    # A change of room size while the reverb rings (Russell, 25 Oct 2026: "Let the old tail ring out"): the lines
+    # that were ringing go on by themselves, fed silence, beside the new room (see _keep_ringing), until they are
+    # quieter than this (-100 dB) or past their own decay time; the sound coming in moves over to the new room in
+    # TAIL_DROP_SECONDS, and a second change while one rings fades the older one out as quickly.
+    TAIL_FLOOR = 1e-5
+    TAIL_DROP_SECONDS = 0.02
 
     def __init__(self, sample_rate, params):
         super().__init__(sample_rate, params)
@@ -675,17 +681,24 @@ class ReverbProcessor(Processor):
         self.diffusers = [(dsp.DelayLine(int(ms / 1000.0 * sr) + 1, 1), int(ms / 1000.0 * sr))
                           for ms in self.DIFFUSERS_MS]
         self._size = None
+        self._tails = []              # the rooms still ringing after a change of room size (_keep_ringing): two at most
+        self._feed = 1.0              # how much of the sound coming in the room hears (below 1 just after a change)
         self._dry, self._wet = _wet_dry(params["mix"])
         self.update(params)
 
     @property
     def tail_seconds(self):
+        if self._tails:
+            return float("inf")       # the chain's silence shortcut waits until the old rooms are let go
         return self.params["decay"] * 1.5 + self.params["predelay"] / 1000.0 + 0.2
 
     def update(self, params):
+        before = self.params
         self.params = dict(params)
         sr = self.sample_rate
         if params["size"] != self._size:
+            if self._size is not None:
+                self._keep_ringing(before)
             self._size = params["size"]
             factor = 0.35 + 1.3 * params["size"] / 100.0
             lengths = []
@@ -709,6 +722,82 @@ class ReverbProcessor(Processor):
         a = math.exp(-2.0 * math.pi * cutoff / sr)
         self.damping = dsp.PoleBank(np.full(len(self.lengths), a))
         self.damping_a = a
+
+    def _keep_ringing(self, before):
+        """The room size is about to change (by hand, or a preset that changes it). Until 0.9.11 the reverb started
+        again from silence, so the tail that was ringing stopped dead: a click, and the tail was gone (the review
+        of 25 Oct 2026). Now the lines that were ringing are kept, with their own decay and darkening (`before`:
+        the settings they had), and ring out by themselves, fed silence, beside the new room (_ring_out). A reverb
+        with nothing left in it keeps nothing. At most two are kept: a room still ringing from an earlier change
+        fades out quickly (TAIL_DROP_SECONDS)."""
+        if float(np.max(np.abs(self.ring))) <= self.TAIL_FLOOR:
+            return
+        drop = max(1, int(round(self.TAIL_DROP_SECONDS * self.sample_rate)))
+        for tail in self._tails:
+            if tail["fade"] is None:
+                tail["fade"] = [0, drop]
+        decay = max(0.1, before["decay"])
+        # the sound coming in moves over to the new room smoothly (`feed`, here and in process): switched at once,
+        # the echoes of the moment it moved were cut off in one room and began in the middle in the other, a click
+        self._tails = self._tails[-1:] + [{
+            "lengths": self.lengths, "capacity": self.capacity, "ring": self.ring, "position": self.ring_position,
+            "state": self.damping_state, "columns": self._columns, "gains": self.gains, "damping": self.damping,
+            "damping_a": self.damping_a, "left": int(1.5 * decay * self.sample_rate), "fade": None,
+            "feed": self._feed}]
+        self._feed = 0.0
+
+    def _ring_out(self, frames, heard):
+        """This block of the rooms left ringing by a change of room size (_keep_ringing), added together: fed silence,
+        once the sound coming in (`heard`, the diffused input) has moved over to the new room. Each is let go once
+        quieter than TAIL_FLOOR, past one and a half times its decay time (90 dB down), or faded out."""
+        total = np.zeros((frames, 2))
+        if not frames:
+            return total
+        step = 1.0 / max(1, int(round(self.TAIL_DROP_SECONDS * self.sample_rate)))
+        kept = []
+        for tail in self._tails:
+            fed = None
+            if tail["feed"] > 0.0:
+                ramp = np.maximum(0.0, tail["feed"] - step * np.arange(1, frames + 1))
+                fed = heard * ramp
+                tail["feed"] = float(ramp[-1])
+            lengths, capacity, ring, columns = tail["lengths"], tail["capacity"], tail["ring"], tail["columns"]
+            lines = len(lengths)
+            flat = ring.reshape(-1)
+            shortest = int(lengths.min())
+            sound = np.empty((frames, 2))
+            position = 0
+            while position < frames:
+                count = min(shortest, frames - position)
+                starts = tail["position"] + capacity - lengths
+                index = (starts * lines + columns)[None, :] + (np.arange(count) * lines)[:, None]
+                taps = flat[index]
+                damped, tail["state"] = tail["damping"].run((1.0 - tail["damping_a"]) * taps, tail["state"])
+                rows = (damped * tail["gains"]) @ self.matrix            # what goes round again
+                if fed is not None:
+                    rows = rows + fed[position:position + count, None] * self.in_gains
+                start = tail["position"]
+                first = min(count, capacity - start)
+                ring[start:start + first] = rows[:first]
+                ring[start + capacity:start + capacity + first] = rows[:first]
+                if first < count:
+                    ring[:count - first] = rows[first:]
+                    ring[capacity:capacity + count - first] = rows[first:]
+                tail["position"] = (start + count) % capacity
+                sound[position:position + count] = taps @ self._outputs
+                position += count
+            done = False
+            if tail["fade"] is not None:
+                faded, length = tail["fade"]
+                sound *= np.clip(1.0 - np.arange(faded + 1, faded + frames + 1) / float(length), 0.0, 1.0)[:, None]
+                tail["fade"][0] = faded + frames
+                done = faded + frames >= length
+            total += sound
+            tail["left"] -= frames
+            if not (done or tail["left"] <= 0 or float(np.max(np.abs(sound))) < self.TAIL_FLOOR):
+                kept.append(tail)
+        self._tails = kept
+        return total
 
     def _ring_write(self, rows):
         count = len(rows)
@@ -750,6 +839,13 @@ class ReverbProcessor(Processor):
             mono = self.predelay.read(delay + frames, frames)[:, 0] if delay + frames <= self.predelay.length \
                 else mono
         mono = self._diffuse(mono)
+        heard = mono
+        if self._feed < 1.0 and frames:
+            # just after a change of room size: the new room takes over the sound coming in (_keep_ringing)
+            step = 1.0 / max(1, int(round(self.TAIL_DROP_SECONDS * self.sample_rate)))
+            ramp = np.minimum(1.0, self._feed + step * np.arange(1, frames + 1))
+            mono = mono * ramp
+            self._feed = float(ramp[-1])
         wet = np.empty((frames, 2))
         shortest = int(self.lengths.min())
         position = 0
@@ -765,6 +861,8 @@ class ReverbProcessor(Processor):
             self._ring_write(mono[position:position + count, None] * self.in_gains + feedback)
             wet[position:position + count] = taps @ self._outputs
             position += count
+        if self._tails:
+            wet += self._ring_out(frames, heard)
         width = p["width"] / 100.0
         if width < 1.0:
             mid = wet.mean(axis=1, keepdims=True)

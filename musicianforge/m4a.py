@@ -315,7 +315,11 @@ class M4AWriter:
             self.abort()
             raise
         self._shutdown()
-        replace_file(self.tmp_path, self.path)
+        try:
+            replace_file(self.tmp_path, self.path)
+        except BaseException:
+            self._remove_tmp()       # the old file held open by another program: no finished copy left beside it
+            raise
 
     def abort(self):
         self._shutdown()

@@ -276,6 +276,7 @@ class FluidSynth:
         self._preset_fonts = None     # (bank, program) -> id of the SoundFont that has it
         self._kept = set()            # guitar pack instruments whose samples stay loaded (see _keep_loaded)
         self._key_maps = {}           # channel -> {drum note its kit lacks: the note played instead} (drummap.py)
+        self._played_keys = {}        # (channel, note) -> the key it was started on, where the map moved it (noteoff)
         self._kit_keys = {}           # SoundFont id -> {(bank, program): notes it has a sound for} (sf2keys.py)
         self._buffer = np.zeros((0, 2), dtype=np.float32)
         self._targets = {}            # id of a planar buffer -> (its rows' addresses, its fx rows' addresses)
@@ -443,18 +444,26 @@ class FluidSynth:
 
     # -- performance messages ---------------------------------------------
     def noteon(self, channel, key, velocity):
-        key = self._key_maps.get(channel, {}).get(key, key)
+        if velocity <= 0:
+            self.noteoff(channel, key)
+            return
+        note, key = key, self._key_maps.get(channel, {}).get(key, key)
+        # The note-off goes to the key the note was started on (the review of 25 Oct 2026): it followed the map the
+        # channel had when the note ended, so a note held while its track changed between an instrument and a kit
+        # (a G on strings, and a kit without a splash) was let go on another key and sounded for good.
+        played = self.__dict__.setdefault("_played_keys", {})
+        if key != note:
+            played[(channel, note)] = key
+        else:
+            played.pop((channel, note), None)
         if self._trace is not None:
             self._t("noteon channel={} key={} velocity={}".format(channel, key, velocity))
-        if velocity <= 0:
-            self._lib.fluid_synth_noteoff(self._synth, channel, key)
-        else:
-            if getattr(self, "_asleep", None):
-                self._wake(channel)          # its reverb and chorus run again before the note sounds
-            self._lib.fluid_synth_noteon(self._synth, channel, key, min(127, int(velocity)))
+        if getattr(self, "_asleep", None):
+            self._wake(channel)          # its reverb and chorus run again before the note sounds
+        self._lib.fluid_synth_noteon(self._synth, channel, key, min(127, int(velocity)))
 
     def noteoff(self, channel, key):
-        key = self._key_maps.get(channel, {}).get(key, key)
+        key = self.__dict__.get("_played_keys", {}).pop((channel, key), key)
         if self._trace is not None:
             self._t("noteoff channel={} key={}".format(channel, key))
         self._lib.fluid_synth_noteoff(self._synth, channel, key)

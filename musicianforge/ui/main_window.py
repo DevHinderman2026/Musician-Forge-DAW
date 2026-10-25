@@ -2131,8 +2131,9 @@ class MainFrame(wx.Frame):
     def rename_track(self):
         track = self._need_track()
         with TextInputDialog(self, "Rename track", "Track name", track.name) as dlg:
-            if self.show_modal(dlg) == wx.ID_OK:
-                self.session.rename_track(track.id, dlg.get_value())
+            # no name at all is refused with the window still open, as Track settings does (it closed; the fifth
+            # review of 25 Oct 2026)
+            self.ask_values(dlg, lambda: self.session.rename_track(track.id, dlg.get_value()))
 
     def toggle_mute(self):
         """Mute or unmute the current track, or every selected track in selection mode."""
@@ -2451,7 +2452,11 @@ class MainFrame(wx.Frame):
         if values is None:
             return
         to_bar, to_beat = values
-        if s.song.track_by_id(tid).is_audio and len(indices) == 1:
+        if (to_bar, to_beat) == (bar, int(beat)):
+            # left as shown, the region stays where it is: the beat shown is a whole number, so OK moved a region on
+            # beat 2.5 to beat 2 (Russell, 25 Oct 2026; as the automation point window keeps its exact moment)
+            new = index
+        elif s.song.track_by_id(tid).is_audio and len(indices) == 1:
             new = s.move_region(tid, indices[0], to_bar, to_beat)
         else:
             new = s.move_regions(tid, indices, to_bar, to_beat)

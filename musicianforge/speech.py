@@ -170,7 +170,9 @@ class SapiOutput(_Output):
 
             pythoncom.CoInitialize()
             self._voice = win32com.client.Dispatch("SAPI.SpVoice")
-        flags = 1 | (2 if interrupt else 0)  # async, purge before speak
+        # async, never read as markup (SVSFIsNotXML: a text starting with "<" was taken for SAPI's XML; the fifth
+        # review, 25 Oct 2026), and purge before speaking when interrupting
+        flags = 1 | 16 | (2 if interrupt else 0)
         self._voice.Speak(text, flags)
         return True
 

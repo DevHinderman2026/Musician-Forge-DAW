@@ -13,6 +13,7 @@ This module uses only the standard library, so the installer can use it before M
 Python environment exists.
 """
 
+import errno
 import logging
 import os
 import time
@@ -114,22 +115,41 @@ def describe_state(folder=None):
         lacking[0].name)
 
 
+class _NoRetry(Exception):
+    """A download problem another try cannot fix: the file offered is not the size it must be, or the disk is full."""
+
+    def __init__(self, error):
+        super().__init__(str(error))
+        self.error = error
+
+
 def download_file(url, dest, expected_size, progress=None, attempts=3, timeout=60):
-    """Download url to dest (through dest + '.part'), checking the size. progress(fraction)."""
+    """Download url to dest (through dest + '.part'), checking the size. progress(fraction).
+
+    A file that says it is another size than expected is refused before any of it is downloaded, and a download that
+    grows past the expected size stops there, so a wrong file can never fill the disk; neither, nor a full disk, is
+    tried again (the fifth review, 25 Oct 2026: a wrong file was downloaded whole, three times, before its size was
+    checked). Every other kind of network trouble gets another try."""
     last_error = None
     for attempt in range(1, attempts + 1):
         temp = dest + ".part"
         try:
             request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(request, timeout=timeout) as response, open(temp, "wb") as out:
-                total = int(response.headers.get("Content-Length") or 0) or expected_size
+                announced = int(response.headers.get("Content-Length") or 0)
+                if expected_size and announced and announced != expected_size:
+                    raise _NoRetry(PackError("the file offered was {} bytes instead of {}".format(announced,
+                                                                                               expected_size)))
+                total = announced or expected_size
                 done = 0
                 while True:
                     chunk = response.read(1 << 16)
                     if not chunk:
                         break
-                    out.write(chunk)
                     done += len(chunk)
+                    if expected_size and done > expected_size:
+                        raise _NoRetry(PackError("the download was larger than {} bytes".format(expected_size)))
+                    out.write(chunk)
                     if progress is not None and total:
                         progress(min(1.0, done / float(total)))
             size = os.path.getsize(temp)
@@ -138,15 +158,23 @@ def download_file(url, dest, expected_size, progress=None, attempts=3, timeout=6
             os.replace(temp, dest)
             return dest
         except Exception as exc:  # noqa: BLE001 - every kind of network trouble gets another try
+            _remove_quietly(temp)
+            if isinstance(exc, _NoRetry):
+                raise exc.error from None
+            if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+                raise PackError("there is not enough free space on the disk") from None
             last_error = exc
-            if os.path.exists(temp):
-                try:
-                    os.remove(temp)
-                except OSError:
-                    pass
             if attempt < attempts:
                 time.sleep(min(10, 2 * attempt))
     raise PackError("could not download it ({})".format(last_error))
+
+
+def _remove_quietly(path):
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=None):

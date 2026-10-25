@@ -61,4 +61,20 @@ def keep_bars(song, old):
             change.tick = tick
             chords.append(change)
     song.chords = chords
+    _loops_stop_at_the_end(song)
     return lost
+
+
+def _loops_stop_at_the_end(song):
+    """A looping region's repeats are counted in its own length, so in bars made shorter they can run past the song's
+    end, and the song grew a bar to hold them (the fifth review of 25 Oct 2026: a 2-bar riff of 4/4 looped twice, with
+    3/4 from bar 3, made a 4-bar section 5 bars long). Such a loop stops where the song ends instead, as a loop does at
+    the end of the song (regions.stop_loop_at), so every section keeps its bars."""
+    from . import arrangement, regions
+
+    end = song.song_end_tick()
+    for track in song.tracks:
+        for region in [r for r in track.note_regions if r.loops > 1]:
+            index = next(i for i, r in enumerate(track.note_regions) if r is region)
+            if arrangement.note_region_repeats(track, index, end)[1] > end:
+                regions.stop_loop_at(track, region, end, ends_there=True)

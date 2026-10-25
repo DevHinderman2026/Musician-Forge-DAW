@@ -319,11 +319,13 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** The song keeps playing where it is. Each Control+R says "Regenerated performance", and the new fills and details come in from there on, so you can try one performance after another. The playhead never jumps back, and the pad's long chords keep sounding. Stopped, Control+R plays the region from its start, as before.
 
-### Step Z.2: Held notes and the EQ while playing
+### Step Z.2: Held notes, the EQ and the reverb while playing
 
 **What to check:** With the pad playing long chords, press Control+Shift+T (Tempo changes), press Enter on the first tempo change, type a slower tempo and press Enter. Then add an EQ to the pad's track (Control+F, Alt+A) and arrow through its presets while the song plays.
 
-**What to expect:** The tempo changes at once and the chord that was sounding keeps sounding, with no new attack and no gap. The EQ presets blend smoothly from one to the next, with no clicks, even when you arrow quickly.
+Last, add a Reverb with the Hall preset to the pad's track and, while the song plays, open the reverb's settings (Enter on it) and choose the Small room preset.
+
+**What to expect:** The tempo changes at once and the chord that was sounding keeps sounding, with no new attack and no gap. The EQ presets blend smoothly from one to the next, with no clicks, even when you arrow quickly. The hall's tail rings out by itself after the change, with no click, while the chords that come next sound in the small room.
 
 ### Step Z.3: The end of the song
 
@@ -390,6 +392,24 @@ To update to a newer test version, put its files in the same folder and run "Ins
 **What to check:** In the Regions list, press the Region group's Move region button, type bar 1, beat 9 and press Enter. Then change the beat to 2 and press Enter.
 
 **What to expect:** It says "Bar 1 has 4 beats, so the beat must be from 1 to 4" over the still-open window, with what you typed still in it. The second time the region moves.
+
+### Step Z.14: Undo inside the list windows
+
+**What to check:** Open Effects (Control+F) on a track, add an effect, then press Control+Z and Control+Y without closing the window. Do the same in Tempo changes (Control+Shift+T) after adding a change, in Sections after adding a section, and in an automation lane's points list after adding a point.
+
+**What to expect:** Control+Z undoes the change right there, and the list is read again on the item it was on (or the nearest one); Control+Y brings it back. If an undo takes away the track a window is about, the window closes and says so.
+
+### Step Z.15: The longest a song can be
+
+**What to check:** Open Sections (Song group), press F2 on the last section and set its length so the song is 9995 bars long. Press Alt+A to add a section. Then make the song 9999 bars long and press Alt+A again.
+
+**What to expect:** The first time it says "Only 4 more bars fit: a song can be at most 9999 bars long." The second time it says "The song is already 9999 bars long, the longest a song can be, so no section can be added." Nothing changes either time.
+
+### Step Z.16: A loop stops where the song ended
+
+**What to check:** Record a short part in bars 1 and 2 of a track. In the Regions list, press Alt+Enter on its region and tick "Loop until the next region (or the end of the song)". Open Sections, press Alt+A on the last section, and play the new section. Press Control+Z. Then make the last section longer with F2 and play the new bars.
+
+**What to expect:** The new section is empty: the loop stops where the song ended before, and the new bars are yours to fill. Control+Z puts everything back as it was. Making the last section longer leaves its new bars empty too.
 
 ## New in 0.9.10
 

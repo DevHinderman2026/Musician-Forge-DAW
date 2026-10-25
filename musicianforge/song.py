@@ -5,6 +5,7 @@ saving writes a temporary file first, keeps the previous version as a .bak
 file, and only then replaces the song.
 """
 
+import bisect
 import copy
 import json
 import math
@@ -29,6 +30,10 @@ FILE_EXTENSION = ".mforge"
 # A file that has it opens as any other; it is not read or saved.)
 
 MAX_TRACKS = 100
+# The longest a song can be, in bars (Russell, 25 Oct 2026; the bar boxes stop there too): a project file whose song
+# reaches past it is refused as damaged (Song.past_max_bars), a MIDI file's notes and changes past it are left out,
+# and no edit makes a song longer (Session.edit).
+MAX_BARS = 9999
 # what a command that needs a track says in a project with none yet (a new project starts with no tracks since
 # Russell's request of 23 Oct 2026)
 NO_TRACK_YET = "There is no track yet. Press Control+T to add one."
@@ -428,6 +433,46 @@ class Song:
                     loops = max(loops, arrangement.audio_region_repeats(track, i, self.timeline, 0)[1])
         return max(notes, audio, spans, loops)
 
+    def max_tick(self):
+        """Where bar MAX_BARS ends: nothing in a song reaches past it (something may stand right there, at the end of
+        a song that long: a chord change or a tempo change an edit put after the last bar)."""
+        return self.timeline.bar_to_tick(MAX_BARS + 1)
+
+    def past_max_bars(self):
+        """Whether anything in the song reaches past bar MAX_BARS: its sections, a note, region, recording or loop's
+        repeats, a chord, tempo, time signature or key change, or an automation point. Worked out from the stored
+        ticks and counts alone, so a damaged file's huge numbers are found at once (it never plays the
+        arrangement)."""
+        from . import arrangement
+
+        if sum(sec.length for sec in self.sections) > MAX_BARS:
+            return True
+        tl = self.timeline
+        limit = self.max_tick()
+        if any(tl.position_to_tick(t.bar, t.beat) > limit for t in tl.tempos) or \
+                any(t.bar > MAX_BARS + 1 for t in tl.time_signatures) or any(k.bar > MAX_BARS + 1 for k in tl.keys):
+            return True
+        if any(c.tick > limit for c in self.chords):
+            return True
+        for track in self.tracks:
+            if any(n.tick + n.length > limit for n in track.notes):
+                return True
+            if any(r.end > limit for r in track.note_regions):
+                return True
+            starts = sorted(r.start for r in track.note_regions)
+            for region in track.note_regions:
+                if region.loops > 1 and region.start + region.loops * region.length > limit:
+                    after = bisect.bisect_left(starts, region.end)                  # the next region cuts the loop
+                    if after == len(starts) or starts[after] > limit:
+                        return True
+            for index, region in enumerate(track.regions):
+                if region.end_tick(tl) > limit or (region.loops > 1 and
+                                                   arrangement.audio_region_repeats(track, index, tl, 0)[1] > limit):
+                    return True
+            if any(p[0] > limit for lane in track.automation for p in lane.get("points", [])):
+                return True
+        return False
+
     def length_in_bars(self):
         end = self.end_tick()
         if end <= 0:
@@ -511,6 +556,10 @@ class Song:
                     if region.player and players.clean_settings(region.player) is None:
                         region.player = None    # damaged rhythm player settings: an ordinary region (it used to
                                                 # stop the whole song playing; the review of 9 Oct 2026)
+                    elif region.player and type(region.player.get("rules", 1)) is not int:
+                        # a damaged rules number (null, a word): rules 1, as clean_settings plays it (until the fifth
+                        # review of 25 Oct 2026 the loop's repeats compared it with 7, and the project did not open)
+                        region.player["rules"] = 1
                 track.effects = effects.clean_effects(td.get("effects", []), track.kind)
                 track.automation = automation.clean_lanes(td.get("automation", []), track)
                 from . import player_pieces
@@ -528,6 +577,11 @@ class Song:
             from . import chords
 
             song.chords = chords.sort(chords.ChordChange.from_list(raw) for raw in data.get("chords", []))
+            if song.past_max_bars():
+                # (before anything is worked out over its bars: a damaged file's region ending at tick 10 to the 30th
+                # opened as a song of 10 to the 26th bars, and a loop until the next region never finished playing)
+                raise SongFileError("The song file is damaged: it goes past bar {}, the longest a song can be".format(
+                    MAX_BARS))
             song.fit_last_section()  # older songs: one section long enough for all their notes
             from . import regions
 

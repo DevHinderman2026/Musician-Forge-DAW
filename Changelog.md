@@ -65,6 +65,21 @@
   - A hand-made step "as the style plays it" plays the style's own notes at the step's loudness even when the
     part's Loudness is 0 (it played the player's main sound instead: a full chord on the keys).
 - The guitar sound pack check says what is wrong in plain words when a download is not right.
+- Control+Z and Control+Y work inside every list window: Effects, Automation and its points, Tempo changes, Time
+  signature changes, Key changes, the Event list, Recordings, Sections and the Chord track. The list is read again at
+  once, on the item it was on (or the nearest one), and a window whose track the undo took away closes and says so.
+- Hit detection on a long recording (a player following an audio track) needs about half the memory it did.
+- Changing a reverb's Room size while the song plays, by hand or with a preset, lets the reverb that is ringing ring
+  out by itself, while the sound that comes next goes into the new room; it used to stop dead.
+- A song can be at most 9999 bars long, as the bar boxes already were. Once it is, Add section and Duplicate
+  section say so ("The song is already 9999 bars long, the longest a song can be, so no section can be added."), a
+  section that would only partly fit says how many bars are left, and no other edit can make the song longer: a take
+  in an Automatic section stops at the end of bar 9999. A MIDI file's notes past bar 9999 are left out, and the
+  import says how many.
+- A region set to "Loop until the next region (or the end of the song)" stops where the song ended when you add a
+  section at the end, duplicate one to the end, or make the last section longer: the new bars start empty, and a
+  duplicated section sounds like the one it copies. A section added in the middle of the song still leaves the loop
+  playing on both sides of it.
 
 ### Bug fixes
 
@@ -78,11 +93,52 @@
   loop. It now stays as long as you set it, and the loop stops at its end.
 - Fixes duplicating a section that a looping region plays across: the copy's loop played all its repeats from the
   copy's start and made the song longer. The copy now holds what the loop plays in those bars.
+- Fixes playing past the end of the song, or of a region played on its own, by up to a few milliseconds: a note
+  starting just after the end blipped, and the metronome clicked once more after the last bar.
+- Fixes a held note that could keep sounding until Panic after its track was changed between an instrument and a
+  drum kit while the note sounded.
+- Fixes recordings on audio tracks clicking when playing stopped, jumped or went round the loop, and when a recording
+  was moved, removed, muted or made louder while the song played: they now fade in a thousandth of a second or so,
+  as they already did at their own edges. Exports are unchanged.
+- Fixes a project with a damaged rhythm player setting not opening at all.
+- Fixes a damaged project file that reaches millions of bars freezing Musician Forge as it opened: it is refused as
+  damaged, and its backup is offered as usual.
+- Fixes a length that ends just before a bar line being said a bar short ("ends at bar 9, 7 bars and 4 beats long"
+  for 8 bars).
+- Fixes a time signature change making the song longer when a looping region's repeats ran past its end: every
+  section keeps its number of bars.
+- Fixes the song playing on in silence after the section that was looping was made shorter (in Section settings, or
+  by Control+Z) while the playhead was past its new end: it goes round to the section's start.
+- Fixes a time signature change moving the playhead into another bar: it stays in its bar, at its place there.
+- Fixes a save that Windows refused renaming the song after the file it was not saved in, and saying the refusal as
+  "[Errno 13]": it now says in words that the project could not be saved there.
+- Fixes Stop after recording past the end of an Automatic section saying "beat 4.999".
+- Fixes editing a tempo change that a MIDI import put between beats (bar 2, beat 2.5): the Beat box showed beat 2,
+  and changing only the tempo moved the change or refused it. The box now takes decimals.
+- Fixes Rename track closing its window when the name was empty: it stays open with what you typed.
+- Fixes the keyboard's description in the Scale and Chord strips layouts naming the wrong note for the A key.
+- Fixes Move region, with the bar and beat left as shown, moving a region that starts between beats onto the beat.
+- Fixes deleting a tempo, time signature or key change landing on the change before it: it lands on the next one,
+  as every other list does.
+- Fixes Speak note names saying a chord strip of your own without its bass note ("A minor" for "A minor with E in
+  the bass").
+- Fixes the Hi-hat pedal's Step pattern showing an empty bar when the pedal was turned on in rock, metal or a drum
+  machine, though it plays the foot on two and four; setting its steps as shown silenced the foot.
+- Fixes importing a MIDI file from programs that start a repeated note before ending the one before it: the
+  repeated notes came in as short blips.
+- Fixes a track you named "Chord track" coming back from Musician Forge's own MIDI file as chords instead of as its
+  notes.
+- Fixes a failed export (a full disk, or the old file open in another program) leaving a temporary file beside it.
+- Fixes a guitar pack download that is the wrong file being downloaded whole, three times, before it was refused: it
+  now stops as soon as its size shows it is wrong, and a full disk is said in words.
+- Fixes the Windows voice (when no screen reader is running) reading text that starts with "<" as markup.
 
 ### Older projects
 
 - They play the same notes as before; this version's changes to the players come to a region once you change
   something in it.
+- A project longer than 9999 bars, which only a damaged file can be, is refused when it opens, and its backup is
+  offered.
 
 ### New projects
 

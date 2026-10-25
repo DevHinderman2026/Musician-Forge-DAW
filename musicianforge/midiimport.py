@@ -345,7 +345,7 @@ def parse(data, progress=None, cancelled=None):
                 continue
             if kind not in (0x80, 0x90):
                 continue
-            state = by_channel.setdefault(channel, {"open": {}, "notes": [], "first_note": None})
+            state = by_channel.setdefault(channel, {"open": {}, "notes": [], "first_note": None, "restruck": {}})
             pitch, velocity = values
             if kind == 0x90 and velocity > 0:
                 if state["first_note"] is None:
@@ -355,8 +355,14 @@ def parse(data, progress=None, cancelled=None):
                     # struck again before it ended: the first one ends here, as a synthesizer plays it (and a
                     # single note-off then ends the new one, instead of leaving it sounding to the end)
                     state["notes"].append(Note(struck[0], max(MIN_NOTE_TICKS, t - struck[0]), pitch, struck[1]))
+                    state["restruck"][pitch] = t
                 state["open"][pitch] = (t, max(1, velocity))
             else:
+                if state["restruck"].pop(pitch, None) == t and state["open"].get(pitch, (None,))[0] == t:
+                    # the note-off of the note that has just ended there, written after the new note-on (many
+                    # programs write a repeated note that way): it does not end the new one (the review of
+                    # 25 Oct 2026: each repeated note came in 30 ticks long)
+                    continue
                 struck = state["open"].pop(pitch, None)
                 if struck is not None:
                     state["notes"].append(Note(struck[0], max(MIN_NOTE_TICKS, t - struck[0]), pitch, struck[1]))
@@ -366,9 +372,11 @@ def parse(data, progress=None, cancelled=None):
             for pitch, (start, velocity) in state["open"].items():    # notes never ended: they end with the track
                 state["notes"].append(Note(start, max(MIN_NOTE_TICKS, last - start), pitch, velocity))
             state["open"] = {}
-        if names and names[0].strip().lower() == CHORD_TRACK_NAME.lower():
+        if names and names[0].strip().lower() == CHORD_TRACK_NAME.lower() and exact is None:
             # A chord track that came back from another program without Musician Forge's chord texts: its held
-            # chords become the chord track again (the same rule in reverse, Russell, 10 Oct 2026)
+            # chords become the chord track again (the same rule in reverse, Russell, 10 Oct 2026). Not a track of
+            # Musician Forge's own that someone named "Chord track": that one keeps its instrument text (the review
+            # of 25 Oct 2026: its notes became chords, and the track was gone)
             held = [n for state in by_channel.values() for n in state["notes"]]
             contents.chords.extend(chords_from_held_notes(held))
             for n in held:
@@ -625,6 +633,42 @@ def build_timeline(contents):
         else:
             sections.append((bar, text))
     return result, sections, notes
+
+
+def within_max_bars(timeline, markers):
+    """The timeline and the section markers without the changes past bar MAX_BARS (song.py), the longest a song can be
+    (Russell, 25 Oct 2026): (timeline, markers)."""
+    from .song import MAX_BARS
+    from .timeline import Timeline
+
+    tempos = [t for t in timeline.tempos if t.bar <= MAX_BARS]
+    meters = [t for t in timeline.time_signatures if t.bar <= MAX_BARS]
+    keys = [k for k in timeline.keys if k.bar <= MAX_BARS]
+    if (len(tempos), len(meters), len(keys)) != (len(timeline.tempos), len(timeline.time_signatures), len(timeline.keys)):
+        timeline = Timeline(tempos=tempos, time_signatures=meters, keys=keys)
+    return timeline, [(bar, name) for bar, name in markers if bar <= MAX_BARS]
+
+
+def cut_at(contents, limit):
+    """The file's contents up to tick `limit` (where bar MAX_BARS ends, Song.max_tick): a note that starts there or
+    later is left out, and one held past it ends there; volume and pan changes and chords from there on are left out
+    too. Returns (contents, how many notes were left out)."""
+    import dataclasses
+
+    left_out = 0
+    tracks = []
+    for track in contents.tracks:
+        kept = [n if n.tick + n.length <= limit else Note(n.tick, limit - n.tick, n.pitch, n.velocity)
+                for n in track.notes if n.tick < limit]
+        left_out += len(track.notes) - len(kept)
+        if kept:
+            tracks.append(dataclasses.replace(track, notes=kept,
+                                              volume_points=[p for p in track.volume_points if p[0] < limit],
+                                              pan_points=[p for p in track.pan_points if p[0] < limit]))
+    if not left_out and contents.end_tick <= limit and all(c.tick < limit for c in contents.chords):
+        return contents, 0
+    return dataclasses.replace(contents, tracks=tracks, chords=[c for c in contents.chords if c.tick < limit],
+                               end_tick=min(contents.end_tick, limit)), left_out
 
 
 def sections_from_markers(markers, end_bar):

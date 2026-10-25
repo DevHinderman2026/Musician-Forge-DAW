@@ -7,8 +7,9 @@ control is reached with Tab, buttons have underlined letters, and every change i
 import wx
 
 from .. import automation as auto
-from .common import (DecimalField, Form, ShowAgain, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
-                     keep_enter_for_lists, note_text, says_after, show_error, show_items, spin_ctrl)
+from .common import (TRACK_GONE, DecimalField, Form, ShowAgain, ask_values, choice_ctrl, enable_keeping_focus,
+                     end_dialog, finish_dialog, keep_enter_for_lists, note_text, says_after, show_error, show_items,
+                     spin_ctrl, undo_in_list_window)
 
 
 def _buttons(dialog, specs):
@@ -31,7 +32,8 @@ class _ListWindow(wx.Dialog):
             action()
         except ValueError as exc:
             show_error(self, str(exc))
-        self.list.SetFocus()
+        if not getattr(self, "_closed", False):
+            self.list.SetFocus()
 
     def _bind_keys(self, keys):
         def on_key(event):
@@ -41,7 +43,16 @@ class _ListWindow(wx.Dialog):
             else:
                 self._run(action)
         self.list.Bind(wx.EVT_KEY_DOWN, on_key)
-        keep_enter_for_lists(self, (self.list, on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, on_key), undo=self.undo)
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window)."""
+        undo_in_list_window(self, redo, self.refresh, gone=self._gone)
+
+    def _gone(self):
+        """After an undo or redo: the words to close with when it took the track away, or None."""
+        return TRACK_GONE if self.session.song.track_by_id(self.track_id) is None else None
 
     def selected(self, count):
         if not count:
@@ -119,6 +130,10 @@ class AutomationDialog(_ListWindow):
         with LanePointsDialog(self, self.session, self.track_id, index, run_modal=self.run_modal,
                               confirm=self.confirm, confirm_replace=self.confirm_replace) as dlg:
             self.run_modal(dlg)
+        if self._gone():             # an undo in there took the track away, and said so as that window closed
+            self._closed = True
+            end_dialog(self, wx.ID_CANCEL)
+            return
         self.refresh(index)
 
     def toggle(self):
@@ -169,6 +184,7 @@ class LanePointsDialog(_ListWindow):
         self.confirm_replace = confirm_replace or self.confirm
         name = session.lane_name(track_id, lane_index)
         track = session.song.track_by_id(track_id)
+        self.target = auto.target_key(session.lanes_of(track_id)[lane_index])   # (found again by it after an undo)
         super().__init__(parent, title="{} automation: {}".format(name, track.name),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         body = wx.BoxSizer(wx.VERTICAL)
@@ -198,6 +214,18 @@ class LanePointsDialog(_ListWindow):
 
     def points_list(self):
         return self.session.lanes_of(self.track_id)[self.lane_index]["points"]
+
+    def _gone(self):
+        """After an undo or redo: None while this lane is still on the track (found again by what it changes, in case
+        the undo moved it in the list of lanes), or the words to close with."""
+        if self.session.song.track_by_id(self.track_id) is None:
+            return TRACK_GONE
+        lanes = self.session.lanes_of(self.track_id)
+        index = next((i for i, lane in enumerate(lanes) if auto.target_key(lane) == self.target), None)
+        if index is None:
+            return "This automation lane is no longer on the track, so the window closed"
+        self.lane_index = index
+        return None
 
     def _index_at_playhead(self):
         tick = self.session.position_tick()

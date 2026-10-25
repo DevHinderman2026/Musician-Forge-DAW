@@ -15,7 +15,7 @@ from ..timeline import MAX_NUMERATOR
 from .common import (DecimalField, Form, ShowAgain, a_moment_later, ask_values, choice_ctrl, enable_keeping_focus,
                      end_dialog, enter_for_lists, finish_dialog, fit_to_screen, keep_enter_for_lists, note_text,
                      say_after, says_after, set_note_text, show_error, show_items, silence_name, slider_ctrl,
-                     spin_ctrl)
+                     spin_ctrl, undo_in_list_window)
 from .effects_dialogs import percent_label
 
 # the highest beat a beat box takes: the last beat of the longest bar (32/16 time), with decimals; each bar's own
@@ -93,10 +93,15 @@ class ChordTrackDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.edit))
         self.refresh(self._index_at_playhead())
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window)."""
+        undo_in_list_window(self, redo, self.refresh)
 
     def _index_at_playhead(self):
         tick = self.session.position_tick()

@@ -2857,9 +2857,10 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
             events = _the_last_eighth(bar, events, changing, mine)
         events.sort(key=lambda e: e[0])
         # every event's notes, exactly as the style plays the bar (hand-made steps then choose from them); rules 7:
-        # with the part's Loudness changed, also as the style plays them at Loudness 50 (for the steps "as the style
-        # plays it")
-        plain = [] if hand_made and seventh and part["level"] != pp.LEVEL_DEFAULT else None
+        # with the part's Loudness at 0, where none of the style is heard, also as the style plays them at Loudness 50
+        # (for the steps "as the style plays it"; at any other Loudness they play the style's notes as heard there, so
+        # steps set exactly as the Step pattern view shows them play the same: the fifth review, 25 Oct 2026)
+        plain = [] if hand_made and seventh and part["level"] <= 0 else None
         made = []
         for k, event in enumerate(events):
             own = None if plain is None else []
@@ -2957,7 +2958,10 @@ def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None
     arpeggio or picked note (_picked) cut where the chord changes gives way to the new chord at once: the same note of
     the arpeggio, worked out on the new chord, from the change until the cut note would have ended or the next note
     starts (it was silent until the next note: half a beat in a figure of one note a beat). Where two ringing notes
-    are cut, the later one goes on, so it is one note, as the arpeggio plays."""
+    are cut, the later one goes on, so it is one note, as the arpeggio plays. Rules 7 too (the review of 25 Oct
+    2026): a passing note starting where the chord changes gives way to what is struck again there (an eighth's
+    lead-in, _lead_in, into a change an eighth after another started on the first one and took the place of the
+    chord the chord track holds for that eighth: the keys' right hand and the pad never played it)."""
     changes = sorted((t - bar.start) // STEP for t in change_ticks
                      if bar.start < t < bar.end and (t - bar.start) % STEP == 0)
     if not changes:
@@ -2987,6 +2991,9 @@ def _struck_again_at_changes(bar, events, change_ticks, player, chord_spans=None
     def kind(role):
         return "left" if role == "left" else "main"
 
+    if arpeggios:          # (rules 7: a passing note gives way to the chord struck again where it starts)
+        struck = {e[0] for e in again if kind(e[3]) == "main"}
+        out = [e for e in out if not (e[3] == "passing" and e[0] in struck)]
     starts = {(e[0], kind(e[3])) for e in out}
     for event in again:
         if (event[0], kind(event[3])) not in starts:
@@ -3054,10 +3061,11 @@ def _part_steps(bar, made, steps, run_start, chord_spans, part, player, settings
     style plays it" plays the style's own notes on that step, at the step's loudness (or, where the style plays
     nothing on it in this bar, the player's main sound); any other sound is worked out from the chord and lasts until
     the next step. A fill still takes over where its run starts, and with passing notes on, a short note still leads
-    into each chord change where no step starts. plain: rules 7, `made` as the style plays it at the part's Loudness
-    50 (None: `made` itself): a step "as the style plays it" plays those notes, at the step's loudness, whatever the
-    part's Loudness (Russell, 25 Oct 2026: at Loudness 0 the style's notes were silent, so the step played the
-    player's main sound instead, a full chord on the keys). Returns [(event, notes)]."""
+    into each chord change where no step starts. plain: rules 7, at the part's Loudness 0, `made` as the style plays
+    it at Loudness 50 (None: `made` itself): a step "as the style plays it" plays those notes, at the step's loudness
+    (Russell, 25 Oct 2026: at Loudness 0 the style's notes were silent, so the step played the player's main sound
+    instead, a full chord on the keys). At any other Loudness it plays the notes as heard, so steps set as the Step
+    pattern view shows them play the same. Returns [(event, notes)]."""
     pattern = steps["bars"][bar.pattern_index % len(steps["bars"])]
     limit = bar.steps if run_start is None else run_start
     on = [(step, velocity, sound) for step, velocity, sound in pattern if step < limit]

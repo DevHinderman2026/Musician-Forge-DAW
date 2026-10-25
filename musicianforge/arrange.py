@@ -24,7 +24,7 @@ from . import arrangement
 from . import automation as autolanes
 from . import chords as chordtrack
 from . import regions as regionlib
-from .song import DEFAULT_SECTION_BARS, Note, NoteRegion, Section
+from .song import DEFAULT_SECTION_BARS, MAX_BARS, Note, NoteRegion, Section
 from .timeline import KeyChange, TempoChange, TimeSignatureChange
 
 
@@ -334,6 +334,27 @@ def _loops_around_deleted_bars(track, t0, t1, across, at_the_end, placed=None, s
                 regionlib.stop_loop_at(track, head, t0, own, ends_there=at_the_end, first_end=was.end)
 
 
+def _loops_stop_at_the_end(song, placed=None):
+    """Before bars go in after the end of the song: a region looping until the next region (or the end of the song)
+    that the song's end stopped keeps playing exactly what it played, its whole repeats and then, in a region of its
+    own, the part of the next one the end cut, its notes ending there as they were heard (Russell, 25 Oct 2026: "Stop
+    where the song ended"; until then it looped on into a section added at the end, or into the start of a section
+    copied there). placed: a LoopsCarriedOn for that part, so the session matches a rhythm player's to the loop."""
+    end = song.song_end_tick()
+    for track in song.tracks:
+        for region, until in _looping(track, end):
+            if region.loops != 0 or until != end:         # (another region after it stops it, or it plays its count)
+                continue
+            was, own = _as_it_was(track, region)
+            pieces = regionlib.loop_pieces(was, own, region.start, end, carry_on=False, song_end=end)
+            if not pieces:
+                continue
+            region.loops = pieces[0][2]                   # the region itself: its whole repeats up to the end
+            new = regionlib.place_pieces(track, was, pieces[1:], region.start)
+            if placed is not None and new:
+                placed.append((track, new, was, new[0].start, new[0].start, end))
+
+
 def _copy_loops_playing_in(track, t0, t1, song_end, notes, spans):
     """extract: a looping region that began before ticks t0 .. t1 and still plays in them. The copy holds what it plays
     there, with the phase it has there (until then the copy left its repeats out, or, for a region reaching into the
@@ -554,18 +575,23 @@ def _drop_redundant_changes(tl):
 def add_section_after(song, index, length=DEFAULT_SECTION_BARS, loops_placed=None):
     """A new empty section right after section `index`. Returns its index. loops_placed: as for insert_clip."""
     _start, end = song.section_bounds(index)
+    if index == len(song.sections) - 1:
+        _loops_stop_at_the_end(song, loops_placed)        # (a section added at the end starts empty)
     insert_clip(song, end, empty_clip(song, end, length), loops_placed)
     song.sections.insert(index + 1, Section(length))
     return index + 1
 
 
-def duplicate_section(song, index):
+def duplicate_section(song, index, loops_placed=None):
     """Copy a section (with its notes, recordings, chords and changes) to the end of the song, so it becomes the
     last section: with sections 1, 2 and 3, duplicating any of them makes section 4 (Russell, 9 Oct 2026; until
-    then the copy went right after the section it came from). Returns the copy's index."""
+    then the copy went right after the section it came from). Returns the copy's index. loops_placed: as for
+    insert_clip."""
     start, end = song.section_bounds(index)
     song_end = song.section_bounds(len(song.sections) - 1)[1]
-    insert_clip(song, song_end, extract(song, start, end))
+    clip = extract(song, start, end)
+    _loops_stop_at_the_end(song, loops_placed)            # (the copy sounds like the section it copies)
+    insert_clip(song, song_end, clip)
     song.sections.append(replace(song.sections[index]))
     return len(song.sections) - 1
 
@@ -608,6 +634,10 @@ def set_section_length(song, index, length, loops_placed=None):
     start, end = song.section_bounds(index)
     current = end - start
     if length > current:
+        if index == len(song.sections) - 1:
+            # the last section made longer: the new bars start empty, as a section added at the end does (Russell,
+            # 25 Oct 2026); an Automatic section growing under a take (grow_section_to) keeps its loops going
+            _loops_stop_at_the_end(song, loops_placed)
         insert_clip(song, end, empty_clip(song, end, length - current), loops_placed)
     elif length < current:
         delete_bars(song, start + length, end, loops_placed)
@@ -647,7 +677,8 @@ def grow_section_to(song, index, last_end, loops_placed=None):
     if last_end <= 0:
         return 0
     needed_end = tl.tick_to_bar(last_end - 1) + 1
-    growth = max(0, needed_end - end)
+    # (never past bar MAX_BARS: a take there stops at Session._take_cap)
+    growth = max(0, min(needed_end - end, MAX_BARS - sum(section.length for section in song.sections)))
     if growth == 0:
         return 0
     if index < len(song.sections) - 1:

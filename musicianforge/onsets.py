@@ -81,16 +81,26 @@ def _find_hits(audio, sample_rate, sensitivity):
     count = 1 + (frames - WINDOW) // HOP
     window = np.hanning(WINDOW)
     starts = np.arange(count) * HOP
-    spectra = np.empty((count, WINDOW // 2 + 1))
-    levels = np.empty(count)
-    for first in range(0, count, 512):
-        idx = starts[first:first + 512, None] + np.arange(WINDOW)[None, :]
-        spectra[first:first + 512] = np.abs(np.fft.rfft(audio[idx] * window, axis=1))
-        levels[first:first + 512] = np.max(np.abs(audio[idx]), axis=1)    # peak: a hit at a window's end counts
     # Loudness in quarter-octave bands, on a log scale. Each band's own quiet level (room noise, hum)
     # is added in first, so changes far below it hardly count and noise cannot pass for hits.
     bands = _band_matrix(sample_rate)
-    power = (spectra ** 2) @ bands.T / bands.sum(axis=1)[None, :]
+    band_sums = bands.sum(axis=1)[None, :]
+    low_bins = np.fft.rfftfreq(WINDOW, 1.0 / sample_rate) < 200.0
+    # Worked out 512 windows at a time, keeping only each window's band loudness and how much of its energy is
+    # low (below 200 Hz): the whole spectrogram of a ten-minute recording took about 460 MB (the fifth review,
+    # 25 Oct 2026). The numbers are the same as before.
+    power = np.empty((count, bands.shape[0]))
+    low_share = np.zeros(count)
+    levels = np.empty(count)
+    for first in range(0, count, 512):
+        idx = starts[first:first + 512, None] + np.arange(WINDOW)[None, :]
+        energy = np.abs(np.fft.rfft(audio[idx] * window, axis=1)) ** 2
+        power[first:first + 512] = energy @ bands.T / band_sums
+        total = energy.sum(axis=1)
+        low = energy[:, low_bins].sum(axis=1)
+        heard = total > 0
+        low_share[first:first + 512][heard] = low[heard] / total[heard]
+        levels[first:first + 512] = np.max(np.abs(audio[idx]), axis=1)    # peak: a hit at a window's end counts
     floor = np.percentile(power, 20, axis=0)
     logs = np.log10(power + floor[None, :] + 1e-10 * power.max() + 1e-20)
     # how much louder each band got than in the window before (or the one before that, whichever was
@@ -115,8 +125,6 @@ def _find_hits(audio, sample_rate, sensitivity):
     blocks = frames // HOP
     envelope = np.sqrt(np.mean(audio[:blocks * HOP].reshape(blocks, HOP) ** 2, axis=1))
     span_blocks = max(2, int(0.04 * sample_rate / HOP))
-    freqs = np.fft.rfftfreq(WINDOW, 1.0 / sample_rate)
-    low_bins = freqs < 200.0
     loudest = float(np.max(levels))
     hits, strengths = [], []
     for i in range(1, count - 1):
@@ -138,8 +146,7 @@ def _find_hits(audio, sample_rate, sensitivity):
             continue
         following = levels[i:min(count, i + 6)]
         loudness = float(np.max(following) / loudest) if loudest > 0 else 0.0
-        energy = spectra[min(count - 1, i + int(np.argmax(following)))] ** 2
-        low = float(energy[low_bins].sum() / energy.sum()) if energy.sum() > 0 else 0.0
+        low = float(low_share[min(count - 1, i + int(np.argmax(following)))])
         hit = AudioHit(int(sample), min(1.0, loudness), min(1.0, low * 2.0))
         if replace:
             hits[-1], strengths[-1] = hit, value

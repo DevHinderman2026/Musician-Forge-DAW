@@ -62,9 +62,17 @@ class WavWriter:
         self.frames += len(audio)
 
     def close(self):
-        """Finish the file and move it into place."""
-        self._wav.close()
-        replace_file(self.tmp_path, self.path)
+        """Finish the file and move it into place. If that fails (a full disk, or the old file held open by another
+        program), the old file stays as it was and the temporary one is removed (the review of 25 Oct 2026)."""
+        try:
+            self._wav.close()
+            replace_file(self.tmp_path, self.path)
+        except BaseException:
+            try:
+                self.abort()
+            except OSError:
+                pass
+            raise
 
     def abort(self):
         try:

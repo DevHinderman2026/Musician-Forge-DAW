@@ -459,12 +459,50 @@ def enter_for_lists(event, pairs):
     return False
 
 
-def keep_enter_for_lists(window, *pairs):
-    """Give a window with no EVT_CHAR_HOOK of its own one that hands Enter to its lists (enter_for_lists)."""
+def keep_enter_for_lists(window, *pairs, undo=None):
+    """Give a window with no EVT_CHAR_HOOK of its own one that hands Enter to its lists (enter_for_lists), and, with
+    undo, Control+Z and Control+Y to undo(redo) (undo_keys)."""
     def hook(event):
+        if undo is not None and undo_keys(event, undo):
+            return
         if not enter_for_lists(event, pairs):
             event.Skip()
     window.Bind(wx.EVT_CHAR_HOOK, hook)
+
+
+def undo_keys(event, undo):
+    """For a window's EVT_CHAR_HOOK: Control+Z calls undo(False) and Control+Y undo(True). Returns True when the key
+    was one of them (the hook must then not Skip)."""
+    if event.GetModifiers() != wx.MOD_CONTROL or event.GetKeyCode() not in (ord("Z"), ord("Y")):
+        return False
+    undo(event.GetKeyCode() == ord("Y"))
+    return True
+
+
+TRACK_GONE = "This track is no longer in the song, so the window closed"
+
+
+def undo_in_list_window(window, redo, refresh, gone=None):
+    """Control+Z (redo False) or Control+Y (redo True) in a list window, undoing or redoing right there (Russell,
+    25 Oct 2026: "Undo in every window"; until then only the project window, the Chord strips window and the rhythm
+    player's windows had them, though the list windows' questions said "You can undo this with Control+Z").
+    refresh(index) fills the list again on the item it was on, or the nearest one when the undo took that one away,
+    and the focus goes to the list; what the undo says comes after the list's reading (says_after). gone(): the words
+    to say when the undo took away what the window shows (its track, say), or None: the window then closes and says
+    them once it has closed, as the rhythm player editor does when its region goes. The window needs .session and
+    .list."""
+    session = window.session
+    here = max(0, window.list.GetSelection())
+    with session.pressed("list"):
+        (session.redo if redo else session.undo)()
+        words = gone() if gone is not None else None
+        if words:
+            with session.pressed("window"):
+                session.announce(words)
+            end_dialog(window, wx.ID_CANCEL)
+            return
+        refresh(here)
+        window.list.SetFocus()
 
 
 NAVIGATION_KEYS = {wx.WXK_UP: -1, wx.WXK_DOWN: 1, wx.WXK_NUMPAD_UP: -1, wx.WXK_NUMPAD_DOWN: 1,

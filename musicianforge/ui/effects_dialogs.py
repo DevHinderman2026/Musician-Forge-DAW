@@ -7,8 +7,9 @@ label is created right before it, every control is reached with Tab, and changes
 import wx
 
 from .. import effects
-from .common import (DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
-                     keep_enter_for_lists, note_text, says_after, show_error, show_items, slider_ctrl)
+from .common import (TRACK_GONE, DecimalField, Form, ask_values, choice_ctrl, enable_keeping_focus, finish_dialog,
+                     keep_enter_for_lists, note_text, says_after, show_error, show_items, slider_ctrl,
+                     undo_in_list_window)
 
 OWN_SETTINGS = "Your own settings"
 
@@ -47,7 +48,8 @@ class EffectsDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.settings))
         self.refresh(0)
         self.list.SetFocus()
@@ -63,6 +65,11 @@ class EffectsDialog(wx.Dialog):
         except ValueError as exc:
             show_error(self, str(exc))
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window); an undo that takes the track away closes the window."""
+        undo_in_list_window(self, redo, self.refresh,
+                            gone=lambda: TRACK_GONE if self.session.song.track_by_id(self.track_id) is None else None)
 
     def refresh(self, select=0):
         items = self.effects

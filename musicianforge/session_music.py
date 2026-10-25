@@ -8,7 +8,7 @@ import logging
 import os
 
 from . import arrangement, chords, keyboard_map, onsets, player_pieces, players, regions, theory
-from .song import AUDIO_RATE, NO_TRACK_YET, Instrument, Note
+from .song import AUDIO_RATE, MAX_BARS, NO_TRACK_YET, Instrument, Note
 from .timeline import format_number
 
 log = logging.getLogger("musicianforge.session")
@@ -945,7 +945,11 @@ class MusicMixin:
         viewed = copy.deepcopy(settings)
         mine = viewed["pieces"].setdefault(piece_key, {})
         mine.pop("steps", None)
-        mine.pop("on", None)
+        if not mine.get("on"):
+            # a piece turned off shows what it plays when it is on (the style's own); one turned on by hand keeps its
+            # "on", which a piece the style leaves off needs to play at all: the Hi-hat pedal turned on in rock, metal,
+            # house or trap plays the foot on two and four, and its view was empty (the fifth review, 25 Oct 2026)
+            mine.pop("on", None)
         tl = self.song.timeline
         result = players.perform(viewed, region.start, region.end, tl, self.song.chords,
                                  self._follow_hits(track, region, settings), self._section_starts(region),
@@ -1339,9 +1343,25 @@ class MusicMixin:
         if not 0 <= loops <= 999:
             raise ValueError("A region can play from 1 to 999 times (0 loops it until the next region)")
         self._need_regions(track_id, [index])
-        with self.edit("loop region"):
-            self.regions_of(track_id)[index].loops = loops
+        from .session import TooLong
+
+        try:
+            with self.edit("loop region"):
+                self.regions_of(track_id)[index].loops = loops
+        except TooLong:
+            raise ValueError("A song can be at most {} bars long, so this region can play at most {}.".format(
+                MAX_BARS, self._count_words(self._most_loops(track_id, index), "time"))) from None
         self.announce(self.describe_region_item(track_id, index, number=False))
+
+    def _most_loops(self, track_id, index):
+        """How many times a region can play in a row before its repeats would reach past bar MAX_BARS."""
+        track, region = self._region(track_id, index)
+        tl = self.song.timeline
+        if track.is_audio:
+            seconds = tl.tick_to_seconds(region.end_tick(tl)) - tl.tick_to_seconds(region.tick)
+            room = tl.tick_to_seconds(self.song.max_tick()) - tl.tick_to_seconds(region.tick)
+            return max(1, int(room / seconds + 1e-9)) if seconds > 0 else 1
+        return max(1, (self.song.max_tick() - region.start) // max(1, region.length))
 
     def trim_region(self, track_id, index, start_tick, end_tick, speak=True, merge_key=None):
         """Change where a region starts and ends; its music stays where it is in the song.

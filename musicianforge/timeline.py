@@ -187,10 +187,21 @@ class Timeline:
             return "bar {}".format(bar)
         return "bar {} beat {}".format(bar, format_number(beat))
 
+    def _said_position(self, tick):
+        """(bar, beat) for a tick, where a hair before a bar line counts as that bar line, as spoken_bar_position
+        says it (its beat then a hair under 1)."""
+        bar, beat = self.tick_to_position(tick)
+        beats = self.time_signature_at_bar(bar).numerator
+        if round(beat, 2) >= beats + 1:
+            return bar + 1, beat - beats
+        return bar, beat
+
     def bars_and_beats(self, start_tick, end_tick):
-        """How long a stretch is in whole bars plus beats: (bars, beats)."""
-        b0, beat0 = self.tick_to_position(start_tick)
-        b1, beat1 = self.tick_to_position(end_tick)
+        """How long a stretch is in whole bars plus beats: (bars, beats). (Until the fifth review of 25 Oct 2026 an end
+        a hair before a bar line, said as that bar line, made it a bar shorter and a bar's beats longer: "ends at bar
+        9, 7 bars and 4 beats long".)"""
+        b0, beat0 = self._said_position(start_tick)
+        b1, beat1 = self._said_position(end_tick)
         bars, beats = b1 - b0, round(beat1 - beat0, 2)
         if beats < 0:
             bars -= 1

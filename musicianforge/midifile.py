@@ -25,6 +25,7 @@ or flats, so modes such as Phrygian are written with their correct sharps or
 flats and marked minor or major by their character.
 """
 
+import os
 import struct
 
 from . import drummap, midiimport, theory
@@ -388,10 +389,24 @@ def end_at_restrike(notes):
 def export_midi(song, path, notes_by_track=None):
     data = song_to_midi_bytes(song, notes_by_track)
     tmp = path + ".tmp"
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-    replace_file(tmp, path)
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        replace_file(tmp, path)
+    except BaseException:
+        # a full disk, or the old file held open by another program: the old file stays as it was, and no half-made
+        # file is left beside it (the review of 25 Oct 2026: Song.mid.tmp was left behind)
+        _remove_quietly(tmp)
+        raise
     return len(data)
+
+
+def _remove_quietly(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
 def automation_steps(points, step=PPQ // 4):

@@ -12,9 +12,9 @@ from ..exportcheck import FADE_SECONDS_DEFAULT, FADE_SECONDS_RANGE
 from ..quantize import DEFAULT_GRID, GRID_NAMES, grid_ticks
 from ..song import Note
 from ..timeline import MAX_BPM, MAX_NUMERATOR, MIN_BPM, NOTE_LENGTHS, PPQ, describe_length, format_number
-from .common import (BORDER, Form, ShowAgain, ask_values, choice_ctrl, enable_keeping_focus, end_dialog,
-                     finish_dialog, keep_enter_for_lists, note_text, say_after, says_after, show_error, show_items,
-                     slider_ctrl, spin_ctrl, text_ctrl)
+from .common import (BORDER, TRACK_GONE, DecimalField, Form, ShowAgain, ask_values, choice_ctrl,
+                     enable_keeping_focus, end_dialog, finish_dialog, keep_enter_for_lists, note_text, say_after,
+                     says_after, show_error, show_items, slider_ctrl, spin_ctrl, text_ctrl, undo_in_list_window)
 
 log = logging.getLogger("musicianforge.ui")
 
@@ -264,7 +264,12 @@ class TempoDialog(wx.Dialog):
         super().__init__(parent, title=title)
         form = Form(self)
         self.bar = form.add("Bar", spin_ctrl, min_value=1, max_value=9999, value=bar)
-        self.beat = form.add("Beat", spin_ctrl, min_value=1, max_value=MAX_NUMERATOR, value=int(beat))
+        # decimals as the list shows them: a MIDI file's tempo changes can fall between beats (bar 2, beat 2.5), and a
+        # whole-number box showed beat 2, so changing only the tempo moved the change there (the fifth review of
+        # 25 Oct 2026). A beat left as shown keeps its exact place.
+        self.beat = form.add("Beat", DecimalField, min_value=1, max_value=MAX_NUMERATOR + 0.999, value=beat, step=1,
+                             decimals=3)
+        self.exact_beat = float(beat)
         self.bpm = form.add("Tempo in beats per minute", text_ctrl, value=format_number(bpm))
         finish_dialog(self, form.grid)
         self.bpm.SetFocus()
@@ -278,7 +283,10 @@ class TempoDialog(wx.Dialog):
             raise ValueError("Type the tempo as a number, such as 120 or 92.5") from None
         if not MIN_BPM <= bpm <= MAX_BPM:
             raise ValueError("Tempo must be between {} and {}".format(int(MIN_BPM), int(MAX_BPM)))
-        return self.bar.GetValue(), self.beat.GetValue(), bpm
+        bar, beat = self.bar.GetValue(), self.beat.GetValue()
+        if abs(beat - round(self.exact_beat, 3)) < 1e-9:
+            beat = self.exact_beat
+        return bar, beat, bpm
 
 
 class TimeSignatureDialog(wx.Dialog):
@@ -352,9 +360,14 @@ class ChangesDialog(wx.Dialog):
         self.delete_button.Bind(wx.EVT_BUTTON, lambda e: self.delete())
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.edit())
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.refresh(0)
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window)."""
+        undo_in_list_window(self, redo, self.refresh)
 
     # what the dialogs edit ---------------------------------------------------
     def _items(self):
@@ -496,7 +509,7 @@ class ChangesDialog(wx.Dialog):
         remove = {"tempo": self.session.remove_tempo, "time": self.session.remove_time_signature,
                   "key": self.session.remove_key}[self.kind]
         remove(index)
-        self.refresh(index - 1)
+        self.refresh(index)          # the next change, as in every other list (the last one when the last went)
         self.list.SetFocus()
 
     def on_key(self, event):
@@ -674,11 +687,30 @@ class EventListDialog(wx.Dialog):
                             ("octave_up", lambda: self.transpose(12)), ("octave_down", lambda: self.transpose(-12))):
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self.on_note_button(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.list.Bind(wx.EVT_LISTBOX, self.on_select)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.edit())
         self.refresh([0])
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window). The selected notes are kept as places on the track,
+        so when the undo changed the notes those places may hold other notes: the selection is cleared then (as
+        Delete would otherwise remove notes never selected; the final review of 10 Oct 2026)."""
+        before = self._note_values()
+
+        def refresh(here):
+            if self._note_values() != before:
+                self.marked.clear()
+            count = len(self.notes)
+            self.refresh([min(here, count - 1)] if count else [])
+        undo_in_list_window(self, redo, refresh,
+                            gone=lambda: TRACK_GONE if self.session.song.track_by_id(self.track_id) is None else None)
+
+    def _note_values(self):
+        track = self.session.song.track_by_id(self.track_id)
+        return [(n.tick, n.length, n.pitch, n.velocity) for n in track.notes] if track is not None else None
 
     @property
     def track_notes(self):
@@ -1004,10 +1036,16 @@ class RecordingsDialog(wx.Dialog):
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action, k=key: self._run(a, keep_focus=k == "play"))
         self.buttons["import"].Enable(import_file is not None)
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.edit))
         self.refresh(0)
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window); an undo that takes the track away closes the window."""
+        undo_in_list_window(self, redo, self.refresh,
+                            gone=lambda: TRACK_GONE if self.session.song.track_by_id(self.track_id) is None else None)
 
     @property
     def regions(self):
@@ -1880,10 +1918,15 @@ class SectionsDialog(wx.Dialog):
         for key, action in actions.items():
             self.buttons[key].Bind(wx.EVT_BUTTON, lambda e, a=action: self._run(a))
         self.list.Bind(wx.EVT_KEY_DOWN, self.on_key)
-        keep_enter_for_lists(self, (self.list, self.on_key))   # Enter reaches the list (common.enter_for_lists)
+        # Enter reaches the list (common.enter_for_lists); Control+Z and Control+Y undo and redo here
+        keep_enter_for_lists(self, (self.list, self.on_key), undo=self.undo)
         self.list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self._run(self.go_to))
         self.refresh(session.current_section_index())
         self.list.SetFocus()
+
+    def undo(self, redo=False):
+        """Control+Z and Control+Y (common.undo_in_list_window)."""
+        undo_in_list_window(self, redo, self.refresh)
 
     @says_after
     def _run(self, action):

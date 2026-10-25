@@ -422,6 +422,8 @@ class Engine:
         self._sounding = set()
         self._clicks = []
         self._scheduled_offs = []
+        self._audio_tails = []       # recordings fading out where playback left them: see _cut_audio
+        self._audio_fade_in = None   # (song sample, {(start, track)}): recordings that fade in there (_audio_changed)
         self._click_accent = make_click(self.sample_rate, True)
         self._click_normal = make_click(self.sample_rate, False)
         self._buffer = np.zeros((0, 2), dtype=np.float32)
@@ -634,17 +636,25 @@ class Engine:
                     if loop_start <= start < loop_end and start + count >= loop_end > loop_start:
                         count = loop_end - start
                         wrap = True
+                if self._end_sample is not None and start < self._end_sample < start + count:
+                    # the end of the range falls inside this block: playing stops on its exact sample (until the review
+                    # of 25 Oct 2026 the block was played to its end first, so a note begun after the end, or the
+                    # metronome's click on the downbeat after the last bar, sounded whenever the end was mid-block)
+                    count = self._end_sample - start
+                    wrap = False
                 if count > 0:
                     new_clicks += self._play_segment(out, offset, count)
                     offset += count
                 if wrap:
-                    self._wrap_loop()
+                    self._wrap_loop(offset)
                 elif self._reached_end():
-                    self._stop(announce="end")
+                    self._stop(announce="end", block_offset=offset)
             if offset < frames:  # stopped part-way: let notes ring out
                 self._render_free(out, offset, frames)
         else:
             self._render_free(out, 0, frames)
+        if self._audio_tails:
+            self._play_audio_tails(out, frames)
         if self._monitor:
             self._play_monitor(out)
         self._mix_channels(out, frames, block_start)
@@ -735,9 +745,11 @@ class Engine:
         return (self.stop_at_end and not self.recording and len(data.samples) > 0
                 and self.position > data.end_sample + END_OF_SONG_SECONDS * self.sample_rate)
 
-    def _wrap_loop(self):
+    def _wrap_loop(self, block_offset=0):
         """The playhead reached the end of the looped section: go back to its start."""
         loop_start, loop_end = self._loop
+        self._cut_audio(block_offset)
+        self._audio_fade_in = None
         self._release_playback_notes()
         start_tick, end_tick = self._loop_ticks
         self._arp_resync(end_tick)  # an arpeggio note still sounding ends with this pass
@@ -954,7 +966,9 @@ class Engine:
             elif kind == "locate":
                 self._release_playback_notes()
                 if self.playing:
+                    self._cut_audio(0)
                     self._arp_resync(self._current_tick())
+                self._audio_fade_in = None
                 self.position = self.data.tick_to_sample(cmd[1])
                 self._heard_from = self.position
             elif kind == "audition":
@@ -1061,6 +1075,9 @@ class Engine:
     def _swap_data(self, new):
         old = self.data
         notes_changed = False
+        # the recordings sounding now, before the playhead moves to the new data's samples (see _audio_changed)
+        old_audio = self._audible_audio(old, self.position) if self.playing and (old.audio or new.audio) else None
+        old_position, old_heard = self.position, self._heard_from
         if self.playing:
             # keep the same musical position even if tempos changed
             tick = old.sample_to_tick(self.position)
@@ -1080,6 +1097,8 @@ class Engine:
                 self.recorder.channel = channel
         self.automation = new.automation
         self._region_to_samples()
+        if old_audio is not None:
+            self._audio_changed(old_audio, old_position, old_heard, old, new)
         starting = self._carry_notes(old, new) if notes_changed else ()
         self._sync_chains(new)
         self._update_effect_units(new.setups)
@@ -1175,7 +1194,10 @@ class Engine:
         return held
 
     def _start(self, from_tick, record_track, kind="notes"):
+        if self.playing:
+            self._cut_audio(0)         # (Play while playing starts again from there: the recordings fade out first)
         self._release_playback_notes()
+        self._audio_fade_in = None
         self._arp_resync(None)
         self._clicks.clear()
         data = self.data
@@ -1221,9 +1243,10 @@ class Engine:
         self.recording = True
         self.count_in_end = None
 
-    def _stop(self, announce=None):
+    def _stop(self, announce=None, block_offset=0):
         if not self.playing:
             return
+        self._cut_audio(block_offset)
         stop_tick = self.data.sample_to_tick(self.position)
         self._arp_resync(stop_tick)  # ends any arpeggio note while the recorder can still take it
         # playing stays True until the takes are handed back (below): the window waits while it is True, and the
@@ -1267,6 +1290,10 @@ class Engine:
         mute_from = self._mute_from_sample
         quiet_until = self.count_in_end
         recording_on = self.audio_tape.track_id if self.audio_tape is not None else None
+        heard = self._heard_from
+        changed = self._audio_fade_in
+        if changed is not None and start >= changed[0] + FADE_FRAMES:
+            self._audio_fade_in = changed = None
         planar = self._planar
         for begin, samples, left, right, track_id, _whole, _skip, channel in self.data.audio:
             if begin >= end:
@@ -1283,13 +1310,104 @@ class Engine:
             lo, hi = a - begin, b - begin
             piece = samples[lo:hi]
             count = len(samples)
-            if lo < FADE_FRAMES or hi > count - FADE_FRAMES:
+            # begun before playback started here (Play, a move of the playhead, the loop going round): it fades in
+            # (the review of 25 Oct 2026: it started dead in its middle, a click)
+            fade_in = heard is not None and begin < heard and a < heard + FADE_FRAMES
+            # (and where it changed while playing: _audio_changed)
+            again = changed is not None and (begin, track_id) in changed[1] and a < changed[0] + FADE_FRAMES
+            if lo < FADE_FRAMES or hi > count - FADE_FRAMES or fade_in or again:
                 where = np.arange(lo, hi, dtype=np.float32)
                 ramp = np.minimum(1.0, np.minimum((where + 1.0) / FADE_FRAMES, (count - where) / FADE_FRAMES))
+                if fade_in:
+                    ramp = np.minimum(ramp, np.maximum(0.0, (np.arange(a, b) - heard + 1.0) / FADE_FRAMES))
+                if again:
+                    ramp = np.minimum(ramp, np.maximum(0.0, (np.arange(a, b) - changed[0] + 1.0) / FADE_FRAMES))
                 piece = piece * ramp[:, None]
             lo_col, hi_col = offset + (a - start), offset + (b - start)
             planar[2 * channel, lo_col:hi_col] += piece[:, 0] * left
             planar[2 * channel + 1, lo_col:hi_col] += piece[:, -1] * right
+
+    def _cut_audio(self, block_offset):
+        """Playback leaves the recordings at the playhead (Stop, the end of the range, a move of the playhead, the loop
+        going round): each one sounding there goes on for FADE_FRAMES more, fading out, from `block_offset` in this
+        block. Until the review of 25 Oct 2026 it stopped dead, which clicked (as a recording's own end would, had it
+        no fade). Mixed in by _play_audio_tails, through the track's effects, volume and pan like the rest."""
+        self._fade_out_audio(self._audible_audio(self.data, self.position).values(), self.position, block_offset,
+                             heard=self._heard_from)
+
+    def _audible_audio(self, data, at):
+        """{(track, where in its audio, gains): piece} of the parts of recordings that playback of `data` has sounding
+        at song sample `at` (begun before it, not over), as _mix_audio plays them. The key says what is heard: the
+        same key in two playback datas is the same sound going on."""
+        found = {}
+        if not data.audio or (self.count_in_end is not None and at < self.count_in_end):
+            return found
+        mute_from = self._mute_from_sample
+        recording_on = self.audio_tape.track_id if self.audio_tape is not None else None
+        for piece in data.audio:
+            begin, samples, left, right, track_id, whole, skip, _channel = piece
+            if begin >= at:
+                break
+            if at - begin >= len(samples) or (mute_from is not None and begin >= mute_from) or track_id == recording_on:
+                continue
+            found[(track_id, whole.__array_interface__["data"][0], skip + at - begin, left, right)] = piece
+        return found
+
+    def _audio_changed(self, old_audio, old_position, old_heard, old, new):
+        """New playback data while playing (an edit): a recording that was sounding and is not sounding the same
+        now (taken away, moved, muted, made louder or softer, moved in time by a tempo change) fades out where it was
+        (_fade_out_audio), on its track's channel now, and one that sounds now and did not sounds fades in (the
+        review of 25 Oct 2026: they stopped, started or jumped dead, a click). A recording that goes on as it was
+        is left exactly alone. A track taken away fades out straight to the speakers, at the volume and pan it had
+        (its channel may be another track's now). Called with the new data in place."""
+        new_audio = self._audible_audio(new, self.position)
+        gone = [piece for key, piece in old_audio.items() if key not in new_audio]
+        if gone:
+            self._fade_out_audio(gone, old_position, 0, new.channel_of_track, old_heard, old.mix)
+        came = {(piece[0], piece[4]) for key, piece in new_audio.items() if key not in old_audio}
+        self._audio_fade_in = (self.position, came) if came else None
+
+    def _fade_out_audio(self, pieces, at, block_offset, channel_of=None, heard=None, old_mix=None):
+        """The pieces (see _audible_audio) go on from song sample `at` for FADE_FRAMES more, fading out, from
+        `block_offset` in this block (mixed in by _play_audio_tails). channel_of: {track: channel} when the tracks'
+        channels may have changed (a track not in it goes straight out, at its volume and pan in old_mix); heard:
+        where playback started starting sounds (_heard_from), in the pieces' samples."""
+        for begin, samples, left, right, track_id, _whole, _skip, channel in pieces:
+            if channel_of is not None:
+                if track_id in channel_of:
+                    channel = channel_of[track_id]
+                else:
+                    mix = (old_mix or {}).get(channel)
+                    if mix is None:
+                        continue
+                    gains = track_gains(mix.kind, mix.volume, mix.pan)
+                    left, right, channel = left * gains[0], right * gains[1], None
+            count = len(samples)
+            lo = at - begin
+            where = np.arange(lo, min(count, lo + FADE_FRAMES), dtype=np.float64)
+            ramp = np.minimum(1.0, np.minimum((where + 1.0) / FADE_FRAMES, (count - where) / FADE_FRAMES))
+            if heard is not None and begin < heard:
+                ramp = np.minimum(ramp, np.maximum(0.0, (where + begin - heard + 1.0) / FADE_FRAMES))
+            ramp *= 1.0 - np.arange(len(where)) / float(FADE_FRAMES)            # from where it was down to nothing
+            piece = samples[lo:lo + len(where)] * ramp[:, None]
+            self._audio_tails.append([block_offset, channel, (piece[:, 0] * left).astype(np.float32),
+                                      (piece[:, -1] * right).astype(np.float32)])
+
+    def _play_audio_tails(self, out, frames):
+        """The recordings fading out after playback left them (_cut_audio, _audio_changed): on their track's channel,
+        or straight into `out` (channel None); what does not fit waits for the next block."""
+        keep = []
+        for start, channel, left, right in self._audio_tails:
+            take = max(0, min(len(left), frames - start))
+            if take and channel is None:
+                out[start:start + take, 0] += left[:take]
+                out[start:start + take, 1] += right[:take]
+            elif take:
+                self._planar[2 * channel, start:start + take] += left[:take]
+                self._planar[2 * channel + 1, start:start + take] += right[:take]
+            if take < len(left):
+                keep.append([0, channel, left[take:], right[take:]])
+        self._audio_tails = keep
 
     def _take_input(self, now, dac_delay):
         """Collect microphone audio: into the take being recorded, and to the speakers when monitoring."""

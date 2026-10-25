@@ -61,6 +61,12 @@ class _Reader:
     def uint32(self):
         return struct.unpack("<I", self.bytes(4))[0]
 
+    def check_count(self, count):
+        """A count of items no table of contents this size can hold is damage (the review of 25 Oct 2026: a huge one
+        asked for more memory than any computer has, instead of saying the archive is damaged)."""
+        if count > len(self.data):
+            raise ArchiveError("the archive's table of contents is damaged")
+
     def bits(self, count):
         result, mask, current = [], 0, 0
         for _ in range(count):
@@ -73,6 +79,7 @@ class _Reader:
 
     def defined_bits(self, count):
         """'All defined' byte, then (if not all) a bit for each item."""
+        self.check_count(count)
         all_defined = self.byte()
         return [True] * count if all_defined else self.bits(count)
 
@@ -326,6 +333,7 @@ def _read_header(fh):
 
 
 def _read_files(r, count):
+    r.check_count(count)
     names = [""] * count
     empty = [False] * count
     while True:
@@ -355,7 +363,8 @@ def list_files(path):
     """[Entry] for every file with data in the archive (folders and empty files are left out)."""
     try:
         return _list_files(path)
-    except (lzma.LZMAError, zlib.error, EOFError, struct.error, IndexError, StopIteration) as exc:
+    except (lzma.LZMAError, zlib.error, EOFError, struct.error, IndexError, StopIteration, ValueError) as exc:
+        # ValueError: a file name that is not text, for one (UnicodeDecodeError, the review of 25 Oct 2026)
         raise ArchiveError("the archive is damaged ({})".format(exc)) from None
 
 
@@ -426,7 +435,8 @@ def extract_file(path, entry, target, progress=None):
         if entry.crc is not None and crc & 0xFFFFFFFF != entry.crc:
             raise ArchiveError("{} is damaged (its check sum does not match)".format(entry.name))
         os.replace(temp, target)
-    except (lzma.LZMAError, zlib.error, EOFError, struct.error) as exc:
+    except (lzma.LZMAError, zlib.error, EOFError, struct.error, IndexError, ValueError) as exc:
+        # IndexError: sizes missing from the table of contents, for one (the review of 25 Oct 2026)
         if os.path.exists(temp):
             os.remove(temp)
         raise ArchiveError("{} is damaged and cannot be unpacked ({})".format(entry.name, exc)) from None
