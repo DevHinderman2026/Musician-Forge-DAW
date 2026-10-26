@@ -277,8 +277,9 @@ def main(argv=None):
             from .pack_downloader import PackDownloader   # downloads a guitar pack the installer could not
             from .ui.common import say_after
             # said two seconds after it arrives, queued: it must not talk over the first window opening (screen
-            # reader audit A4, 23 Oct 2026)
-            PackDownloader(engine, lambda text: wx.CallAfter(say_after, session.announce, text, 2000)).start()
+            # reader audit A4, 23 Oct 2026), and kept: words said meanwhile never take its place (26 Oct 2026)
+            PackDownloader(engine, lambda text: wx.CallAfter(say_after, session.announce, text, 2000,
+                                                              keep=True)).start()
 
     gc.collect()
     gc.freeze()  # keeps garbage collection pauses away from the audio

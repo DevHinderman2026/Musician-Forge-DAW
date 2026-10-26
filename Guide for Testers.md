@@ -39,7 +39,7 @@ On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the 
 5. Run "Start Musician Forge" the same way (if it says the last Install or Update did not finish, run Install or Update again). It opens on the start screen: choose New project. A new project starts with no tracks, and the New track list opens by itself: press Enter on Instrument, choose Grand Piano and press Enter, so the steps below have a piano track to play.
 6. In a project, press F1 for every keyboard shortcut (on the start screen, use the Help menu button).
 
-To update to a newer test version, put its files in the same folder and run "Install or Update Musician Forge" again. Your projects are kept (they are in Documents, Musician Forge Songs).
+To update to a newer test version, put its files in the same folder and run "Install or Update Musician Forge" again. Your projects are kept (they are in Documents, Musician Forge Songs). Update Musician Forge before you open a project someone else made, so it plays exactly as they heard it.
 
 ## Part 1: Getting around (5 minutes)
 
@@ -359,21 +359,21 @@ Last, add a Reverb with the Hall preset to the pad's track and, while the song p
 
 ### Step Z.8: A loop keeps looping
 
-**What to check:** Fill the chord track with chords at bars 1 and 2 only. Add a Spark Pad region over bars 1 and 2 and, with Alt+Enter, make it play 4 times. In the Tracks list, on the pad's track, press Control+G and go to bar 5, press R, play a few notes and press R again in bar 6. Then add a 2-bar drummer region that plays 8 times, open Sections (Song group), select Section 1 and press Alt+A. Last, press Enter on a looping player region and choose Turn into notes.
+**What to check:** Fill the chord track with chords at bars 1 and 2 only. Add a Spark Pad region over bars 1 and 2 and, with Alt+Enter, make it play 4 times. In the Tracks list, on the pad's track, press Control+G and go to bar 5, press R, play a few notes and press R again in bar 6. Then open Sections (Song group) and press Alt+A on Section 1, so the song has two sections. Add a 2-bar drummer region (Control+Shift+R, How long "Bars I choose", from bar 1 to bar 2) and make it play 8 times (Alt+Enter), then in Sections select Section 1 and press Alt+A again. Last, press Enter on a looping player region and choose Turn into notes.
 
-**What to expect:** Your notes replace bars 5 and 6, and the pad carries on in bars 7 and 8 exactly as the loop played; since the chord track has no chords there, it is written out as notes, and Musician Forge says "The loop carries on after the recording as notes, so it sounds as it did". The drummer's loop keeps playing on both sides of the new section and stays a rhythm player. Turn into notes writes out every repeat you hear, as one longer region that no longer loops. Each of these is one Control+Z.
+**What to expect:** Your notes replace bars 5 and 6, and the pad carries on in bars 7 and 8 exactly as the loop played; since the chord track has no chords there, it is written out as notes, and Musician Forge says "The loop carries on after the recording as notes, so it sounds as it did". The second Alt+A says "Added Section 2: bars 9 to 16, 8 bars. The song is now 24 bars long.": the drummer plays bars 1 to 8, the new section's bars are empty for it, and its repeats carry on from bar 17, still a rhythm player, so the loop keeps playing on both sides of the new section. Turn into notes writes out every repeat you hear, as one longer region that no longer loops. Each of these is one Control+Z.
 
 ### Step Z.9: The drummer's foot and the percussion
 
-**What to check:** Add a funk drummer, set its Intensity to 90 and play. Then add a rock drummer, turn on its Shaker, tambourine, cowbell and claves with Space, set Fill amount to 100 and play. Last, add a pop drummer and play.
+**What to check:** Add a funk drummer, set its Intensity to 80 and play. Then add a rock drummer, turn on its Shaker, tambourine, cowbell and claves with Space, set Fill amount to 100 and play. Last, add a pop drummer and play.
 
-**What to expect:** In funk the hi-hat opens on two and four and the Hi-hat pedal waits there, so the open hi-hat rings instead of being cut off by the foot. The rock tambourine plays every one of its notes, through the fills too, as if a second player had it. The pop drummer's own tambourine on two and four is heard now.
+**What to expect:** At Intensity 80 the funk hi-hat is half open, and the Hi-hat pedal holds it there instead of cutting it off, so it rings; the pedal's line in Kit pieces reads "Hi-hat pedal: on, the foot waits for the half-open hi-hat". (From Intensity 85 the hi-hat opens on every stroke and the foot closes it on two and four: see Step Z.17.) The rock shaker plays every one of its sixteenth notes, through the fills too, as if a second player had it. The pop drummer's own tambourine, which plays now and then on sixteenth notes, is heard now.
 
 ### Step Z.10: The Ride in metal variations 3 and 4
 
 **What to check:** Add a metal drummer and choose variation 3. In its Kit pieces, press Space on the Ride, then Space on the Ride again. Then press Space on the Hi-hat, Space on the Ride, Space on the Ride again, and Space on the Hi-hat again.
 
-**What to expect:** Space on the Ride says "Ride on with eighth notes, crash off", and the Crash cymbals line reads "Crash cymbals: off, the ride keeps time"; Space again says "Ride off, crash on". With the Hi-hat on first, the Ride says "Ride on with the hi-hat's rhythm, hi-hat off", then "Ride off, hi-hat on", and turning the Hi-hat off says "Hi-hat off, crash on". One cymbal always keeps time, and each change is one Control+Z.
+**What to expect:** Space on the Ride says "Ride on with eighth notes, crash off", and the Crash cymbals line begins "Crash cymbals: off, the ride keeps time"; Space again says "Ride off, crash on". Then the Hi-hat says "Hi-hat on with eighth notes, crash off", the Ride says "Ride on, hi-hat off" (it keeps the rhythm it was given), then "Ride off, hi-hat on", and turning the Hi-hat off says "Hi-hat off, crash on". One cymbal always keeps time, and each change is one Control+Z.
 
 ### Step Z.11: Following a track that stops
 
@@ -411,6 +411,126 @@ Last, add a Reverb with the Hall preset to the pad's track and, while the song p
 
 **What to expect:** The new section is empty: the loop stops where the song ended before, and the new bars are yours to fill. Control+Z puts everything back as it was. Making the last section longer leaves its new bars empty too.
 
+### Step Z.17: The foot under a wide-open hi-hat
+
+**What to check:** Add Anvil with the style Hard rock ("Acoustic: Hard rock" in the Style list). In its Kit pieces, press Space on the Hi-hat pedal and play. Choose variation 4, then variation 5, and play each. Then add a rock drummer, press Space on its Hi-hat pedal, press Enter on the Hi-hat, choose "Open" in How open the hi-hat is, and play. Last, add another rock drummer, press Space on its Hi-hat pedal, choose "Open on every beat" in the Hi-hat's Pattern list, and play.
+
+**What to expect:** Space says "Hi-hat pedal: on, the foot on two and four". In hard rock the hand plays the hi-hat open on its eighth notes, and now the foot is heard: on two and four it closes the hi-hat with a short closed sound, and the open hi-hat rings on the other strokes. The same in variations 4 and 5. Before 0.9.11 the foot played on two and four, but the hand struck the hi-hat open at the same moment, so the foot was hardly heard. In rock with "open", the Hi-hat's line reads "Hi-hat: on, open": the hi-hat rings open on every stroke except on two and four, where the foot closes it. With "Open on every beat" the Hi-hat's line reads "Hi-hat: on, pattern changed": it rings open on one and three, and the foot closes it on two and four. Each change is one Control+Z.
+
+### Step Z.18: The foot waits for a half-open hi-hat
+
+**What to check:** On a rock drummer, press Space on its Hi-hat pedal. Press Enter on the Hi-hat, choose "Half open" in How open the hi-hat is, close the window, listen to the Hi-hat pedal's line and play. Then add a funk drummer (its Hi-hat pedal is on already), set its Intensity to 84 and listen to the Hi-hat pedal's line in Kit pieces. Then set Intensity to 85 and listen again.
+
+**What to expect:** The Hi-hat's line reads "Hi-hat: on, half open", and the pedal's line reads "Hi-hat pedal: on, the foot waits for the half-open hi-hat". Every stroke sounds half open, and no foot cuts it off. In funk, Intensity 84 (half open by intensity, from 70) gives the same line. At 85 (open by intensity, from 85) the line reads "Hi-hat pedal: on, the foot on two and four", and the foot closes the open hi-hat on two and four, as in Step Z.17. Where the foot waits on only some of its steps, the line says so. A metal drummer with its pedal on and the hi-hat half open, for example, reads "Hi-hat pedal: on, the foot on two and four, waiting where the hi-hat is half open".
+
+### Step Z.19: What the octave means in each layout
+
+**What to check:** On a piano track, press Control+4 (the keyboard controls) and Tab to the Octave choice. Press Control+2 and B to go to the Scale layout, and look at the Octave choice again. Then press B again for Chord strips and look once more. Open the Keyboard menu's Octave submenu in each layout. Last, in Chord strips, press Control+2 and Z until it says "Lowest octave", press Control+J, and play A and then 1.
+
+**What to expect:** The Octave choice and the Octave submenu say what the octave does in the layout you are in, as Control+J does. In the Piano layout: "3 (the A key plays C 3)". In the Scale layout: "3 (the A key plays the scale's root note)". In Chord strips: "3 (chords in octave 3, bass notes in octave 2)". The same octave stays chosen. Before 0.9.11 every layout said "the A key plays C 3". In the lowest octave of Chord strips the choice reads "-2 (chords in octave -2, number keys play the lowest note)". Control+J says "Chord strips, C major. Octave -2, the chords play in octave -2, and the number keys play each chord's lowest note", then the velocity and the chords. A plays the C major chord very low. 1 plays its lowest note, C -2, on its own.
+
+### Step Z.20: The octave on a drum kit
+
+**What to check:** Add a drum kit track (Control+T, Instrument, a kit from the Drum Kits family). Choose octave 3 in the Keyboard menu's Octave submenu. Press Control+2, then press X, then Z, then Control+J. Choose octave 5 in the Octave submenu. Press A at each octave. Then select a piano track and press X and Z there.
+
+**What to expect:** Choosing octave 3 says "Octave 3. The Drum layout does not use the octave". X says "Octave 4. The Drum layout does not use the octave", and Z says "Octave 3. The Drum layout does not use the octave". Control+J says "Drum layout. Octave 3. The Drum layout does not use the octave.", then the velocity. The Octave submenu and the Octave choice read, for example, "3 (the Drum layout does not use the octave)". Choosing octave 5 says "Octave 5. The Drum layout does not use the octave". A plays the kick at every octave. On the piano track, X and Z say just the octave, for example "Octave 6" and "Octave 5" after octave 5. Before 0.9.11 a drum kit's words said "the A key plays C 3".
+
+### Step Z.21: Escape on the start screen
+
+**What to check:** Close the project (Control+W). On the start screen, press Browse projects, then Escape. Open the Help menu button's menu, then press Escape. Press New project, then Escape in its window. Press Shift+Escape. If you use Magnifier, press Windows+Escape. Last, press Escape on its own, then start Musician Forge again.
+
+**What to expect:** Escape in Browse projects, in the Help menu and in the New project window closes only that window, and you are back on the start screen. Shift+Escape does nothing. Windows+Escape is Windows' own shortcut (it closes Magnifier), and Musician Forge stays open. Escape on its own closes Musician Forge, as the Quit button does. Before 0.9.11 Escape did nothing on the start screen.
+
+### Step Z.22: The reverb's settings while the song plays
+
+**What to check:** Add a Reverb with the Hall preset to a track that plays long chords (a Spark Pad region, say), and play the song. Open the reverb's settings (Control+F, then Enter on it). While the song plays, arrow up and down quickly in Decay time in seconds, then in Brightness in percent, Pre-delay in milliseconds and Stereo width in percent. Then type a new Decay time.
+
+**What to expect:** Each change is heard at once and smoothly, with no click, crackle or zipper sound, even when you arrow quickly. Decay, Brightness and Stereo width glide to the new setting in a fiftieth of a second. A new Pre-delay fades from the old one to the new one, with no bend in the pitch. Before 0.9.11 these switched at once and could click.
+
+### Step Z.23: Echoes and reverb ringing on after the music stops
+
+**What to check:** Record a short chord at bar 1 on a piano track. Add a Delay with the Dub echo preset to that track and open its settings (Control+F, then Enter on it). Press Alt+P to play, and Alt+P again just after the chord. While the echoes still sound, go to Feedback in percent (how many echoes) and press Home (0). Then press OK, remove the delay (Delete in Effects), add a Reverb with the Cathedral preset and open its settings. Play and stop the same way, and a few seconds later, while it still rings, set Decay time in seconds to 1.
+
+**What to expect:** The echoes are not cut off: the echo already on its way comes once more, then the echoes stop. The cathedral's ringing fades out quickly and smoothly. Before 0.9.11 both stopped dead the moment you turned them down.
+
+### Step Z.24: Adding things at the end of the song
+
+**What to check:** On a drummer track whose region fills the song, turn on All sections and let the song play to its end ("End of song, stopped. Bar 9, beat 1"). Open Tempo changes (Control+Shift+T), press Alt+A, listen to the bar and press Escape. Do the same in Time signature changes (Control+Shift+M), Key changes (Control+Shift+K), the Chord track (Control+Shift+H), an automation lane's points (Control+Shift+U, then Enter on a lane; if there is none, Alt+A and Volume add one) and the Event list (Control+L). Press Control+G and listen to the bar. Then press P in the Regions list on the drummer's region.
+
+**What to expect:** Every Add window, and Go to bar, starts at bar 8, the last bar, where what you add is heard. The playhead stays at the end. P says "There is no empty stretch at the end of the song. Add a section first.". Where the bars before the end are empty, P fills them instead. With a drummer region in bars 1 and 2 only, for example, P says "Added a rhythm player region on Anvil (drums), bars 3 to 8: Anvil, drums, Rock, variation 1 of 6".
+
+### Step Z.25: The song's new length
+
+**What to check:** With the song played to its end as in Step Z.24, copy the drummer's 8-bar region (Control+C in the Regions list) and paste it (Control+V). Press Control+Z. Import an audio file of about 3 seconds (Control+Shift+I). Press Control+Z. Then make the drummer's region play 2 times (Alt+Enter, Plays this many times in a row: 2) and press Control+D on it.
+
+**What to expect:** Paste says "Pasted 1 region at Bar 9, beat 1. The song is now 16 bars long.": the region goes after the last bar, and the last section grows to hold it. Import says the same at its end, for example "Imported Idea.wav on the new track Idea, 3 seconds, at Bar 9, beat 1. The song is now 10 bars long." Each Control+Z puts the song back to 8 bars. Playing 2 times ends "loops 2 times, to bar 17. The song is now 16 bars long.", and Duplicate says "Duplicated 1 region, starting at Bar 17, beat 1. The song is now 32 bars long." Adding or copying a section, or making one longer with F2 in Sections, says it too: in an 8-bar song, Alt+A in Sections says "Added Section 2: bars 9 to 16, 8 bars. The song is now 16 bars long." An edit that does not make the song longer says nothing more. Before 0.9.11 nothing said that the song had grown.
+
+### Step Z.26: A drummer builds where a loop is cut
+
+**What to check:** Open Sections and make Section 1 16 bars long (F2). Add Anvil with the style Rock on a new track (Control+Shift+R), with How long set to "Bars I choose", from bar 1 to bar 4. Select the drummer's track and press Control+Shift+R again: Rock, Where "On the selected track", bars 11 to 14. In the Regions list, press Enter on this second region and set its Intensity to 100. Then press Alt+Enter on the first region, tick "Loop until the next region (or the end of the song)" and press Enter. Turn on All sections and play from bar 7.
+
+**What to expect:** The first region's line ends "loops until the next region, 3 times, to bar 11": it plays twice, then bars 9 and 10, the first half of a third time. In bars 9 and 10 the hi-hat builds into the louder drummer: closed, then half open, then wide open into bar 11, as a drummer region that ends at bar 11 would. Before 0.9.11 the build was cut off with the rest of the repeat, so there was none. Turn into notes (Enter on the first region, the Turn into notes button, then Yes) writes the build out as it is heard.
+
+### Step Z.27: A bass leads in where a loop is cut
+
+**What to check:** In the Chord track (Control+Shift+H), add C major at bar 1 and A minor at bar 4 (Alt+A for each). Add Bellows with the style Walking on a new track, How long "Bars I choose", bars 1 to 2. Select its track and add Bellows, Walking again, Where "On the selected track", bars 4 to 7. Press Enter on this second region and set its Complexity to 80. Press Alt+Enter on the first region, tick "Loop until the next region (or the end of the song)" and press Enter. Play from bar 2.
+
+**What to expect:** The first region's line ends "loops until the next region, 2 times, to bar 4": it plays bars 1 and 2, then bar 3, the first half of its second time. Bar 3's last note now leads into the A minor at bar 4 (a G, a step below A), as a region that ends at bar 4 would, and nothing of the loop sounds on into bar 4. Before 0.9.11 bar 3 played the loop's first bar unchanged, ending on the A sharp that leads back to C. Keys, synth and guitar players lead in the same way.
+
+### Step Z.28: A loop says where it now plays to
+
+**What to check:** On one track, record a 2-bar part in bars 1 and 2, and a short part in bar 5 (press R again before bar 6). Name the first region Riff (F2). Press Alt+Enter on Riff, tick "Loop until the next region (or the end of the song)" and press Enter. Arrow to the second region, press Delete, then Yes. Press Control+Z. Press Alt+Right on the second region, then Alt+Left (the nudge step is a quarter note). Move it to bar 7 with the Region group's Move region button. Copy it (Control+C), go to bar 3, beat 2 (Control+G), and paste (Control+V). Arrow to Riff.
+
+**What to expect:** Riff's line ends "loops until the next region, 2 times, to bar 5". Delete says "Deleted 1 region. Riff now loops to bar 9", the end of the song. Alt+Right says "Bar 5 beat 2. Riff now loops to bar 5 beat 2", and Alt+Left says "Bar 5. Riff now loops to bar 5". Move region says "Moved 1 region to Bar 7, beat 1. Riff now loops to bar 7". Paste says "Pasted 1 region at Bar 3, beat 2. Riff now loops to bar 3 beat 2". Riff's line now ends "loops until the next region, 2 times, to bar 3 beat 2": where a loop stops inside a bar, the line says the bar and the beat. Before 0.9.11 nothing said where the loop went, and the line said the next bar ("to bar 4"). Mute, Split, Join and Control+Z say nothing more.
+
+### Step Z.29: Split and Join on a looping region
+
+**What to check:** Record a 2-bar part in bars 1 and 2, name its region Riff (F2), and make it play 4 times (Alt+Enter, Plays this many times in a row: 4). Go to bar 2 (Control+G), press S in the Regions list, arrow through the list and play. Turn on Select (Shift+F8), press Space on the second and third regions, and press J. Press Control+Z twice and turn Select off (Shift+F8). Go to bar 6 and press S again.
+
+**What to expect:** At bar 2, S says "Split at Bar 2, beat 1. 2. Riff, Section 1: starts at bar 2, ends at bar 3, 1 bar long, 4 notes. The loop carries on from bar 3" (with your number of notes). The list has Riff in bar 1, Riff in bar 2, and Riff from bar 3, which "loops 3 times, to bar 9". You hear the riff 4 times, as before. J says "Joined. 2. Riff, Section 1: starts at bar 2, ends at bar 9, 7 bars long", the notes, and "The loop is written out as notes, so it sounds as it did". At bar 6, S says "Split at Bar 6, beat 1. 2. Riff, Section 1: starts at bar 6, ends at bar 7, 1 bar long", the notes, and "The loop carries on from bar 7". The first region's line then ends "loops 3 times, to bar 6". Before 0.9.11, a split in the repeats said "Move the playhead inside the region to split it there", and a split in the first time made the repeats go silent. Each is one Control+Z.
+
+### Step Z.30: A looping recording and section edits
+
+**What to check:** Open Sections, make Section 1 4 bars long (F2) and press Alt+A (Section 2, bars 5 to 12). With the playhead at bar 1, import an audio file of about 3 seconds (Control+Shift+I) and make it play 4 times (Alt+Enter). In Sections, select Section 1 and press Alt+A. Turn on All sections and play from bar 3. Press Control+Z. Delete Section 2 (Delete, then Yes) and play. Press Control+Z. Select Section 1 and press Control+D. Press Control+Z. If you have a microphone, make the recording play 8 times and record over bars 5 and 6 on the same track.
+
+**What to expect:** For a 3-second file, the recording's line ends "loops 4 times, to bar 7". Alt+A says "Added Section 2: bars 5 to 12, 8 bars. The song is now 20 bars long. The looping recording is cut into pieces, so it sounds as it did". The recording plays as before to the end of bar 4, the new section is silent for it, and at bar 13 it carries on exactly where it left off, in time with the music. Deleting Section 2 says "Deleted Section 2. The looping recording is cut into pieces, so it sounds as it did". The recording now stops at the end of bar 4. Control+D says "Copied to Section 3: bars 13 to 16, 4 bars. The song is now 16 bars long. The looping recording is cut into pieces, so it sounds as it did", and the copy holds what the loop plays in bars 1 to 4. After the take the same words come, and the recording carries on after it, from bar 7. Before 0.9.11 the recording played straight on through a new section, and the bars after a newer take went silent. Each change is one Control+Z.
+
+### Step Z.31: Moved and copied regions keep their feel
+
+**What to check:** Use headphones. Make Section 1 12 bars long (Sections, F2). Add a rock drummer with How long "Bars I choose", bars 1 to 4, and play it. Move it to bar 5 (the Region group's Move region button) and play it again. Copy it (Control+C), go to bar 9 (Control+G), paste (Control+V) and play the copy. Then add a rock drummer on a new track at bars 2 to 3 and make it play 4 times (Alt+Enter). On its track, record a few notes in bars 6 and 7 (Control+G to bar 6, R, play, then R in bar 7), and listen to bars 8 and 9.
+
+**What to expect:** The moved region and the copy sound exactly as the region did where it was, down to the drummer's small pushes and pulls in time. The recording says "The recording replaced the rhythm player in bars 6 to 7. Control+Z brings it back". Bars 8 and 9 then play exactly what the loop played there, and their region is still a rhythm player. Before 0.9.11 each of these played a feel of its own, with notes up to about 15 thousandths of a second off, so it sounded a little different. Listen closely: the difference is small. Reforge still gives a region a new performance, with a new feel.
+
+### Step Z.32: Pitch correction on a trimmed recording
+
+**What to check:** On an audio track, record yourself holding one steady note, an E flat, from bar 1 to the end of bar 4: sing it, or play it into the microphone. Add a key change to E flat major at bar 3 (Control+Shift+K, Alt+A). Add Pitch correction with the Robotic preset to the audio track (Control+F, Alt+A). In the Regions list, press Alt+Enter on the recording, set Starts at bar to 2 and press Enter. Play from bar 2.
+
+**What to expect:** You hear "Trimmed", then the recording's line. In bar 2, where the song is still in C major, your E flat is pulled onto a note of C major (D or E). From bar 3, where the key changes, it is your own E flat. Before 0.9.11, a recording trimmed at its start changed key too early, by as much as was trimmed off: here at bar 2, a bar early. A recording saved before this change plays exactly as it did until you change it (trim it, move it, or change the track's pitch correction).
+
+### Step Z.33: The foot in other time signatures
+
+**What to check:** Add a rock drummer and, in its Kit pieces, press Space on the Hi-hat pedal, and play. Then set the time signature to 3/4 (Control+Shift+M), read the Hi-hat pedal's line in Kit pieces and play. Do the same in 6/8, in 3/8 and in 2/8.
+
+**What to expect:** Space says "Hi-hat pedal: on, the foot on two and four". In 3/4 the line reads "Hi-hat pedal: on, the foot on two and three", in 6/8 "Hi-hat pedal: on, the foot on two" (the second of the bar's two beats), and in 3/8 "Hi-hat pedal: on, the foot on two and three", with the foot on the second and third eighths. You hear the foot where the line says. In 2/8 the line reads "Hi-hat pedal: on, the foot rests in 2/8", and the foot does not play. Before 0.9.11 the line said "the foot on two and four" whatever the time signature, and in 3/8 the foot did not play.
+
+### Step Z.34: Short notes through Fuzz
+
+**What to check:** On a piano track, add a Distortion with the Fuzz preset (Control+F, Alt+A). Record a few short notes with rests between them and play them back. Then choose the Dubstep growl preset and play again. Last, remove the Distortion, add an EQ with the Bass boost preset and play once more.
+
+**What to expect:** Each note ends cleanly, with no click as it stops, and the next note starts cleanly, with nothing left over from the note before. Before 0.9.11, while the song played, a note that ended quickly through these could end with a click. This is while playing: exports are unchanged by it.
+
+### Step Z.35: Join with one region muted
+
+**What to check:** On one track, record a short part in bar 1 and another in bar 2, and name their regions Riff 1 and Riff 2 (F2 in the Regions list). Press M on Riff 2. Turn on Select (Shift+F8), press Space on both regions and press J. Then press M, and press J again.
+
+**What to expect:** The first J says "Riff 2 is muted and Riff 1 is not. Mute or unmute them so they match, then join.", and nothing changes: both regions stay selected. M then mutes both ("Muted 2 regions"), and J joins them into one region, still muted. When the two regions have the same name, as after a split, the words say where each starts, for example "Riff at bar 2 is muted and Riff at bar 1 is not. Mute or unmute them so they match, then join." Before 0.9.11 the joined region took the first region's setting, so a muted part could start playing, or a part you heard could go quiet.
+
+### Step Z.36: Said once
+
+**What to check:** Open Automation (Control+Shift+U) on a track with a Volume lane and press Space on the lane, then press the Turn lane on or off button. Press Enter on the lane, add a point with Alt+A and press OK, then press Enter on it, change its value and press OK. In the Chord track (Control+Shift+H), add a chord change with Alt+A and press OK, then press Enter on it and press OK. In Chord strips (Control+Shift+J), press the Change chord button, choose another chord and press OK. In Effects (Control+F), press the Turn on or off button. Last, open a reverb's settings and arrow Decay time in seconds down to 1.
+
+**What to expect:** After each, the line you are on is read once, with its new words, for example "Volume: 1 point, off (the track's own setting is used)", "Bar 2, beat 1: volume 60, stays there to the end", "Bar 3, beat 1: D minor", "A: D minor" or "1. Reverb, Medium room, off". Decay time says "1 second". Before 0.9.11 each of these lines was said twice, and a number box said "1 seconds".
+
 ## New in 0.9.10
 
 ### Step Y.1: A kick under every crash
@@ -435,7 +555,7 @@ Last, add a Reverb with the Hall preset to the pad's track and, while the song p
 
 **What to check:** In the Regions list, press the Region group's Move region button and type bar 1, beat 9. Then open Tempo changes (Song group), add changes at bar 5 and bar 9, edit the one at bar 9 and give it bar 5, beat 1.
 
-**What to expect:** Move region says "Bar 1 has 4 beats, so the beat must be from 1 to 4", and the window stays open with what you typed, so you can put it right. The tempo change is not moved: it says "Another tempo change is already at bar 5, beat 1, so this one was not moved", and the window stays open. Nothing is lost.
+**What to expect:** Move region says "Bar 1 has 4 beats, so the beat must be from 1 to 4", and the window stays open with what you typed, so you can put it right. The tempo change is not moved: it says "Another tempo change is already at bar 5, beat 1, so this one was not moved. Choose another beat, or edit that one instead", and the window stays open. Nothing is lost.
 
 ## New in 0.9.9
 

@@ -19,15 +19,24 @@ SAY_AFTER_MS = 200   # long enough for the screen reader to start on what the fo
 _waiting = [None]    # the words say_after is holding back, if any
 
 
-def say_after(say, text, delay_ms=SAY_AFTER_MS):
+def say_after(say, text, delay_ms=SAY_AFTER_MS, keep=False):
     """Say `text` a moment from now, after what the screen reader reads anyway, without interrupting it (the F6
     pattern; Russell, 23 Oct 2026). For words that follow a focus move, a window opening or closing, a list being
     filled again, or a control the screen reader is reading: said at once, a screen reader reads that change and
     cuts our words off, or our words cut off its reading of the control. say(text, interrupt) is session.announce or
     a speaker's speak. While no event loop runs (the automated tests), it is said at once, still without
     interrupting. Newer words replace words still waiting: keys pressed quickly (F6, an arrow in a list) say only
-    where they ended, never a stale step after it."""
+    where they ended, never a stale step after it.
+
+    keep=True is for words that must be heard whatever is said next, such as the guitar packs' news, said from
+    the background while you work: they wait on their own, and no newer words take their place (26 Oct 2026:
+    a window's or a list's words within the two seconds swallowed a pack's problem)."""
     if not text:
+        return None
+    if keep:
+        if _loop_running():
+            return wx.CallLater(delay_ms, say, text, False)
+        say(text, False)
         return None
     waiting = _waiting[0]
     _waiting[0] = None
@@ -301,9 +310,19 @@ class DecimalField(wx.TextCtrl):
         new = max(self.min_value, min(self.max_value, round(current + steps * self.step, 6)))
         self.ChangeValue(self._text(new))
         self.SetInsertionPointEnd()
-        say_step(self, self._text(new) + (" " + self.unit if self.unit else ""))
+        text = self._text(new)
+        say_step(self, text + (" " + unit_words(text, self.unit) if self.unit else ""))
         if self.on_change is not None:
             self.on_change(self.GetValue())
+
+
+def unit_words(text, unit):
+    """The unit as it is said after the number `text`, agreeing with it as an effect's settings say it
+    (effects.Param.spoken): "1 second" and "1 millisecond", but "2 seconds", "0.5 milliseconds" and "0 seconds";
+    dB, hertz and "to 1" are the same for one and many (a number box said "1 seconds" until 26 Oct 2026)."""
+    if text in ("1", "-1") and unit.isalpha() and unit.endswith("s"):
+        return unit[:-1]
+    return unit
 
 
 def spin_ctrl(parent, min_value=0, max_value=100, value=0, label=""):

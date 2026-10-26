@@ -116,8 +116,10 @@ class EffectsDialog(wx.Dialog):
     def toggle(self):
         index = self.selected()
         if index is not None:
-            # in the list, the effect's line is read again with "on" or "off": not said twice (audit B2)
-            self.session.set_effect_on(self.track_id, index, speak=wx.Window.FindFocus() is not self.list)
+            # the list reads the effect's line again with "on" or "off": not said twice (audit B2). From the Turn on or
+            # off button (or Alt+O) too, since _run gives the list the focus and the screen reader reads it there with
+            # its new line; the button said the effect's words again after it (the keyboard monkey, 26 Oct 2026)
+            self.session.set_effect_on(self.track_id, index, speak=False)
             self.refresh(index)
 
     def move(self, delta):

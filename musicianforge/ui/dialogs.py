@@ -392,8 +392,9 @@ class ChangesDialog(wx.Dialog):
         show_items(self.list, [self._describe(i) for i in items], index)   # read once (screen reader audit B1)
 
     def _current_bar(self):
+        """Where Add starts: the playhead's bar, or at the end of the song the last bar (Session.adding_tick)."""
         tl = self.session.song.timeline
-        return tl.tick_to_bar(self.session.position_tick())
+        return tl.tick_to_bar(self.session.adding_tick())
 
     def _open_editor(self, item=None):
         tl = self.session.song.timeline
@@ -540,7 +541,8 @@ class NoteDialog(wx.Dialog):
         self.track_id = track_id
         tl = session.song.timeline
         if note is None:
-            tick = session.position_tick() if at_tick is None else at_tick
+            # at the playhead, or at the end of the song the last bar's start (Session.adding_tick)
+            tick = session.adding_tick() if at_tick is None else at_tick
             note = Note(tick, PPQ, 60, session.typing.velocity)
         bar, beat = tl.tick_to_position(note.tick)
         key = tl.key_at_tick(note.tick)

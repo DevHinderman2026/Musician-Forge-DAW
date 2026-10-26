@@ -20,6 +20,8 @@ def _place(tick, old, new):
 def keep_bars(song, old):
     """Move everything in `song` (whose timeline has just changed from `old`) so it keeps its bar and its place in
     the bar. Returns how many notes had no place and were left out."""
+    from . import players
+
     new = song.timeline
     lost = 0
 
@@ -42,6 +44,8 @@ def keep_bars(song, old):
             start, _ = place(region.start)
             end, _ = place(region.end)
             if end > start:
+                if region.player and start != region.start:      # (it keeps its feel: players.keep_feel)
+                    region.player = players.keep_feel(region.player, region.start, start)
                 region.start, region.end = start, end
                 regions.append(region)
         track.note_regions = regions

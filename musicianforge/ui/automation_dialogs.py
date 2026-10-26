@@ -139,7 +139,10 @@ class AutomationDialog(_ListWindow):
     def toggle(self):
         index = self.selected(self.count())
         if index is not None:
-            self.session.set_lane_on(self.track_id, index)
+            # the list, where the focus ends (from the button too), reads the lane's new line with "on" or "off", and
+            # that line is all the session would say: not said twice (as the Effects window's Space; the keyboard
+            # monkey, 26 Oct 2026)
+            self.session.set_lane_on(self.track_id, index, speak=False)
             self.refresh(index)
 
     def remove(self):
@@ -246,7 +249,7 @@ class LanePointsDialog(_ListWindow):
             enable_keeping_focus(self.buttons[key], bool(count), self.list)
 
     def add(self):
-        tick = self.session.position_tick()
+        tick = self.session.adding_tick()      # the playhead, or at the end of the song the last bar's start
         value = self.session.lane_value_at(self.track_id, self.lane_index, tick)
         with PointDialog(self, self.session, self.track_id, self.lane_index, tick, value, True,
                          title="Add automation point") as dlg:
@@ -258,11 +261,13 @@ class LanePointsDialog(_ListWindow):
         """Make the point from what is typed in its window; inside ask_values, so a point the song refuses (moved onto
         another point, or one past the lane's limit) brings the same window back with everything typed still in it,
         instead of its error coming after the window has closed (the review of 25 Oct 2026). A new point at the
-        moment of one already there asks first (_ask_before_replacing)."""
+        moment of one already there asks first (_ask_before_replacing). The list then lands on the point, and the
+        screen reader reads its line, so the session leaves those words out (speak=False; said as well, NVDA said the
+        line twice: the keyboard monkey, 26 Oct 2026) and says only what the line does not."""
         values = dlg.get_values()
         asked = replacing is None and self._ask_before_replacing(dlg, values)
         return self.session.set_point(self.track_id, self.lane_index, *values, replacing=replacing,
-                                      tick=dlg.kept_tick, asked=bool(asked))
+                                      tick=dlg.kept_tick, asked=bool(asked), speak=False)
 
     def _ask_before_replacing(self, dlg, values):
         """Add at the exact moment of a point already there would take its place (a lane keeps one point per

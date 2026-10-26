@@ -20,6 +20,7 @@ stamped with when it was captured, so a take lands where the performer heard
 the beat, whatever the sound card delays are.
 """
 
+import bisect
 import logging
 import math
 import queue
@@ -85,7 +86,8 @@ class PlaybackData:
     def __init__(self, song=None, sample_rate=48000, audio_loader=None, take_loader=None, effects_override=None,
                  notes_by_track=None):
         """audio_loader(file) returns a recording as float32 (frames, channels), or None if missing.
-        take_loader(track, region), if given, is used instead (it can hand back a pitch-corrected copy).
+        take_loader(track, region), if given, is used instead (it can hand back a pitch-corrected copy; repeat=n
+        asks for repeat n of a looping recording of rules 2, song.RECORDING_RULES: _repeat_sound).
         effects_override: {track id: effect list} to hear instead of the saved ones (while an
         effect's settings are being changed).
         notes_by_track: {track id: notes} that a track really plays (looped regions repeated, rhythm
@@ -116,7 +118,7 @@ class PlaybackData:
                                              effects.copy_effects(chain), track.id)
                 if track.is_audio:
                     if track.id in audible and (audio_loader is not None or take_loader is not None):
-                        loader = take_loader or (lambda t, r: audio_loader(r.take.file) if r.take else None)
+                        loader = take_loader or (lambda t, r, repeat=0: audio_loader(r.take.file) if r.take else None)
                         self._add_audio_track(track, loader, channel)
                     continue
                 inst = track.instrument
@@ -189,6 +191,7 @@ class PlaybackData:
             data = take_loader(track, region) if take is not None else None
             if data is None or not len(data):
                 continue
+            given = data                                      # (the recording as the loader gave it: _repeat_sound)
             data = data[region.offset:]                       # trimmed at the start
             if region.length:
                 data = data[:region.length]                   # and at the end
@@ -200,22 +203,44 @@ class PlaybackData:
             gain = 10.0 ** (region.gain_db / 20.0)
             count, stop = arrangement.audio_region_repeats(track, order, self.timeline, song_end)
             stop_sample = self.tick_to_sample(stop)
+            ready = {}                                        # (rules 2: _repeat_sound)
             for k in range(count):                            # a looped recording plays again and again
                 begin = start + k * len(data)
                 if begin >= stop_sample and k:
                     break
-                piece = data[:max(0, stop_sample - begin)] if (k or count > 1) else data
+                sound = data if not k or getattr(region, "rules", 1) < 2 else \
+                    self._repeat_sound(track, region, take_loader, k, given, data, ready)
+                piece = sound[:max(0, stop_sample - begin)] if (k or count > 1) else sound
                 if len(piece):
                     placed.append((region.layer, order + k * 1e-3, begin, piece, gain))
-        covered = []  # sample ranges already taken by newer recordings
+        covered = _Covered()  # sample ranges already taken by newer recordings
         for _layer, _order, start, data, gain in sorted(placed, key=lambda p: (p[0], p[1]), reverse=True):
             end = start + len(data)
-            for a, b in _uncovered(start, end, covered):
+            for a, b in covered.uncovered(start, end):
                 # (song sample where this part starts, its samples, gain, gain, track, the whole
                 # recording, offset into it, channel)
                 self.audio.append((a, data[a - start:b - start], gain, gain, track.id, data, a - start, channel))
-            covered.append((start, end))
+            covered.add(start, end)
         self.audio.sort(key=lambda part: part[0])
+
+    def _repeat_sound(self, track, region, take_loader, k, given, first, ready):
+        """What repeat k of a looping recording of rules 2 plays (song.RECORDING_RULES; Russell, 26 Oct 2026: "Follow
+        every key change"): the take loader's recording for that repeat, whose pitch correction follows the keys where
+        the repeat plays, trimmed and at this rate as the first play (`first`, from the loader's `given`) is. A repeat
+        the loader gives the first play's recording plays that; ready: {id: (recording, sound)}, each made once, so
+        repeats in the same keys share one."""
+        sound = take_loader(track, region, repeat=k)
+        if sound is None or sound is given or len(sound) != len(given):
+            return first
+        found = ready.get(id(sound))
+        if found is None:
+            data = sound[region.offset:]
+            if region.length:
+                data = data[:region.length]
+            if self.sample_rate != AUDIO_RATE:
+                data = audiotracks.resample(data, AUDIO_RATE, self.sample_rate).astype(np.float32)
+            found = ready[id(sound)] = (sound, data)          # (the recording kept with it: its id stays its own)
+        return found[1]
 
     def tick_to_sample(self, tick):
         return int(round(self.timeline.tick_to_seconds(tick) * self.sample_rate))
@@ -306,6 +331,37 @@ def _uncovered(start, end, covered):
                 next_parts.append((c1, b))
         parts = next_parts
     return [(a, b) for a, b in parts if b > a]
+
+
+class _Covered:
+    """The sample ranges a track's newer recordings already take, kept merged and in order, so what is left of another
+    range is found at once (PlaybackData._add_audio_track). The random-edit tester, 26 Oct 2026: _uncovered went
+    through every range taken so far, so a short recording looping through a long song took time that grew with the
+    square of its repeats (two seconds for every edit at 800 bars). The same parts, in the same order, as _uncovered
+    (every range added has samples in it)."""
+
+    def __init__(self):
+        self.starts, self.ends = [], []          # the merged ranges [start, end): in order, apart, none touching
+
+    def uncovered(self, start, end):
+        parts = []
+        k = bisect.bisect_right(self.ends, start)        # the first range ending after the start
+        while k < len(self.starts) and self.starts[k] < end:
+            if self.starts[k] > start:
+                parts.append((start, self.starts[k]))
+            start = max(start, self.ends[k])
+            k += 1
+        if start < end:
+            parts.append((start, end))
+        return parts
+
+    def add(self, start, end):
+        low = bisect.bisect_left(self.ends, start)       # the ranges it overlaps or touches become one
+        high = bisect.bisect_right(self.starts, end)
+        if low < high:
+            start, end = min(start, self.starts[low]), max(end, self.ends[high - 1])
+        self.starts[low:high] = [start]
+        self.ends[low:high] = [end]
 
 
 # A channel's own reverb and chorus rest once the channel and its reverb have been quieter than this (-120 dB)
@@ -406,6 +462,7 @@ class Engine:
         self.record_offset_seconds = 0.0     # notes from the musical keyboard
         self.audio_offset_seconds = 0.0      # recordings from the microphone
         self.stop_at_end = True
+        self.live = True             # playing for the user; render_offline (exports) sets False (effects.Chain.live)
 
         # where playback loops, stops or goes quiet (set by the session, in ticks)
         self._loop_ticks = None      # (start, end): loop this range (a section)
@@ -914,7 +971,7 @@ class Engine:
         for track_id, chain_effects in wanted.items():
             chain = self._chains.get(track_id)
             if chain is None:
-                chain = self._chains[track_id] = effects.Chain(self.sample_rate)
+                chain = self._chains[track_id] = effects.Chain(self.sample_rate, live=self.live)
             chain.configure(chain_effects)
 
     def _fire(self, kind, channel, pitch, velocity):
@@ -1763,6 +1820,7 @@ def render_offline(song, synth, sample_rate=48000, block_frames=4096, tail_secon
     if fade_seconds > 0:
         tail_seconds, until_silent = 0.0, False
     engine = Engine(synth, sample_rate)
+    engine.live = False          # an export's effect chains are not live ones: no EQ and distortion ring time
     engine.metronome_on = False
     engine.stop_at_end = False
     engine.keep_levels = on_levels is not None

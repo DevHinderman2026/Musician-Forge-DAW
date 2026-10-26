@@ -35,6 +35,30 @@ def to_pcm_bytes(audio, bits=24, rng=None):
     raise ValueError("Only 16-bit and 24-bit WAV files are supported")
 
 
+def as_saved_24bit(audio):
+    """`audio` (float, shaped (frames, channels)) exactly as a 24-bit WAV file of it holds it: as float32, sample for
+    sample what read_wav gives back for the file write_wav (or WavWriter) makes of it at 24 bits. to_pcm_bytes keeps
+    each sample to a whole step of 1/8388608 (a half step rounded to the even one) within the steps a 24-bit file has,
+    and writes a sample that is not a number as silence; read_wav turns the steps back into float32 exactly.
+
+    A recording kept in memory this way plays exactly as it will once its project is opened again from the file. Until
+    now a new take played from memory as it was made, never more than half a step from its file, which nobody hears,
+    but pitch correction turned that into a difference that is heard (up to 0.012; the random-edit tester, 26 Oct
+    2026). It takes about a tenth of the time writing the file does (12 ms for a minute of stereo)."""
+    audio = np.asarray(audio)
+    if audio.dtype != np.float32:
+        audio = np.asarray(audio, dtype=np.float64)
+    # (float32 times 8388608 and rounded is exact in float32, so it gives the same steps as to_pcm_bytes in float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        steps = np.multiply(audio, audio.dtype.type(8388608.0))
+        np.round(steps, out=steps)
+        np.clip(steps, -8388608, 8388607, out=steps)
+        np.copyto(steps, 0.0, where=np.isnan(steps))
+        steps += 0.0                        # (and no -0.0: the file holds 0)
+        steps /= 8388608.0
+    return steps.astype(np.float32, copy=False)
+
+
 class WavWriter:
     """Write a WAV file in pieces (so long songs never sit in memory twice)."""
 

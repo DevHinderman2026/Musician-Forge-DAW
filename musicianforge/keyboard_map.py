@@ -75,6 +75,7 @@ CHORD_KEYS = ["a", "s", "d", "f", "g", "h", "j", "k"]   # chord strips 1 to 8
 BASS_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8"]    # the bass note of each strip
 
 OCTAVES = list(range(theory.note_octave(LOWEST_BASE), theory.note_octave(HIGHEST_BASE) + 1))  # -2 to 7
+DRUM_OCTAVE_WORDS = "The Drum layout does not use the octave"   # A is always the kick (Control+J, Z and X)
 
 
 # Musician Forge's own kits put different sounds on a few notes (see forgekit.py).
@@ -163,13 +164,22 @@ class MusicalTyping:
         self.mode = MODES[(MODES.index(self.mode) + 1) % len(MODES)] if self.mode in MODES else MODE_PIANO
         return self.mode
 
-    def describe_octave(self):
+    def describe_octave(self, drums=False):
         """'Octave 3, the A key plays C 3'. Only the Piano layout's A key plays C: in the Scale layout it plays the
         scale's root note, and in the Chord strips layout a chord with its bass an octave lower (the fifth review of
-        25 Oct 2026: in G major the A key plays G 3, and the words said C 3)."""
+        25 Oct 2026: in G major the A key plays G 3, and the words said C 3). In the lowest octave a bass note would be
+        below the lowest note, so the number keys play each chord's lowest note (Russell, 25 Oct 2026: "Play the
+        chord's lowest note"). `drums`: the Drum layout, where the octave changes nothing
+        (A is always the kick), and the words said "the A key plays C 3" (Russell, 25 Oct 2026: "Words for the
+        layout"). The Octave choice and the Keyboard menu's Octave submenu say the same (octave_choices)."""
+        if drums:
+            return "Octave {}. {}".format(self.octave, DRUM_OCTAVE_WORDS)
         if self.mode == MODE_SCALE:
             return "Octave {}, the A key plays the scale's root note".format(self.octave)
         if self.mode == MODE_CHORDS:
+            if self.octave <= OCTAVES[0]:
+                return ("Octave {}, the chords play in octave {}, and the number keys play each chord's "
+                        "lowest note".format(self.octave, self.octave))
             return "Octave {}, the chords play in octave {} with their bass notes in octave {}".format(
                 self.octave, self.octave, self.octave - 1)
         return "Octave {}, the A key plays {}".format(self.octave, theory.spoken_note_name(self.base))
@@ -272,6 +282,26 @@ class MusicalTyping:
         return list(self._held.values())
 
 
+def octave_choices(mode=MODE_PIANO, drums=False):
+    """The Octave choice's items (and the Keyboard menu's Octave submenu's), one for each of OCTAVES in order:
+    what the octave means in this layout, in the words of describe_octave (Control+J and the Status box), made short.
+    Until 25 Oct 2026 every layout said "3 (the A key plays C 3)", true only in the Piano layout (Russell: "Words
+    for the layout")."""
+    words = []
+    for octave in OCTAVES:
+        if drums:
+            meaning = "the Drum layout does not use the octave"
+        elif mode == MODE_SCALE:
+            meaning = "the A key plays the scale's root note"
+        elif mode == MODE_CHORDS:
+            meaning = ("chords in octave {}, number keys play the lowest note".format(octave) if octave <= OCTAVES[0]
+                       else "chords in octave {}, bass notes in octave {}".format(octave, octave - 1))
+        else:
+            meaning = "the A key plays C {}".format(octave)
+        words.append("{} ({})".format(octave, meaning))
+    return words
+
+
 def is_note_key(char, drums=False, mode=MODE_PIANO):
     char = (char or "").lower()
     if drums:
@@ -290,9 +320,13 @@ def strip_name(chord):
     return theory.chord_name(chord)
 
 
-def describe_chord_strips(chords):
-    """'A: C major. S: D minor. ...' for the 8 strips, then their bass keys."""
+def describe_chord_strips(chords, lowest=False):
+    """'A: C major. S: D minor. ...' for the 8 strips, then their bass keys. lowest: the lowest octave, where the
+    number keys play each chord's lowest note instead of a bass note below it (it said "the bass notes" there too, which
+    went against the words just before it; the review of the guide, 26 Oct 2026)."""
     parts = ["{}: {}".format(char.upper(), strip_name(chord)) for char, chord in zip(CHORD_KEYS, chords)]
+    if lowest:
+        return ". ".join(parts) + ". Number keys 1 to 8 play each chord's lowest note."
     return ". ".join(parts) + ". Number keys 1 to 8 play the bass notes of these chords."
 
 

@@ -80,12 +80,15 @@ class NudgeMixin:
             raise ValueError("The region is at the start of the song")
         self._check_room(track_id, indices, [(s + delta, e + delta) for s, e in spans])
         key = (track_id, "move")
+        end_bar_before = self.song.end_bar()     # (_new_length_words: nudged past the end, the song grows)
+        loops = self._loop_stops([self.regions_of(track_id)[i] for i in indices])   # (where loops stop: _loop_words)
         with self.edit("nudge regions" if len(indices) > 1 else "nudge region", merge=True, merge_key=key):
             target = self.song.track_by_id(track_id)
             chosen = [self.regions_of(track_id)[i] for i in indices]   # the same regions, in the edited song
             if target.is_audio:
                 for region in chosen:
                     region.tick += delta
+                    region.to_todays_rules()           # (moved by hand: today's rules, song.RECORDING_RULES)
                 target.sort_regions()
             else:
                 owned = [n for n in target.notes if any(r.start <= n.tick < r.end for r in chosen)]
@@ -94,12 +97,17 @@ class NudgeMixin:
                 for region in chosen:
                     region.start += delta
                     region.end += delta
+                self._keep_feel([(region, region.start - delta) for region in chosen])      # (Keep its feel)
                 target.sort_notes()
                 target.note_regions.sort(key=lambda r: r.start)
             new_first = self.regions_of(track_id).index(chosen[0])
         # the selection stays: nothing passes another region, so every region keeps its place in the list
-        self.announce("{}{}".format("" if len(indices) == 1 else "{} regions: ".format(len(indices)),
-                                    self.song.timeline.spoken_bar_position(first + delta).capitalize()))
+        words = "{}{}".format("" if len(indices) == 1 else "{} regions: ".format(len(indices)),
+                              self.song.timeline.spoken_bar_position(first + delta).capitalize())
+        longer = self._new_length_words(end_bar_before)
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return new_first
 
     # ------------------------------------------------------------------
@@ -149,7 +157,7 @@ class NudgeMixin:
         if removed:
             text += ". {} note{} outside it removed; Control+Z brings {} back".format(
                 removed, "" if removed == 1 else "s", "it" if removed == 1 else "them")
-        self.announce(text)
+        self.announce(self._and_loops(text, self.loop_words))      # (a loop the region's new start lets play on)
         return new_index
 
     # ------------------------------------------------------------------

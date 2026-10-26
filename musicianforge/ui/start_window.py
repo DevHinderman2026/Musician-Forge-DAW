@@ -5,7 +5,9 @@ you can start a new project or open one. Enter on a project in the Recent projec
 list opens it (Russell, 10 Oct 2026: "when you actually click enter you can actually
 open it"; until then Enter only explained that the list was for show), and Browse
 projects lists every project, the recent ones first. Close project (Control+W) in
-the project window comes back here.
+the project window comes back here. Escape quits, as the Quit button does (Russell,
+25 Oct 2026: "Quit Musician Forge"); a held Escape does nothing more, and a held Enter
+or Delete on the Recent projects list acts once (ONCE_KEYS).
 """
 
 import logging
@@ -23,6 +25,12 @@ RECENT_LABEL = "Recent projects (Enter opens one)"
 NO_RECENT_SAID = "There are no recent projects yet. Choose New project or Browse projects."
 LIST_HINT = ("Enter opens the project you are on. Delete removes a project from this list (the file itself is kept). "
              "Browse projects lists every project.")
+# Enter and Delete on the Recent projects list act once per press, however long they are held: Windows sends a held
+# key again about 30 times a second (auto-repeat), so a held Delete removed one project after another from the list,
+# and a held Enter on a project whose file is broken opened its message again as soon as it closed (the review, 26 Oct
+# 2026). As the project window's NO_REPEAT_KEYS (main_window.is_auto_repeat) and Escape here; arrows and letters
+# still repeat.
+ONCE_KEYS = (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE)
 
 
 def describe_recent(path):
@@ -30,8 +38,30 @@ def describe_recent(path):
     return "{}, in {}".format(projects.project_name(path), projects.location_name(path))
 
 
+def held_down(event):
+    """True when Windows sent this key again because it is held down (auto-repeat), as in the project window, where
+    a held Space, R, Enter or Escape acts once (main_window.is_auto_repeat). Windows marks every key down after the
+    first as a repeat, whichever window gets it, so an Escape still held from the project window is held here too.
+    False for a new press, and when wxPython cannot tell (wxKeyEvent.IsAutoRepeat is in wxWidgets 3.1.6 and later)."""
+    try:
+        return bool(event.IsAutoRepeat())
+    except (AttributeError, NotImplementedError):
+        return False
+
+
+def windows_key_down():
+    """True while either Windows key is held down. Windows+Escape is Windows' own shortcut (it closes Magnifier,
+    which low-vision testers may use), never Musician Forge's, and wxPython may not count a Windows key as a modifier
+    (wx.MOD_META), so Windows is asked about both keys (any key can be asked about there). False when they cannot be
+    asked about (the stand-in for wxPython has no GetKeyState)."""
+    try:
+        return bool(wx.GetKeyState(wx.WXK_WINDOWS_LEFT) or wx.GetKeyState(wx.WXK_WINDOWS_RIGHT))
+    except Exception:  # noqa: BLE001 - a key that cannot be asked about counts as not held
+        return False
+
+
 class StartFrame(wx.Frame):
-    """New project, Browse projects, Recent projects and Quit.
+    """New project, Browse projects, Recent projects and Quit (Escape quits too).
 
     The actions are callbacks so this window does not depend on the project window:
     on_new(), on_open(path the Recent projects list is on, or None), on_recent(path), on_quit(),
@@ -45,6 +75,7 @@ class StartFrame(wx.Frame):
         self.on_help = on_help
         self.on_say = on_say
         self.paths = []
+        self._windows_open = 0       # New project, Browse projects, Open, the Help menu or Quit's question is open
         panel = wx.Panel(self)
         silence_name(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -76,17 +107,17 @@ class StartFrame(wx.Frame):
         sizer.Add(last_row, 0, wx.ALL, 4)
         panel.SetSizer(sizer)
 
-        self.new_button.Bind(wx.EVT_BUTTON, lambda e: self.on_new())
-        self.open_button.Bind(wx.EVT_BUTTON, lambda e: self.on_open(self.selected_path()))
-        self.quit_button.Bind(wx.EVT_BUTTON, lambda e: self.on_quit())
+        self.new_button.Bind(wx.EVT_BUTTON, lambda e: self.from_here(self.on_new))
+        self.open_button.Bind(wx.EVT_BUTTON, lambda e: self.from_here(self.on_open, self.selected_path()))
+        self.quit_button.Bind(wx.EVT_BUTTON, lambda e: self.quit())
         self.open_recent_button.Bind(wx.EVT_BUTTON, lambda e: self.open_selected())
         self.remove_button.Bind(wx.EVT_BUTTON, lambda e: self.remove_selected())
-        self.help_button.Bind(wx.EVT_BUTTON, lambda e: self.on_help and self.on_help(self.help_button))
+        self.help_button.Bind(wx.EVT_BUTTON, lambda e: self.on_help and self.from_here(self.on_help, self.help_button))
         self.recent_list.Bind(wx.EVT_KEY_DOWN, self.on_list_key)
         self.recent_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.open_selected())
         self.Bind(wx.EVT_CLOSE, self.on_close)
         # Enter on the list is taken here, before Windows can treat it as "press the default button" and swallow it
-        # (Russell, 10 Oct 2026: Enter on a recent project did not open it)
+        # (Russell, 10 Oct 2026: Enter on a recent project did not open it), and so is Escape, which quits
         self.Bind(wx.EVT_CHAR_HOOK, self.on_char_hook)
         self.refresh()
 
@@ -129,7 +160,7 @@ class StartFrame(wx.Frame):
         if path is not None:
             if self.on_say is not None:
                 self.on_say("Opening {}".format(projects.project_name(path)))
-            self.on_recent(path)
+            self.from_here(self.on_recent, path)
         elif self.on_say is not None:
             self.on_say(NO_RECENT_SAID)
 
@@ -137,9 +168,44 @@ class StartFrame(wx.Frame):
         key = event.GetKeyCode()
         if (key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and event.GetModifiers() == wx.MOD_NONE
                 and wx.Window.FindFocus() is self.recent_list):
-            self.open_selected()
+            if not held_down(event):        # a held Enter opens the project once (ONCE_KEYS); taken all the same
+                self.open_selected()
+            return
+        if (key == wx.WXK_ESCAPE and event.GetModifiers() == wx.MOD_NONE and not windows_key_down()
+                and not self._windows_open and self.focus_is_here()):
+            # Escape on its own quits, as Quit does (Russell, 25 Oct 2026): not with Shift, Control, Alt or a Windows
+            # key (wx.MOD_META, or either Windows key held: Windows+Escape closes Magnifier). And only a new press:
+            # a held Escape, or one still held down from the project window (where it stops all sound), comes again
+            # as auto-repeat: nothing
+            if not held_down(event):
+                log.info("Start screen: Escape, so Musician Forge quits")
+                self.quit()
             return
         event.Skip()
+
+    def focus_is_here(self):
+        """True when the keyboard focus is on this window, not in a window opened from it. (While Windows' own
+        message box or Open window has the focus, wxPython sees it nowhere.)"""
+        focus = wx.Window.FindFocus()
+        try:
+            return focus is not None and focus.GetTopLevelParent() is self
+        except RuntimeError:  # a window being closed
+            return False
+
+    def from_here(self, action, *args):
+        """Run New project, Browse projects, Open, the Help menu or Quit. Until the window it opens closes (a dialog,
+        a message box, the Help menu, Quit's question about unsaved changes), Escape is that window's: it closes it,
+        never Musician Forge. (The Help menu leaves the focus on its button, so the focus alone cannot tell.)"""
+        self._windows_open += 1
+        try:
+            return action(*args)
+        finally:
+            self._windows_open -= 1
+
+    def quit(self):
+        """The Quit button, Escape and Alt+F4: Musician Forge closes (with a project open too, after its usual
+        question about unsaved changes)."""
+        self.from_here(self.on_quit)
 
     def remove_selected(self):
         """Delete on the Recent projects list, or the Remove from list button: the project leaves the list (its file
@@ -160,6 +226,8 @@ class StartFrame(wx.Frame):
         key = event.GetKeyCode()
         if event.GetModifiers() != wx.MOD_NONE:
             event.Skip()            # Alt+Enter, Shift+Delete and the like are not Enter or Delete (0.9.7)
+        elif key in ONCE_KEYS and held_down(event):
+            return                  # a held Enter or Delete acts once; taken, so it goes no further
         elif key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             self.open_selected()
         elif key in (wx.WXK_DELETE, wx.WXK_NUMPAD_DELETE):
@@ -171,4 +239,4 @@ class StartFrame(wx.Frame):
         # Alt+F4 here quits Musician Forge, like the Quit button (the project window then closes both)
         if event.CanVeto():
             event.Veto()
-        self.on_quit()
+        self.quit()

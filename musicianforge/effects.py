@@ -65,7 +65,9 @@ class Param:
         return round(number, self.decimals)
 
     def spoken(self, value):
-        """The value as it is said: "minus 3 dB", "4 to 1", "Quarter note", "on"."""
+        """The value as it is said: "minus 3 dB", "4 to 1", "1 second", "Quarter note", "on". A unit in words agrees
+        with its number: 1 second and 1 millisecond, but 2 seconds, 0.5 milliseconds and 0 seconds (it said "1 seconds"
+        until the keyboard monkey heard it, 26 Oct 2026); dB, hertz and "to 1" are the same for one and many."""
         if self.kind == "switch":
             return "on" if value else "off"
         if self.kind == "choice":
@@ -74,7 +76,10 @@ class Param:
             return "{} percent".format(format_value(value))
         text = format_value(value)
         if self.unit:
-            text = "{} {}".format(text, self.unit)
+            unit = self.unit
+            if text in ("1", "-1") and unit.isalpha() and unit.endswith("s"):
+                unit = unit[:-1]                # seconds, milliseconds: second, millisecond
+            text = "{} {}".format(text, unit)
         return text
 
 
@@ -383,6 +388,11 @@ def automatable_params(effect):
 # processors: the real-time sound of each effect
 # ----------------------------------------------------------------------
 SILENCE = 1e-7          # quieter than this (about -140 dB) counts as silence
+# EQ and distortion have no tail of their own (tail_seconds 0), yet their filters still hold the end of a sound for a
+# moment after it stops: a live chain (Chain.live) keeps working each of them this much longer, so that is not cut off
+# and left frozen until the next note (a click of -15 to -40 dBFS in 128- and 256-frame blocks before; what they hold
+# then is -108 dBFS at the most, with the most extreme settings: the review of 26 Oct 2026). Exports: 0, as before.
+FILTER_RING_SECONDS = 0.25
 
 
 class Context:
@@ -402,6 +412,7 @@ def _wet_dry(mix_percent):
 
 class Processor:
     tail_seconds = 0.0
+    live_tail_seconds = 0.0       # more, in live playback only (Chain.live): EQ and distortion (FILTER_RING_SECONDS)
 
     def __init__(self, sample_rate, params):
         self.sample_rate = float(sample_rate)
@@ -410,12 +421,20 @@ class Processor:
     def update(self, params):
         self.params = dict(params)
 
+    def change(self, params):
+        """A change by hand (the effect's settings window: a setting moved or typed, a preset chosen), which
+        Chain.configure brings while the song plays; automation (Chain.set_param) and the start of an export (a new
+        effect) use update(). The same as update() unless the effect makes it smoother (the reverb's settings glide)
+        or waits for what was ringing (the reverb and the delay; Russell, 25 Oct 2026)."""
+        self.update(params)
+
     def process(self, block, context):
         return block
 
 
 class EqProcessor(Processor):
     WIDTH_Q = {"narrow": 2.5, "medium": 1.0, "wide": 0.5}
+    live_tail_seconds = FILTER_RING_SECONDS
 
     def __init__(self, sample_rate, params):
         super().__init__(sample_rate, params)
@@ -514,6 +533,7 @@ class CompressorProcessor(Processor):
 
 class DistortionProcessor(Processor):
     FUZZ_BIAS = 0.35
+    live_tail_seconds = FILTER_RING_SECONDS
 
     def __init__(self, sample_rate, params):
         super().__init__(sample_rate, params)
@@ -590,9 +610,16 @@ class DelayProcessor(Processor):
         self._delay = None
         self._dry, self._wet = _wet_dry(params["mix"])
         self._feedback = params["feedback"] / 100.0
+        self._saved = dict(params)    # the settings as last given by hand (change()), not automation's (update())
+        self._held = None             # frames worked out since a change by hand, while its echoes may ring (change())
 
     @property
     def tail_seconds(self):
+        if self._held is not None:
+            return float("inf")       # after a change by hand, until the echoes ringing then have died away
+        return self._ring_seconds()
+
+    def _ring_seconds(self):
         # The echoes go on until they are below -90 dB, worked out with the feedback the delay really uses. Until
         # the review of 25 Oct 2026 this counted feedback as at most 0.9 (the delay allows 0.95), stopped at -80 dB
         # and at 60 seconds, so with a high feedback the chain's silence shortcut cut the echoes off while still
@@ -601,6 +628,21 @@ class DelayProcessor(Processor):
         repeats = 1 if feedback <= 0.001 else math.log(dsp.db_to_gain(-90.0)) / math.log(feedback)
         seconds = (self._delay or self.sample_rate) / self.sample_rate
         return seconds * (repeats + 1)
+
+    def change(self, params):
+        """A change by hand (the settings window, a preset; Chain.configure). The chain stops working a silent
+        track's delay out once its echoes are over, counted from when the sound stopped and worked out from the
+        settings now: until 0.9.11 the feedback or the echo time turned down by hand after the music stopped made
+        the echoes look over already, and the echoes ringing stopped dead (the review of 25 Oct 2026). Now the chain
+        keeps working the delay out until those have died away with the new settings, counted from the change. The
+        sound is exactly as before (update()); automation and exports do not come here. Only the feedback or the
+        echo time changed by hand can shorten the echoes, so only those wait; a change that only sets back what
+        automation had changed (the settings given by hand are the same) waits for nothing, as before."""
+        shorter = any(params[key] != self._saved[key] for key in ("time", "time_ms", "feedback"))
+        self._saved = dict(params)
+        self.update(params)
+        if shorter:
+            self._held = 0
 
     def delay_frames(self, context):
         p = self.params
@@ -646,7 +688,26 @@ class DelayProcessor(Processor):
         dry_gain, wet_gain = _wet_dry(p["mix"])
         out = block * dsp.ramp(self._dry, dry_gain, frames) + wet * dsp.ramp(self._wet, wet_gain, frames)
         self._dry, self._wet = dry_gain, wet_gain
+        if self._held is not None:
+            self._held += frames
+            if self._held >= self._ring_seconds() * self.sample_rate:
+                self._held = None     # what rang at the change by hand has died away (change())
         return out
+
+
+def _vary_pole(x, a, state):
+    """y[n] = a[n] * y[n-1] + x[n] side by side (one column per line), with a coefficient that changes every frame:
+    the reverb's damping while Brightness glides (ReverbProcessor.change). The closed form dsp.PoleBank uses, with
+    a running product of the coefficients, a piece at a time so the product never gets too small to divide by."""
+    y = np.empty(x.shape)
+    prev = np.asarray(state, dtype=np.float64)
+    step = dsp._piece_length(float(np.min(a)), len(a)) if len(a) else 1
+    for position in range(0, len(a), step):
+        powers = np.cumprod(a[position:position + step])[:, None]
+        piece = powers * (prev + np.cumsum(x[position:position + step] / powers, axis=0))
+        y[position:position + step] = piece
+        prev = piece[-1]
+    return y, prev.copy()
 
 
 class ReverbProcessor(Processor):
@@ -663,6 +724,11 @@ class ReverbProcessor(Processor):
     # TAIL_DROP_SECONDS, and a second change while one rings fades the older one out as quickly.
     TAIL_FLOOR = 1e-5
     TAIL_DROP_SECONDS = 0.02
+    # Decay, Brightness or Stereo width changed by hand (Russell, 25 Oct 2026: "Glide when changed by hand", and "Glide
+    # them too"; see change()) glides from the value heard to the new one over GLIDE_SECONDS (a fiftieth of a
+    # second), worked out for every frame; the Pre-delay crossfades from the old delay to the new one as long.
+    GLIDE_SECONDS = 0.02
+    GLIDING = ("decay", "brightness", "width")
 
     def __init__(self, sample_rate, params):
         super().__init__(sample_rate, params)
@@ -684,16 +750,92 @@ class ReverbProcessor(Processor):
         self._tails = []              # the rooms still ringing after a change of room size (_keep_ringing): two at most
         self._feed = 1.0              # how much of the sound coming in the room hears (below 1 just after a change)
         self._dry, self._wet = _wet_dry(params["mix"])
+        self._glides = {}             # Decay or Brightness gliding after a change by hand (change()):
+        #                               key -> [from, to, frames gone, frames in all]
+        self._saved = dict(params)    # the settings as last given by hand (change()), not automation's (update())
+        self._hold = 0                # frames the chain must still work the reverb out after a change by hand
+        self._pre = None              # the Pre-delay crossfading after a change by hand (change(), _crossfade_late):
+        #                               {"taps": [(frames late, share)], "to": frames late, "gone": n, "frames": n}
         self.update(params)
 
     @property
     def tail_seconds(self):
-        if self._tails:
-            return float("inf")       # the chain's silence shortcut waits until the old rooms are let go
+        if self._tails or self._hold > 0:
+            # the chain's silence shortcut waits until the old rooms are let go, and after a change by hand until
+            # what was ringing then has died away (change())
+            return float("inf")
         return self.params["decay"] * 1.5 + self.params["predelay"] / 1000.0 + 0.2
+
+    def change(self, params):
+        """A change by hand (the settings window: a slider arrowed, a value typed, a preset chosen), which
+        Chain.configure brings while the song plays. Until 0.9.11 Decay and Brightness switched at once, a click in
+        the sound that was ringing; now (Russell, 25 Oct 2026: "Glide when changed by hand") each one changed by hand
+        glides from the value heard now, even part way along a glide, to the new one over GLIDE_SECONDS. Only a
+        setting that differs from the last ones given by hand glides: one that automation had changed is set back
+        at once, and automation puts its own value in again before the next frame is worked out, as before.
+        Automation (Chain.set_param) and exports (new reverbs) come through update() alone, so they are exactly as
+        before. A new room size lets the old room ring out with its own settings (_keep_ringing), and the new room
+        starts at its new Decay and Brightness. Stereo width glides the same way (Russell, 25 Oct 2026: "Glide them
+        too"), and the Pre-delay crossfades from the delay heard to the new one (_crossfade_late), with or without
+        a new room: they are heard on the old room ringing out too."""
+        saved, self._saved = self._saved, dict(params)
+        new_room = params["size"] != self._size
+        heard = {key: self._now(key) for key in self.GLIDING if params[key] != saved[key]
+                 and not (new_room and key in ("decay", "brightness"))}
+        late = self._late_now() if params["predelay"] != saved["predelay"] else None
+        self.update(params)
+        frames = max(1, int(round(self.GLIDE_SECONDS * self.sample_rate)))
+        for key, value in heard.items():
+            if value != params[key]:
+                self._glides[key] = [value, params[key], 0, frames]
+        if late is not None and np.any(np.abs(self.predelay.buffer) > SILENCE):
+            # (only while sound is on its way into the room: with silence in the Pre-delay, as while the chain rests,
+            # nothing can click, and a crossfade left waiting there was heard at the track's next sound, its start
+            # going into the room at the old Pre-delay too; the review of 26 Oct 2026)
+            to = int(params["predelay"] / 1000.0 * self.sample_rate)
+            if late != [(to, 1.0)]:
+                self._pre = {"taps": late, "to": to, "gone": 0, "frames": frames}
+        if "decay" in self._glides:
+            # The chain stops working a silent reverb out once its tail is over, counted from when the sound
+            # stopped: Decay turned down a second after the music stopped made the tail look over already, and the
+            # sound ringing stopped dead. Now it waits until that has died away, counted from the change.
+            self._hold = int((self.params["decay"] * 1.5 + self.params["predelay"] / 1000.0 + 0.2
+                              + self.GLIDE_SECONDS) * self.sample_rate)
+
+    def _now(self, key):
+        """The value of a setting heard at this moment: part way along its glide while one goes on (change())."""
+        glide = self._glides.get(key)
+        if glide is None:
+            return self.params[key]
+        start, end, gone, frames = glide
+        return start + (end - start) * gone / float(frames)
+
+    def _late_now(self):
+        """The Pre-delay heard at this moment, as [(frames late, share)]: one, or the mixture part way along a
+        crossfade (change())."""
+        fade = self._pre
+        if fade is None:
+            return [(int(self.params["predelay"] / 1000.0 * self.sample_rate), 1.0)]
+        t = fade["gone"] / float(fade["frames"])
+        mixture = {}
+        for late, share in fade["taps"]:
+            mixture[late] = mixture.get(late, 0.0) + share * (1.0 - t)
+        mixture[fade["to"]] = mixture.get(fade["to"], 0.0) + t
+        return [(late, share) for late, share in mixture.items() if share > 0.0]
 
     def update(self, params):
         before = self.params
+        if self._pre is not None and params["predelay"] != before["predelay"]:
+            self._pre = None                      # set again, not by hand: at once from here
+        if self._glides:
+            if params["size"] != self._size and ("decay" in self._glides or "brightness" in self._glides):
+                # a new room while Decay or Brightness glides: the room left ringing keeps the values reached
+                before = dict(before, decay=self._now("decay"), brightness=self._now("brightness"))
+                self._set_sound(before["decay"], before["brightness"])
+                self._glides.pop("decay", None)
+                self._glides.pop("brightness", None)
+            for key in [key for key in self._glides if params[key] != before[key]]:
+                del self._glides[key]             # set again (by automation, or by hand): at once from here
         self.params = dict(params)
         sr = self.sample_rate
         if params["size"] != self._size:
@@ -715,13 +857,63 @@ class ReverbProcessor(Processor):
             self.ring_position = 0
             self.damping_state = np.zeros(len(lengths))
             self._columns = np.arange(len(lengths))
-        decay = max(0.1, params["decay"])
+        self._set_sound(params["decay"], params["brightness"])
+
+    def _set_sound(self, decay, brightness):
+        """The lines' gains and their damping for these settings of Decay and Brightness."""
+        sr = self.sample_rate
+        decay = max(0.1, decay)
         self.gains = 10.0 ** (-3.0 * self.lengths / (decay * sr))
-        brightness = params["brightness"] / 100.0
+        brightness = brightness / 100.0
         cutoff = 1200.0 + brightness ** 2 * 16000.0
         a = math.exp(-2.0 * math.pi * cutoff / sr)
         self.damping = dsp.PoleBank(np.full(len(self.lengths), a))
         self.damping_a = a
+
+    def _glide_values(self, key, count):
+        """A setting's values for the next `count` frames: along its glide (change()), or as it is set."""
+        glide = self._glides.get(key)
+        if glide is None:
+            return np.full(count, float(self.params[key]))
+        start, end, gone, frames = glide
+        t = (gone + np.arange(1, count + 1)) / float(frames)
+        glide[2] = gone + count
+        if gone + count >= frames:
+            del self._glides[key]
+        return np.where(t >= 1.0, float(end), start + (end - start) * t)
+
+    def _gliding(self, taps):
+        """(damped, gains) for these frames while Decay or Brightness glides (change()): both worked out for every
+        frame from the value reached there, so the change has no steps (no zipper noise). The frames after a glide
+        go the usual way, with the gains and damping update() worked out for the new settings."""
+        decay, brightness = self._glide_values("decay", len(taps)), self._glide_values("brightness", len(taps))
+        sr = self.sample_rate
+        gains = 10.0 ** (-3.0 * self.lengths[None, :] / (np.maximum(0.1, decay)[:, None] * sr))
+        a = np.exp(-2.0 * math.pi * (1200.0 + (brightness / 100.0) ** 2 * 16000.0) / sr)
+        damped, self.damping_state = _vary_pole((1.0 - a)[:, None] * taps, a, self.damping_state)
+        return damped, gains
+
+    def _late(self, mono, late, frames):
+        """The sound coming in, `late` frames late (read from the Pre-delay as process does)."""
+        if late > 0 and late + frames <= self.predelay.length:
+            return self.predelay.read(late + frames, frames)[:, 0]
+        return mono
+
+    def _crossfade_late(self, mono, frames):
+        """The Pre-delay crossfading after a change by hand (change()): the sound as late as it was heard fades out
+        while the sound as late as it is set now fades in, over GLIDE_SECONDS, with no click. A read position moving
+        from the one to the other instead would bend the pitch (a quarter of a second in a fiftieth plays the sound
+        backwards twelve times as fast); a crossfade only blends two copies of the same sound."""
+        fade = self._pre
+        t = np.minimum(1.0, (fade["gone"] + np.arange(1, frames + 1)) / float(fade["frames"]))
+        old = np.zeros(frames)
+        for late, share in fade["taps"]:
+            old += share * self._late(mono, late, frames)
+        out = old * (1.0 - t) + self._late(mono, fade["to"], frames) * t
+        fade["gone"] += frames
+        if fade["gone"] >= fade["frames"]:
+            self._pre = None
+        return out
 
     def _keep_ringing(self, before):
         """The room size is about to change (by hand, or a preset that changes it). Until 0.9.11 the reverb started
@@ -830,12 +1022,16 @@ class ReverbProcessor(Processor):
     def process(self, block, context):
         p = self.params
         frames = len(block)
+        if self._hold:
+            self._hold = max(0, self._hold - frames)
         mono = block.mean(axis=1)
         delay = int(p["predelay"] / 1000.0 * self.sample_rate)
         # written every block, so a pre-delay turned up while playing starts from what was just played, not from
         # what was left in it the last time it was used (the review of 25 Oct 2026)
         self.predelay.write(mono[:, None])
-        if delay > 0:
+        if self._pre is not None:
+            mono = self._crossfade_late(mono, frames)         # the Pre-delay crossfades after a change by hand
+        elif delay > 0:
             mono = self.predelay.read(delay + frames, frames)[:, 0] if delay + frames <= self.predelay.length \
                 else mono
         mono = self._diffuse(mono)
@@ -856,17 +1052,26 @@ class ReverbProcessor(Processor):
             starts = self.ring_position + self.capacity - self.lengths       # each line's read start
             index = (starts * width_lines + self._columns)[None, :] + (np.arange(count) * width_lines)[:, None]
             taps = flat[index]
-            damped, self.damping_state = self.damping.run((1.0 - self.damping_a) * taps, self.damping_state)
-            feedback = (damped * self.gains) @ self.matrix
+            if "decay" in self._glides or "brightness" in self._glides:
+                damped, gains = self._gliding(taps)        # Decay or Brightness glides after a change by hand
+            else:
+                damped, self.damping_state = self.damping.run((1.0 - self.damping_a) * taps, self.damping_state)
+                gains = self.gains
+            feedback = (damped * gains) @ self.matrix
             self._ring_write(mono[position:position + count, None] * self.in_gains + feedback)
             wet[position:position + count] = taps @ self._outputs
             position += count
         if self._tails:
             wet += self._ring_out(frames, heard)
-        width = p["width"] / 100.0
-        if width < 1.0:
+        if "width" in self._glides:
+            widths = self._glide_values("width", frames)[:, None] / 100.0    # gliding after a change by hand
             mid = wet.mean(axis=1, keepdims=True)
-            wet = mid + (wet - mid) * width
+            wet = mid + (wet - mid) * widths
+        else:
+            width = p["width"] / 100.0
+            if width < 1.0:
+                mid = wet.mean(axis=1, keepdims=True)
+                wet = mid + (wet - mid) * width
         dry_gain, wet_gain = _wet_dry(p["mix"])
         out = block * dsp.ramp(self._dry, dry_gain, frames) + wet * dsp.ramp(self._wet, wet_gain, frames)
         self._dry, self._wet = dry_gain, wet_gain
@@ -884,10 +1089,14 @@ class Chain:
     time); processors whose type is unchanged keep their sound (a reverb tail carries on while
     you change its mix)."""
 
-    def __init__(self, sample_rate):
+    def __init__(self, sample_rate, live=False):
         self.sample_rate = float(sample_rate)
         self.processors = []          # (type key, processor)
         self.quiet_frames = 0
+        # live playback (the engine's own chains; not render_offline's): EQ and distortion are worked out a moment
+        # longer (live_tail_seconds). Exports keep the shortcut as it was, but for automation that shortens a tail
+        # (set_param), which counts the silence afresh in every chain.
+        self.live = live
 
     def configure(self, effects):
         wanted = [e for e in effects if e.get("on", True) and e["type"] in PROCESSORS]
@@ -897,7 +1106,7 @@ class Chain:
             if i < len(self.processors) and self.processors[i][0] == kind:
                 processor = self.processors[i][1]
                 if processor.params != effect["params"]:
-                    processor.update(effect["params"])
+                    processor.change(effect["params"])      # by hand (Processor.change); automation: set_param
             else:
                 processor = PROCESSORS[kind](self.sample_rate, effect["params"])
             new.append((kind, processor))
@@ -908,6 +1117,8 @@ class Chain:
         return bool(self.processors)
 
     def tail_seconds(self):
+        if self.live:
+            return sum(p.tail_seconds + p.live_tail_seconds for _k, p in self.processors)
         return sum(p.tail_seconds for _k, p in self.processors)
 
     def set_param(self, index, key, value):
@@ -917,7 +1128,16 @@ class Chain:
             if processor.params.get(key) != value:
                 params = dict(processor.params)
                 params[key] = value
+                before = self.tail_seconds()
                 processor.update(params)
+                if self.quiet_frames <= before * self.sample_rate and self.tail_seconds() < before:
+                    # A tail shortened (Decay, Feedback turned down) after the sound stopped, while what rang was
+                    # still worked out: the silence is counted afresh, so that dies away with the new setting instead
+                    # of being cut off at once and coming back frozen at the next note, as a change by hand waits
+                    # (ReverbProcessor.change, DelayProcessor.change; the review of 26 Oct 2026). Live and in
+                    # exports (Russell, 26 Oct 2026: "Fix it in every export"); with the sound going on, or the
+                    # chain already resting, nothing changes.
+                    self.quiet_frames = 0
 
     def has_param(self, index, key, value):
         """True if the effect at `index` has setting `key` at `value` already (automation's check that the

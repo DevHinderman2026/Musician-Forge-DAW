@@ -133,6 +133,14 @@ class AudioTake:
     frames: int
 
 
+# The rules a recording plays by (0.9.11; Russell, 25 Oct 2026: "Fix new and changed recordings"). 1: as before
+# 0.9.11, where a pitch-corrected recording trimmed at its start changes key too early, by as much as was trimmed off
+# (the song's key changes were laid on it leaving the trim out; Session._key_spans); 2: at the right moment. A recording
+# saved before has none, so it keeps 1, and plays exactly as it did, until it is changed by hand
+# (AudioRegion.to_todays_rules); new recordings get 2.
+RECORDING_RULES = 2
+
+
 @dataclass
 class AudioRegion:
     """A recording placed on an audio track. Recording over a looped section adds takes;
@@ -152,6 +160,7 @@ class AudioRegion:
     offset: int = 0          # frames trimmed off the start of the recording
     length: int = 0          # frames that play (0: to the end of the recording)
     loops: int = 1           # plays this many times in a row; 0 = until the next recording
+    rules: int = 1           # the rules it plays by (RECORDING_RULES): 1 until it is made or changed by hand
 
     @property
     def take(self):
@@ -169,9 +178,15 @@ class AudioRegion:
         seconds = timeline.tick_to_seconds(self.tick) + self.frames / float(AUDIO_RATE)
         return int(round(timeline.seconds_to_tick(seconds)))
 
+    def to_todays_rules(self):
+        """Made or changed by hand: it plays by today's rules (RECORDING_RULES). Returns it."""
+        self.rules = RECORDING_RULES
+        return self
+
     def to_list(self):
+        # (with rules 1 nothing more is saved: an older recording's line in the file stays as it was)
         return [self.tick, [[t.file, t.frames] for t in self.takes], self.active, self.gain_db, self.layer,
-                self.mute, self.offset, self.length, self.loops]
+                self.mute, self.offset, self.length, self.loops] + ([self.rules] if self.rules != 1 else [])
 
 
 @dataclass
@@ -683,11 +698,13 @@ def _valid_region(raw):
     offset = max(0, int(raw[6])) if len(raw) > 6 else 0
     length = max(0, int(raw[7])) if len(raw) > 7 else 0
     loops = max(0, min(999, int(raw[8]))) if len(raw) > 8 else 1
+    # the rules it plays by (RECORDING_RULES): none, or a damaged number, is 1, as before 0.9.11
+    rules = raw[9] if len(raw) > 9 and type(raw[9]) is int and 1 <= raw[9] <= RECORDING_RULES else 1
     takes = [AudioTake(str(f), int(n)) for f, n in takes]
     if int(tick) < 0 or not takes or any(t.frames <= 0 for t in takes) or not math.isfinite(float(gain_db)):
         raise ValueError("bad recording {}".format(raw))
     return AudioRegion(int(tick), takes, max(0, min(len(takes) - 1, int(active))), float(gain_db), layer, mute,
-                       offset, length, loops)
+                       offset, length, loops, rules)
 
 
 def _valid_note(raw):

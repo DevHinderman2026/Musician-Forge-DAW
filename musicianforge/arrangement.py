@@ -11,7 +11,12 @@ at the end of every repeat but the last one heard (rules 7; before, the last one
 which leads into the chord where its playing stops (and, a drummer of rules 7, builds into the
 louder drummer that starts there):
 performance_for(track, region, lead_into=tick) gives those two versions (the same notes, for a
-player that does neither).
+player that does neither). When another part cuts that last repeat short, the version for it is
+only the part heard, played as a region ending there would play it (rules 7, Russell, 25 Oct 2026:
+"Lead in wherever it is cut"; MusicMixin._lead_in_where_cut). Where its playing stops at a whole
+repeat's end and what starts there carries the loop on (a region with exactly its settings, or
+notes), the last repeat leads back into its own start, as the loop played it (rules 7, Russell,
+26 Oct 2026: "Keep what you hear").
 """
 
 import math
@@ -72,7 +77,16 @@ def sounding_notes(song, track, performance_for):
             heard = max(1, min(count, int(math.ceil((stop - region.start) / float(max(1, region.length))))))
         looping = None
         if region.player:
-            inside = sorted(own + list(performance_for(track, region) if heard == 1 else
+            # (rules 7: where its playing stops at a whole repeat's end and what starts there carries the loop on, a
+            # region with exactly its settings or notes (what Split, Delete section and a take leave there), its last
+            # repeat leads back into its own start, as the loop played it: Russell, 26 Oct 2026, "Keep what you hear";
+            # it led into the chord there. A cut partway through a repeat: MusicMixin._cut_by_the_next_part)
+            goes_on = (region.loops != 1 and region.player.get("rules", 1) >= 7
+                       and (stop - region.start) % max(1, region.length) == 0
+                       and any(r is not region and r.start == stop and (not r.player or r.player == region.player)
+                               for r in track.note_regions))
+            inside = sorted(own + list(performance_for(track, region, lead_into=region.start) if goes_on else
+                                       performance_for(track, region) if heard == 1 else
                                        performance_for(track, region, lead_into=stop)),
                             key=lambda n: (n.tick, n.pitch))
             if heard > 1:
@@ -95,10 +109,12 @@ def sounding_notes(song, track, performance_for):
 
 
 def loop_text(count, stop, timeline, loops_setting):
-    """'loops 4 times, to bar 33', 'loops until the next region, to bar 25', or ''."""
+    """'loops 4 times, to bar 33', 'loops until the next region, 2 times, to bar 25', or ''. Where the loop stops in
+    the middle of a bar, exactly there, as an edit's words say it: 'loops 3 times, to bar 5 beat 2' (Russell, 25 Oct
+    2026, "Yes, make them all match"; until then it said the next bar, 'to bar 6')."""
     if loops_setting == 1:
         return ""
-    bar = timeline.tick_to_bar(max(0, stop - 1)) + 1
+    where = timeline.spoken_bar_position(max(0, stop))
     if loops_setting == 0:
-        return "loops until the next region, {} time{}, to bar {}".format(count, "" if count == 1 else "s", bar)
-    return "loops {} time{}, to bar {}".format(count, "" if count == 1 else "s", bar)
+        return "loops until the next region, {} time{}, to {}".format(count, "" if count == 1 else "s", where)
+    return "loops {} time{}, to {}".format(count, "" if count == 1 else "s", where)

@@ -47,8 +47,8 @@
     landed with the open hi-hat on two and four in funk and pop and cut it off at once. A step you set by hand stays
     and the other sound gives way.
   - The shaker, tambourine, cowbell, claves, congas and bongos are a second player's: they always play, are never
-    left out for the drummer's two hands, and play on through the drummer's fills. Pop's own tambourine on two and
-    four is now heard.
+    left out for the drummer's two hands, and play on through the drummer's fills. Pop's own tambourine, which plays
+    now and then on sixteenth notes, is now heard.
   - In metal variations 3 and 4, which keep time on the crash, the Ride takes over from the crash as the Hi-hat
     does: "Ride on with eighth notes, crash off". The crash comes back once neither the Hi-hat nor the Ride keeps
     time.
@@ -80,6 +80,57 @@
   section at the end, duplicate one to the end, or make the last section longer: the new bars start empty, and a
   duplicated section sounds like the one it copies. A section added in the middle of the song still leaves the loop
   playing on both sides of it.
+- Drummers (new and changed regions): where the hand opens the hi-hat on every stroke (How open set to fully open,
+  Intensity 85 and up, the Hi-hat pattern "open on every beat", and hard rock's Big and driving, Half-time stomp and
+  Gallop kicks), a Hi-hat pedal that is on now closes the hi-hat on two and four, so you hear the foot: the hi-hat
+  there is closed, and the open hi-hats ring on the other strokes. With a half-open hi-hat the foot keeps holding it
+  half open, and the Kit pieces line says so ("Hi-hat pedal: on, the foot waits for the half-open hi-hat").
+- The Hi-hat pedal's line in Kit pieces names the beats the foot really plays in the region's meter: "the foot on
+  two and four" in 4/4, "the foot on two" in 6/8, "the foot on two and three" in 3/4, and so on. In 3/8 the foot now
+  plays on the second and third eighths (new and changed regions); in very short bars, such as 2/8, it rests, and
+  the line says so.
+- A looping region that the next region cuts partway through a repeat now leads into it from the part you hear: a
+  drummer builds in the bars just before a louder drummer, and a bass, keys, synth or guitar leads into the next
+  region's chord, as a region ending there would (new and changed regions). A recording, or a region with exactly
+  the loop's settings, counts as the loop carrying on, so recording over a loop or splitting it never changes the
+  bars before.
+- A region set to "Loop until the next region" still follows the next region when you delete, cut, move, nudge or
+  trim it, and Musician Forge now says where the loop plays to: "Deleted 1 region. Riff now loops to bar 13". Paste,
+  Duplicate, Import audio, Quantize, notes added in the Event list, a recording's own window, Region settings and
+  tempo and time signature changes say it too, and the Regions list says exactly where a loop stops ("loops 3 times,
+  to bar 5 beat 2").
+- Split and Join keep what you hear on a looping region: Split in its first pass leaves the loop carrying on after
+  the two parts, Split inside its repeats now works, and Join writes the repeats into the joined region as notes
+  ("The loop is written out as notes, so it sounds as it did").
+- A looping recording on an audio track keeps playing on both sides of a section you add, delete, move, shorten or
+  lengthen, in step, and stops where it stopped ("The looping recording is cut into pieces, so it sounds as it
+  did"). With a section added at the end it stops where the song ended, a copied section holds what the loop played
+  there, and recording over its repeats keeps the rest of the loop going after the take.
+- What carries a loop on now plays with the loop's own feel, so it sounds exactly like the loop, and a rhythm player
+  region you move, nudge, trim, paste or duplicate, or whose section you move or duplicate, keeps its exact feel,
+  even when the tempo changes later where it came from. Reforge still gives it a new performance and a new feel.
+- With the playhead at the song's end, the Add windows for notes, chords, tempo, time signature and key changes and
+  automation points, and Go to bar, start at the last bar, where what you add is heard.
+- Whenever an edit makes the song longer, Musician Forge says the new length, after the edit's own words: "Pasted 1
+  region at Bar 17, beat 1. The song is now 18 bars long." This covers Paste, Import audio, Duplicate, Move, Delete
+  and Cut (when a loop then plays on), a recording past an Automatic section, Add note, MIDI import, section edits,
+  nudges and trims, a longer loop count, and tempo and time signature changes. A MIDI import that makes a section
+  longer says which one grew, instead of saying the sections were kept.
+- The Octave choice and the Keyboard menu's Octave items say what the A key plays in the layout you are in: "3 (the
+  A key plays the scale's root note)" in the Scale layout, "3 (chords in octave 3, bass notes in octave 2)" in Chord
+  strips, and "3 (the Drum layout does not use the octave)" on a drum kit, where Z, X and Control+J say so too. At
+  octave -2 in Chord strips the number keys play each chord's lowest note, and the words say so.
+- Escape on the start screen quits Musician Forge, as Quit does. A held Escape, Escape with the Windows key or
+  another key, and Escape in a window opened from the start screen do not.
+- Changing a reverb's Decay, Brightness, Pre-delay or Stereo width by hand or with a preset while sound plays now
+  glides over a fiftieth of a second, so it never clicks (Pre-delay fades from the old delay to the new one).
+  Automation and exports are unchanged.
+- Turning a reverb's Decay, or a delay's Feedback or Echo time, down by hand after the music stops lets what is
+  ringing fade away instead of stopping dead.
+- Pitch correction on a looping recording follows the song's key in every repeat, not only in its first play (new
+  and changed recordings).
+- If a guitar pack comes down wrong (the wrong file, the wrong size or damaged), it is removed, Musician Forge says
+  so in plain words, and it goes straight on to the other pack: "Now downloading FSBS Electric Guitar Distorted 2."
 
 ### Bug fixes
 
@@ -136,17 +187,76 @@
 - Fixes some kinds of damage in a downloaded guitar pack stopping its unpacking with a program error instead of
   saying that the download is damaged.
 - Fixes the Windows voice (when no screen reader is running) reading text that starts with "<" as markup.
+- Fixes New player region (P) at the song's end saying "Something went wrong" when nothing was empty there: it now
+  says "There is no empty stretch at the end of the song. Add a section first."
+- Fixes a rhythm player region joined after a note region losing all its music: it comes in as notes, as heard.
+- Fixes a looping region's last bars before a section added after it changing (a pad's C chord turned into an F
+  chord), and a section added or deleted exactly where a region cuts a loop letting the loop play into the new bars.
+- Fixes the note right where the next region cuts a loop still sounding a few milliseconds early (a doubled kick),
+  and a loop cut by the song's end ringing on past it (new and changed regions).
+- Fixes recording a take exactly where a looping recording had been cut into pieces turning the take into a loop
+  that played to the end of the song.
+- Fixes pitch correction on a recording trimmed at its start changing key too early, by as much as was trimmed (new
+  and changed recordings).
+- Fixes a drummer's Step pattern view showing the kick's loudness differently from what is heard after a fill or
+  with the Crash off, and setting steps as shown adding notes that were not heard (Latin jazz's snare, metal's disco
+  hi-hat, the hi-hat's silent closing notes with eighth swing) (new and changed regions).
+- Fixes the Hi-hat pedal's Loudness making the hi-hat build's silent closing notes audible, and a drummer playing
+  with three feet when both kicks and the hi-hat foot were set on one step by hand (new and changed regions).
+- Fixes a click while playing when a note ends quickly through a distortion or an EQ (Fuzz, Dubstep growl, an EQ
+  into a distortion, a low cut or bass boost): they now keep working a quarter of a second after the sound stops, so
+  what they still hold fades away instead of being cut off, and nothing comes back at the next note. Exports are
+  unchanged by this.
+- Fixes automation that turns a reverb's Decay or a delay's Feedback down after the music stops cutting the tail off
+  and bringing it back faintly at the next note, while playing and in exports: the tail now rings out with the new
+  setting.
+- Fixes a reverb's Pre-delay changed while its track was resting leaving a faint early copy of the next note.
+- Fixes a guitar pack's news being lost when other words were said within two seconds: it is always said now.
+- Fixes a damaged guitar pack download, or one offered at the wrong size, being said as "could not be downloaded".
+- Fixes a held Enter or Delete on the start screen's Recent projects list acting more than once.
+- Fixes the longer Octave and Layout words being cut off on screen until the window was laid out again.
+- Fixes Region settings losing the loop count's words, or saying an out-of-date place, when a trim and a new loop
+  count were made with one OK.
+- Fixes Undo after changing a player's part or piece setting saying a program name ("Undo part root_only").
+- Fixes a damaged setting in a project file that could make a rhythm player region freeze Musician Forge.
+- Fixes the Drum layout's words naming a note for the A key, though the octave does not change what it plays, and
+  Chord strips at octave -2 naming bass notes in an octave that does not exist.
+- Fixes Join making a muted part play, or a part you heard go quiet, when the regions were not all muted or all
+  unmuted (the joined region took the first one's setting). Join now changes nothing and says why: "Riff 2 is muted
+  and Riff 1 is not. Mute or unmute them so they match, then join."
+- Fixes lines said twice: Space on an automation lane and its Turn lane on or off button, OK in an automation
+  lane's Add and Edit point windows, OK in the Chord track's Add and Edit windows, OK in Chord strips' Change
+  chord window, and the Effects window's Turn on or off button. The line you are on is read once, with its new
+  words.
+- Fixes an effect's settings, its automation points and the number boxes saying "1 seconds" and
+  "1 milliseconds": they say "1 second" and "1 millisecond".
+- Fixes a new recording or imported file sounding very slightly different once the project was saved and opened
+  again (with pitch correction, at times enough to hear): it now plays exactly as it is saved.
+- Fixes adding, deleting, copying or moving a section in the middle of automation putting points with long decimals
+  into a lane that keeps whole numbers (a volume of 36.031447): the points it adds keep to the lane's own steps, as
+  points set by hand do.
+- Fixes Duplicate section, when a recording rang on past the section's end, letting a loop that plays to the end of
+  the song play on into the copy's extra bar: it stops where the copy ends.
+- Fixes a looping recording cut into pieces by a section edit skipping a sliver of sound where its pieces meet (up
+  to a 960th of a beat, a tiny stutter at slow tempos).
+- Fixes long songs getting slow: a player region of thousands of bars, or a recording looping through them, is
+  worked out many times faster (a 9999-bar bass region in about 2 seconds instead of 40). What they play is
+  unchanged.
 
 ### Older projects
 
-- They play the same notes as before; this version's changes to the players come to a region once you change
-  something in it.
+- They open, play and export exactly as before, with one exception: an export whose automation turns a reverb's
+  Decay or a delay's Feedback down after the music stops now lets the tail ring out instead of cutting it (above).
+- This version's changes to the players come to a region once you change something in it. The new ways of looping,
+  Split, Join and keeping a region's feel apply to edits you make from now on, and a recording keeps its pitch
+  correction timing until you edit it.
 - A project longer than 9999 bars, which only a damaged file can be, is refused when it opens, and its backup is
   offered.
 
 ### New projects
 
-- New and changed rhythm player regions use this version's rules.
+- New and changed rhythm player regions use this version's rules, and new and changed recordings this
+  version's pitch correction timing.
 
 ## 0.9.10 (25 October 2026, in testing)
 

@@ -3,6 +3,7 @@ and trimming and looping regions. Mixed into session.Session; like the rest of t
 nothing here touches a window, so it is all tested headless."""
 
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -89,7 +90,9 @@ def for_each_selected_region(method):
 def builds_into(settings):
     """Whether a looping drummer region's last repeat builds into the louder drummer that starts where the loop's
     playing stops (Russell, 25 Oct 2026, 0.9.11: "Yes, in the last repeat"): rules 7. Before, only a drummer that
-    started where the region's first play ends was seen, so a looping region never built."""
+    started where the region's first play ends was seen, so a looping region never built. When the louder drummer
+    cuts that repeat short, the part of it that is heard builds, in its last bars ("Lead in wherever it is cut";
+    MusicMixin._lead_in_where_cut)."""
     return bool(settings) and settings["player"] == "anvil" and players.rules_7(settings)
 
 
@@ -135,8 +138,11 @@ class MusicMixin:
             return "No chord yet. The chord track is empty here, so rhythm players use the key's own chord."
         return "{}: {}".format(self.describe_position(tick), chords.name(change, self._flats_at(change.tick)))
 
-    def set_chord(self, bar, beat, root, quality, bass=None, replacing=None):
-        """Add a chord change (or replace the one at `replacing`). Returns its place in the chord track."""
+    def set_chord(self, bar, beat, root, quality, bass=None, replacing=None, speak=True):
+        """Add a chord change (or replace the one at `replacing`). Returns its place in the chord track.
+        speak=False: the Chord track window's list lands on the chord change, and the screen reader reads its line
+        ("Bar 5, beat 1: G major"), which is all that is said here, so nothing is said (said as well, NVDA said the
+        line twice; the keyboard monkey, 26 Oct 2026)."""
         tl = self.song.timeline
         if int(bar) < 1:
             # (a chord before bar 1 saved a project that could not be opened again: "a chord change cannot start
@@ -159,7 +165,8 @@ class MusicMixin:
             items = [c for c in items if c.tick != tick] + [change]
             self.song.chords = chords.sort(items)
         index = next(i for i, c in enumerate(self.song.chords) if c.tick == tick)
-        self.announce(self.describe_chord(index))
+        if speak:
+            self.announce(self.describe_chord(index))
         return index
 
     def remove_chord(self, index):
@@ -281,6 +288,8 @@ class MusicMixin:
             existing = self.song.track_by_id(track_id)
             if existing is None or existing.is_audio:
                 raise ValueError("Rhythm players go on instrument tracks")
+        end_bar_before = self.song.end_bar()     # (_new_length_words: put past the end, the last section grows)
+        loops = self._loop_stops()      # (put in a loop's repeats, the new region stops the loop there)
         with self.edit("add {}".format(player.name)):
             if track_id is None:
                 position = self.song.index_of(self.selected_track_id) + 1 if self.selected_track_id else None
@@ -295,7 +304,11 @@ class MusicMixin:
         index = next(i for i, r in enumerate(track.note_regions) if r.start == region.start)
         self.selected_track_id = track_id
         self.notify("selection")
-        self.announce("Added a rhythm player region on {}. {}".format(track.name, self.player_summary(track_id, index)))
+        words = "Added a rhythm player region on {}. {}".format(track.name, self.player_summary(track_id, index))
+        longer = self._new_length_words(end_bar_before)
+        if longer:
+            words += (" " if words.endswith(".") else ". ") + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return track_id, index
 
     def add_player_region_here(self, track_id=None):
@@ -329,6 +342,11 @@ class MusicMixin:
         section_start, section_end = self.section_ticks(self.current_section_index(tick))
         start = max([section_start] + [stop for _first, stop, _r in sounding if stop <= tick])
         end = min([section_end] + [first for first, _stop, _r in sounding if first > tick])
+        if end <= start:
+            # only at the end of the song, where a song played to its end stays (0.9.11), with a region or its loop
+            # playing up to it: no bars are left there, and it stopped with "Something went wrong" (Russell, 25 Oct
+            # 2026)
+            raise ValueError("There is no empty stretch at the end of the song. Add a section first.")
         before = [r for first, _stop, r in sounding if r.player and first <= tick]
         source = before[-1] if before else next(r for first, _stop, r in sounding if r.player)
         nearest = players.clean_settings(source.player)
@@ -436,6 +454,7 @@ class MusicMixin:
         track, region = self._player_region(track_id, index)
         settings = players.clean_settings(region.player)
         settings["performance"] = players.random_performance(settings["performance"])
+        settings.pop("feel_from", None)        # (a new performance plays a feel of its own where it is: keep_feel)
         with self.edit("reforge"):
             players.to_todays_rules(settings)               # changed by hand: it plays by today's rules
             self.song.track_by_id(track_id).note_regions[index].player = settings
@@ -552,10 +571,16 @@ class MusicMixin:
         if settings["player"] == "anvil":
             table = player_pieces.style_table(settings["style"], settings["variation"], players._DRUM_STYLES)
         kit, notes = self.kit_program(track_id), self.kit_notes(track_id)
+        meter = None
+        if settings["player"] == "anvil":   # (the Hi-hat pedal's line is worked out in the region's first bar's meter)
+            _track, region = self._player_region(track_id, index)
+            tl = self.song.timeline
+            signature = tl.time_signature_at_bar(tl.tick_to_bar(region.start))
+            meter = (signature.numerator, signature.denominator)
         found = []
         for piece in player_pieces.pieces_for(settings["player"]):
             groove = True if table is None else bool(player_pieces.piece_rows(table, piece))
-            found.append((piece.key, player_pieces.describe_piece(settings, piece.key, groove, kit, notes)))
+            found.append((piece.key, player_pieces.describe_piece(settings, piece.key, groove, kit, notes, meter)))
         return found
 
     def describe_piece(self, track_id, index, piece_key):
@@ -900,8 +925,9 @@ class MusicMixin:
         after = self._apply_piece_change(settings, piece_key, changes, self.kit_notes(track_id))
         piece = player_pieces.PIECE_BY_KEY[piece_key]
         merge = len(changes) == 1 and next(iter(changes)) in PIECE_COALESCE
-        label = "{} {}".format(piece.name if piece.kind != "part" else "part", next(iter(changes)) if len(changes) == 1
-                               else "settings")
+        # (in words: "Undo part root only", never the setting's own name, "root_only"; the sixth review, 26 Oct 2026)
+        label = "{} {}".format(piece.name if piece.kind != "part" else "part",
+                               next(iter(changes)).replace("_", " ") if len(changes) == 1 else "settings")
         if after["pieces"] != settings["pieces"]:                # nothing changed: no undo step
             # The change is made inside edit(), which then hands the new notes to the sound engine. (From 10 Oct
             # 2026, 3:50 PM until the final review that evening it was made just after, so a piece's change, the
@@ -1195,6 +1221,98 @@ class MusicMixin:
                 return found["intensity"]
         return None
 
+    @staticmethod
+    def _cut_by_the_next_part(track, region, settings, lead_into):
+        """Where the part heard of a looping region's last repeat ends (counted in its first play) when another part
+        cuts the loop partway through that repeat: a rhythm player region with other settings than the loop's, starting
+        where the loop's playing stops (lead_into; arrangement.sounding_notes). Rules 7 (Russell, 25 Oct 2026, "Lead in
+        wherever it is cut"). None, and the repeat plays as before, when the last repeat heard is a whole one, the
+        song's end cuts it, or what starts there carries the loop on: a copy with the loop's settings, or notes (what
+        Split, Delete and a take leave there, so they keep what you hear)."""
+        if not settings or not players.rules_7(settings) or lead_into is None or lead_into <= region.end:
+            return None
+        part = (lead_into - region.start) % max(1, region.length)
+        after = next((r for r in track.note_regions if r is not region and r.start == lead_into), None)
+        if not part or after is None or not after.player or after.player == region.player:
+            return None
+        return region.start + part
+
+    @staticmethod
+    def _lead_in_where_cut(settings, cut, coming, play):
+        """The part heard of a loop's last repeat that another part cuts at `cut` (_cut_by_the_next_part), played as a
+        region ending there plays it: a bass, keys, synth or guitar part's last bar leads into the chord there, and
+        nothing rings past it; a drummer builds into the louder drummer there, in the last two bars (fewer when less
+        is heard), and only then (one that would not build plays as before). play(end, next_intensity) performs the
+        region's first play up to `end`; coming: the Intensity of the drummer there (_next_intensity). None: the whole
+        repeat, cut where the playing stops, as before (until then the build or the lead-in, at the end of the repeat,
+        was always cut off with it)."""
+        if cut is None:
+            return None
+        if settings["player"] != "anvil":
+            return play(cut, coming)
+        if coming is None:
+            return None
+        built = play(cut, coming)
+        return None if built.notes == play(cut, None).notes else built
+
+    def _cut_on_the_grid(self, region, settings, lead_into, cut):
+        """Rules 7: where (counted in its first play) a looping region's last repeat heard is cut partway by another
+        part (cut, _cut_by_the_next_part: a rhythm player region with other settings) or by the song's end, for
+        _played_whole; None for a whole repeat, for what carries the loop on (a copy with the loop's settings, or
+        notes: what Split, Delete and a take leave there, cut where it is heard as before, so they keep what you
+        hear), and for older rules. lead_into: where the loop's playing stops."""
+        if cut is not None:
+            return cut
+        if not settings or not players.rules_7(settings) or lead_into is None or lead_into <= region.end \
+                or lead_into < self.song.song_end_tick():
+            return None
+        part = (lead_into - region.start) % max(1, region.length)
+        return region.start + part if part else None
+
+    def _played_whole(self, settings, region, where, coming, play, human):
+        """A looping region's last repeat heard played whole, as before, when _lead_in_where_cut gives None (a drummer
+        that does not build, what carries the loop on, or the song's end cutting it). Cut partway by another part or
+        by the song's end (rules 7; where: _cut_on_the_grid), what is heard of it is decided by the notes' places on
+        the grid, not by where the human feel moved them (the sanity sweep, 26 Oct 2026): a note on the grid at the
+        cut or after it is never heard (the loop's kick, moved a few milliseconds earlier, was heard just before the
+        next region's own kick and crash), and one before it always is, at the latest just before the cut, as a region
+        ending there plays it (moved past it, it was lost). Where the song's end cuts it, a bass, keys, synth or guitar
+        note ends there (a pad chord rang on past the end, and an export ran on with it). play(end, next_intensity,
+        humanize) performs the region's first play up to `end`; human: whether play uses the human feel."""
+        whole = play(region.end, coming)
+        if where is None:
+            return whole
+        clean = players.clean_settings(settings)
+        melodic = clean["player"] != "anvil"
+        notes = whole.notes
+        if human and players.human_feel(clean):
+            tl = self.song.timeline
+            grid = sorted(play(region.end, coming, False).notes, key=lambda n: (n.tick, n.pitch))
+            if melodic:
+                # (each note's place on the grid, from the human feel itself: a note's length never moves it, so it
+                # carries the note's place in the grid; the lengths are the ones heard)
+                lengths = {}
+                for n in notes:
+                    lengths.setdefault((n.tick, n.pitch, n.velocity), []).append(n.length)
+                tagged = [Note(n.tick, i + 1, n.pitch, n.velocity) for i, n in enumerate(grid)]
+                kept = []
+                for moved in players._humanize(tagged, clean, tl, region.start, region.end):
+                    found = lengths.get((moved.tick, moved.pitch, moved.velocity))
+                    if not found:
+                        kept = None          # (never so: the notes heard are these, moved)
+                        break
+                    length = found.pop(0)
+                    if grid[moved.length - 1].tick < where:
+                        kept.append(Note(min(moved.tick, where - 1), length, moved.pitch, moved.velocity))
+                if kept is not None:
+                    notes = players._one_at_a_time(kept, clean["player"])
+            else:
+                notes = players._humanize([n for n in grid if n.tick < where], clean, tl, region.start, where)
+        if melodic:          # (cut by the song's end: another part cutting it is played to the cut, _lead_in_where_cut)
+            notes = [n if n.tick + n.length <= where else Note(n.tick, max(1, where - n.tick), n.pitch, n.velocity)
+                     for n in notes]
+        return dataclasses.replace(whole, notes=notes)
+
     def kit_levels(self, track):
         """The kit-piece loudness a drummer on this track plays with ({piece key: percent}, only those not at 50):
         the track's own (Track settings), in every project. An older project's tracks have none (every piece at 50),
@@ -1232,19 +1350,28 @@ class MusicMixin:
         if human is None:
             human = getattr(self, "human_feel", True)      # tests that check the grid itself turn it off
         mix = self.kit_levels(track) if settings["player"] == "anvil" else {}
+        cut = self._cut_by_the_next_part(track, region, settings, lead_into)     # (rules 7: the last repeat cut short)
+        where = self._cut_on_the_grid(region, settings, lead_into, cut)        # (rules 7: _played_whole)
         key = json.dumps([settings, region.start, region.end, span_chords, self._timeline_key(), sections, coming,
                           human, None if hits is None else [(h.tick, round(h.weight, 3)) for h in hits]]
                          + ([mix] if mix else [])
                          + ([lead_into, [c.to_list() for c in self.song.chords if c.tick <= lead_into]]
-                            if lead_into is not None else []), sort_keys=True, default=str)
+                            if lead_into is not None else []) + ([["cut", cut]] if cut is not None else [])
+                         + ([["on the grid", where]] if where is not None else []), sort_keys=True, default=str)
         cache = self.__dict__.setdefault("_performances", {})
         found = cache.get(key)
         if found is None:
             if hits is None and settings["follow"] == "track":
                 settings = dict(settings, follow="chords")     # the followed track is gone: follow the chords
-            found = players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords, hits,
-                                    sections, next_intensity=coming, humanize=human, kit_levels=mix,
-                                    lead_into=lead_into)
+
+            def play(end, next_intensity, humanize=human):
+                return players.perform(settings, region.start, end, self.song.timeline, self.song.chords, hits,
+                                       sections, next_intensity=next_intensity, humanize=humanize, kit_levels=mix,
+                                       lead_into=lead_into)
+
+            found = self._lead_in_where_cut(settings, cut, coming, play)
+            if found is None:
+                found = self._played_whole(settings, region, where, coming, play, human)
             if len(cache) > 256:
                 cache.clear()
             cache[key] = found
@@ -1317,12 +1444,19 @@ class MusicMixin:
                 lead_into = None
             if settings and settings["follow"] == "track" and settings.get("follow_track") in chain:
                 settings = dict(settings, follow="chords")
-                return players.perform(settings, region.start, region.end, self.song.timeline, self.song.chords,
-                                       None, self._section_starts(region),
-                                       next_intensity=self._next_intensity(t, region, lead_into),
-                                       humanize=feel,
-                                       kit_levels=self.kit_levels(t) if settings["player"] == "anvil" else None,
-                                       lead_into=lead_into).notes
+                coming = self._next_intensity(t, region, lead_into)
+
+                def play(end, next_intensity, humanize=feel):
+                    return players.perform(settings, region.start, end, self.song.timeline, self.song.chords,
+                                           None, self._section_starts(region), next_intensity=next_intensity,
+                                           humanize=humanize,
+                                           kit_levels=self.kit_levels(t) if settings["player"] == "anvil" else None,
+                                           lead_into=lead_into)
+
+                cut = self._cut_by_the_next_part(t, region, settings, lead_into)
+                found = self._lead_in_where_cut(settings, cut, coming, play)
+                return (self._played_whole(settings, region, self._cut_on_the_grid(region, settings, lead_into, cut),
+                                           coming, play, feel) if found is None else found).notes
             return self.performance(t, region, chain, human, lead_into).notes
 
         return arrangement.sounding_notes(self.song, track, perform_for)
@@ -1345,13 +1479,22 @@ class MusicMixin:
         self._need_regions(track_id, [index])
         from .session import TooLong
 
+        end_bar_before = self.song.end_bar()     # (_new_length_words: a higher count past the end)
+        stops = self._loop_stops([self.regions_of(track_id)[index]])    # (a longer song: loops to its end play on)
         try:
             with self.edit("loop region"):
-                self.regions_of(track_id)[index].loops = loops
+                region = self.regions_of(track_id)[index]
+                if self.song.track_by_id(track_id).is_audio and region.loops != loops:
+                    region.to_todays_rules()           # (a recording changed by hand: today's rules)
+                region.loops = loops
         except TooLong:
             raise ValueError("A song can be at most {} bars long, so this region can play at most {}.".format(
                 MAX_BARS, self._count_words(self._most_loops(track_id, index), "time"))) from None
-        self.announce(self.describe_region_item(track_id, index, number=False))
+        words = self.describe_region_item(track_id, index, number=False)
+        longer = self._new_length_words(end_bar_before)
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(stops)))      # (its words, the new length, the loops)
 
     def _most_loops(self, track_id, index):
         """How many times a region can play in a row before its repeats would reach past bar MAX_BARS."""
@@ -1369,7 +1512,10 @@ class MusicMixin:
         On an instrument track, notes outside the new span are removed (Control+Z brings them back); a
         rhythm player fills whatever length it has. A recording is trimmed: its start moves into the
         recording (or back out, up to where it really begins), and its end shortens or lengthens it.
-        merge_key: presses of one nudge key in a row (session_nudge.py) are one undo step."""
+        merge_key: presses of one nudge key in a row (session_nudge.py) are one undo step. Afterwards loop_words says
+        where each loop the trim made stop somewhere else now plays to (_loop_words), for a caller that speaks for
+        it, after the song's new length when the trim made it longer ("The song is now 18 bars long. Pad now loops
+        to bar 19", without a full stop at the end)."""
         track = self._need_regions(track_id, [index])
         start_tick, end_tick = int(start_tick), int(end_tick)
         if end_tick <= start_tick:
@@ -1377,6 +1523,9 @@ class MusicMixin:
         if start_tick < 0:
             raise ValueError("A region cannot start before the beginning of the song")
         tl = self.song.timeline
+        self.loop_words = ""
+        end_bar_before = self.song.end_bar()     # (_new_length_words: an end moved past the end)
+        loops = self._loop_stops([self.regions_of(track_id)[index]])
         if track.is_audio:
             region = track.regions[index]
             start_frame = int(round((tl.tick_to_seconds(start_tick) - tl.tick_to_seconds(region.tick)) * AUDIO_RATE))
@@ -1391,9 +1540,12 @@ class MusicMixin:
                 raise ValueError("That would trim away the whole recording")
             with self.edit("trim recording", merge=merge_key is not None, merge_key=merge_key):
                 target = self.song.track_by_id(track_id).regions[index]
+                was = (target.offset, target.length, target.tick)
                 target.offset = new_offset
                 target.length = 0 if frames >= available else max(1, frames)
                 target.tick = start_tick
+                if (target.offset, target.length, target.tick) != was:
+                    target.to_todays_rules()           # (trimmed by hand: today's rules, song.RECORDING_RULES)
                 self.song.track_by_id(track_id).sort_regions()
                 new_index = next(i for i, r in enumerate(self.song.track_by_id(track_id).regions) if r is target)
         else:
@@ -1409,8 +1561,33 @@ class MusicMixin:
                     target_track.notes = [n for n in target_track.notes
                                           if not (old_start <= n.tick < old_end and not start_tick <= n.tick < end_tick)]
                 region.start, region.end = start_tick, end_tick
+                if region.player and start_tick != old_start:     # (the notes that stay keep their feel: keep_feel)
+                    region.player = players.keep_feel(region.player, old_start, start_tick, 0)
                 target_track.note_regions.sort(key=lambda r: r.start)
                 new_index = next(i for i, r in enumerate(target_track.note_regions) if r is region)
+        # (the region after a loop, its start moved later, lets the loop play on: said here, or by the caller);
+        # an end moved past the end of the song makes it longer: its new length comes first, and for a caller the
+        # words end without a full stop, as they are put after its own words or before more
+        longer = self._new_length_words(end_bar_before)
+        self.loop_words = self._and_loops(longer, self._loop_words(loops)).rstrip(".")
+        # (for loop_words_again: where the song ended and the loops stopped before the trim and after it)
+        self._trim_marks = (end_bar_before, loops, self.song.end_bar(),
+                            self._loop_stops([self.regions_of(track_id)[new_index]]))
         if speak:
-            self.announce("Trimmed. {}".format(self.describe_region_item(track_id, new_index, number=False)))
+            self.announce(self._and_loops("Trimmed. {}".format(self.describe_region_item(track_id, new_index,
+                                                                                        number=False)),
+                                          self.loop_words))
         return new_index
+
+    def loop_words_again(self):
+        """The last trim's loop_words again, once more edits are to be said with them in one sentence (Region settings:
+        a trim and a new loop count with one OK, the trim's words first). Each loop is named once, where it finally
+        plays to, and the song's new length once (the sixth review of 26 Oct 2026; the sentence named a loop twice,
+        where the trim left it and where the loop count moved it): a loop that has moved on since the trim is left
+        out, as the later words name it, and so is the new length when the song has grown again since."""
+        end_before, before, end_after, after = getattr(self, "_trim_marks", (0, [], 0, []))
+        now = {id(region): stop for _track, region, stop in self._loop_stops()}
+        moved_on = {id(region) for _track, region, stop in after if now.get(id(region), stop) != stop}
+        longer = self._new_length_words(end_before) if self.song.end_bar() == end_after else ""
+        loops = self._loop_words([entry for entry in before if id(entry[1]) not in moved_on])
+        return self._and_loops(longer, loops).rstrip(".")

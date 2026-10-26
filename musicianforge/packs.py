@@ -60,7 +60,10 @@ class PackError(Exception):
 class PackCheckError(PackError):
     """The download came, but it is not the pack's file (the checks in install_pack). The message is a whole sentence
     in plain words, to be said as it is (Russell, 25 Oct 2026: "its check sum differs" was jargon); the exact sizes
-    and check numbers go to the log, and stay in `detail`, which repr shows (the installer's log writes repr)."""
+    and check numbers go to the log, and stay in `detail`, which repr shows (the installer's log writes repr).
+    Since 0.9.11 it is also a download offered at the wrong size, a damaged download and one with no SoundFont in it,
+    and PackDownloader goes on to the other pack after it (Russell, 25 Oct 2026); any other PackError (the internet,
+    a full disk) stops the download there."""
 
     def __init__(self, message, detail=""):
         super().__init__(message)
@@ -76,6 +79,7 @@ WRONG_FILE = "The guitar sounds that were downloaded are not the right file, so 
 WRONG_SIZE = "The guitar sounds that were downloaded are not the right size, so they were removed and not installed. " \
              + TRY_AGAIN
 BAD_UNPACK = "The guitar sounds did not unpack correctly, so they were removed and not installed. " + TRY_AGAIN
+DAMAGED = "The guitar sounds that were downloaded are damaged, so they were removed and not installed. " + TRY_AGAIN
 
 
 def soundfont_folder():
@@ -123,6 +127,11 @@ class _NoRetry(Exception):
         self.error = error
 
 
+class _WrongSize(PackError):
+    """The file offered is not the size the pack's download must be: install_pack says it in plain words (WRONG_SIZE;
+    these exact numbers go to the log), and PackDownloader goes on to the other pack."""
+
+
 def download_file(url, dest, expected_size, progress=None, attempts=3, timeout=60):
     """Download url to dest (through dest + '.part'), checking the size. progress(fraction).
 
@@ -138,8 +147,8 @@ def download_file(url, dest, expected_size, progress=None, attempts=3, timeout=6
             with urllib.request.urlopen(request, timeout=timeout) as response, open(temp, "wb") as out:
                 announced = int(response.headers.get("Content-Length") or 0)
                 if expected_size and announced and announced != expected_size:
-                    raise _NoRetry(PackError("the file offered was {} bytes instead of {}".format(announced,
-                                                                                               expected_size)))
+                    raise _NoRetry(_WrongSize("the file offered was {} bytes instead of {}".format(
+                        announced, expected_size)))
                 total = announced or expected_size
                 done = 0
                 while True:
@@ -148,7 +157,7 @@ def download_file(url, dest, expected_size, progress=None, attempts=3, timeout=6
                         break
                     done += len(chunk)
                     if expected_size and done > expected_size:
-                        raise _NoRetry(PackError("the download was larger than {} bytes".format(expected_size)))
+                        raise _NoRetry(_WrongSize("the download was larger than {} bytes".format(expected_size)))
                     out.write(chunk)
                     if progress is not None and total:
                         progress(min(1.0, done / float(total)))
@@ -181,7 +190,9 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
     """Download one pack, unpack its SoundFont into the soundfonts folder and check it.
 
     url and work_dir are for tests (a local server, a temporary folder). say(text) reports each
-    stage in words. Returns the SoundFont's path. The downloaded archive is always deleted."""
+    stage in words. Returns the SoundFont's path. The downloaded archive is always deleted.
+    A download that came but is not right (the wrong file or size, damaged, no SoundFont in it) raises
+    PackCheckError, in plain words; the internet or a full disk raises another PackError (or an OSError)."""
     folder = folder or soundfont_folder()
     os.makedirs(folder, exist_ok=True)
     # The download waits in a folder of its own, emptied first: a download cut off by closing
@@ -200,16 +211,26 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
     say = say or (lambda text: None)
     try:
         say("Downloading {} ({} megabytes).".format(pack.name, pack.archive_size // 1_000_000))
-        download_file(url or pack.url, archive, pack.archive_size,
-                      progress=(lambda f: progress(0.7 * f)) if progress else None)
+        try:
+            download_file(url or pack.url, archive, pack.archive_size,
+                          progress=(lambda f: progress(0.7 * f)) if progress else None)
+        except _WrongSize as exc:
+            # another file is offered: said in plain words, and the other pack is still downloaded (0.9.11; before,
+            # said as "could not be downloaded", as if the internet had gone, and the other pack waited)
+            log.warning("%s: %s", pack.name, exc)
+            raise PackCheckError(WRONG_SIZE, str(exc)) from None
         say("Unpacking {}.".format(pack.name))
         try:
             entries = sevenzip.list_files(archive)
         except sevenzip.ArchiveError as exc:
-            raise PackError(str(exc)) from None
+            # damaged, or no pack at all: it came, so it is not the internet (0.9.11, as a file of the wrong size)
+            log.warning("%s: %s", pack.name, exc)
+            raise PackCheckError(DAMAGED, str(exc)) from None
         sf2 = [e for e in entries if e.name.lower().endswith(".sf2")]
         if not sf2:
-            raise PackError("the download has no SoundFont in it")
+            detail = "the download has no SoundFont in it"
+            log.warning("%s: %s", pack.name, detail)
+            raise PackCheckError(WRONG_FILE, detail)
         entry = max(sf2, key=lambda e: e.size)
         # the SoundFont must be the one the pack promises, by its exact size and the CRC the archive stores for it
         # (the review of 24 Oct 2026: sf2_crc was carried but never compared, so a download of the right size
@@ -229,7 +250,8 @@ def install_pack(pack, folder=None, progress=None, say=None, url=None, work_dir=
             sevenzip.extract_file(archive, entry, target,
                                   progress=(lambda f: progress(0.7 + 0.3 * f)) if progress else None)
         except sevenzip.ArchiveError as exc:
-            raise PackError(str(exc)) from None
+            log.warning("%s: %s", pack.name, exc)                   # (damaged: as above)
+            raise PackCheckError(DAMAGED, str(exc)) from None
         if not is_installed(pack, folder):
             size = os.path.getsize(target) if os.path.exists(target) else None
             if os.path.exists(target):

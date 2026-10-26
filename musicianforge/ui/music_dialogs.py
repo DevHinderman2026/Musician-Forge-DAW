@@ -140,9 +140,12 @@ class ChordTrackDialog(wx.Dialog):
             # brings this window back with everything typed still in it
             values = dlg.get_values()
             self._ask_before_replacing(values)
-            return self.session.set_chord(*values)
+            # the list lands on the chord change and the screen reader reads its line, which is all the session would
+            # say: not said as well (NVDA said it twice; the keyboard monkey, 26 Oct 2026)
+            return self.session.set_chord(*values, speak=False)
 
-        with ChordDialog(self, self.session, tick=self.session.position_tick()) as dlg:
+        # at the playhead, or at the end of the song the last bar's start (Session.adding_tick)
+        with ChordDialog(self, self.session, tick=self.session.adding_tick()) as dlg:
             index = ask_values(self.run_modal, dlg, apply)
         if index is not None:
             self.refresh(index)
@@ -179,7 +182,7 @@ class ChordTrackDialog(wx.Dialog):
             if any(i != index and c.tick == tick for i, c in enumerate(self.session.song.chords)):
                 raise ValueError("Another chord change is already at {}, so this one was not moved. Choose another "
                                  "beat, or edit that one instead".format(tl.spoken_bar_position(tick)))
-            return self.session.set_chord(*values, replacing=index)
+            return self.session.set_chord(*values, replacing=index, speak=False)        # (read by the list, as in Add)
 
         with ChordDialog(self, self.session, change=change, title="Edit chord change") as dlg:
             new_index = ask_values(self.run_modal, dlg, apply)
@@ -378,7 +381,9 @@ class ChordStripsDialog(wx.Dialog):
         with ChordStripDialog(self, self.session, index, root, quality, bass) as dlg:
             values = ask_values(self.run_modal, dlg)
         if values is not None:
-            self.session.set_chord_strip(index, *values)
+            # the strip's new line, which the list reads (the focus ends there), says it all: not said as well (NVDA
+            # said it twice; the keyboard monkey, 26 Oct 2026)
+            self.session.set_chord_strip(index, *values, speak=False)
 
     def play(self):
         self.session.preview_chord_strip(self.selected())

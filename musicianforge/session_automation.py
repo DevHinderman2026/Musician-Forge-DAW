@@ -79,13 +79,18 @@ class AutomationMixin:
             del self.song.track_by_id(track_id).automation[index]
         self.announce("Removed the {} lane. The track's own setting is used again.".format(name))
 
-    def set_lane_on(self, track_id, index, on=None):
-        """Turn a lane on or off (None switches it); off uses the track's own setting, and keeps the points."""
+    def set_lane_on(self, track_id, index, on=None, speak=True):
+        """Turn a lane on or off (None switches it); off uses the track's own setting, and keeps the points.
+        speak=False: the Automation window's list, where the focus ends (from its button too), shows and the screen
+        reader reads the lane's new line ("Volume: 4 points, off (the track's own setting is used)"), which is all
+        that is said here, so nothing is said (said as well, NVDA said the line twice; the keyboard monkey,
+        26 Oct 2026)."""
         track, lane = self._lane(track_id, index)
         value = (not lane.get("on", True)) if on is None else bool(on)
         with self.edit("turn automation {}".format("on" if value else "off")):
             self.song.track_by_id(track_id).automation[index]["on"] = value
-        self.announce(self.describe_lane(track_id, index))
+        if speak:
+            self.announce(self.describe_lane(track_id, index))
 
     def _drop_lanes_for_effect(self, track, effect_id):
         track.automation = [lane for lane in track.automation
@@ -118,13 +123,17 @@ class AutomationMixin:
         track, lane = self._lane(track_id, lane_index)
         return auto.value_range(track, lane)
 
-    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None, tick=None, asked=False):
+    def set_point(self, track_id, lane_index, bar, beat, value, glide=True, replacing=None, tick=None, asked=False,
+                  speak=True):
         """Add a point (or change the one at `replacing`). Returns its place in the lane.
 
         tick: the exact moment, used instead of bar and beat (the point window passes the point's own moment
         when its place was left as shown, since the beat it shows is rounded to two decimals; the review of
         25 Oct 2026). asked: the window has just asked whether to replace the point there and was told Yes (0.9.11),
-        so "Replaced the point that was there" is not said again."""
+        so "Replaced the point that was there" is not said again. speak=False: the Points window's list lands on the
+        point, and the screen reader reads its line ("Bar 5, beat 1: volume 80, glides to volume 60 by bar 7,
+        beat 1"), so only what the line does not say is said: that it took the place of a point already there, when
+        that was not asked first (said in full as well, NVDA said the line twice; the keyboard monkey, 26 Oct 2026)."""
         track, lane = self._lane(track_id, lane_index)
         tl = self.song.timeline
         if tick is None:
@@ -160,8 +169,11 @@ class AutomationMixin:
             points = [p for i, p in enumerate(target["points"]) if i != replacing]
             target["points"] = auto.sort_points(points + [[tick, value, bool(glide)]])
         index = next(i for i, p in enumerate(self.lanes_of(track_id)[lane_index]["points"]) if p[0] == tick)
-        self.announce(("Replaced the point that was there. " if replaced and not asked else "")
-                      + self.describe_point(track_id, lane_index, index))
+        if speak:
+            self.announce(("Replaced the point that was there. " if replaced and not asked else "")
+                          + self.describe_point(track_id, lane_index, index))
+        elif replaced and not asked:
+            self.announce("Replaced the point that was there")
         return index
 
     def remove_point(self, track_id, lane_index, point_index):

@@ -7,7 +7,8 @@ Everything here works on whole bars, and keeps the song consistent:
 - a looping region keeps playing around inserted or deleted bars (0.9.11; Russell, 25 Oct 2026): up to them
   it plays as it did, inserted bars are empty for it, and the rest of its playing carries on after them
   with the phase it had (regions.continue_loop); copied bars hold what a loop plays in them, and their own
-  loops stay inside them where they are put,
+  loops stay inside them where they are put; a looping recording on an audio track does the same, in seconds
+  (audioloops.py; Russell, 25 Oct 2026, "Keep going on both sides"),
 - tempo, time signature and key changes move with their bars,
 - automation points (volume, pan, effect settings) move with their bars too (23 Oct 2026; until then they stayed
   where they were, so a moved or deleted section left its fades behind),
@@ -21,8 +22,10 @@ import copy
 from dataclasses import dataclass, field, replace
 
 from . import arrangement
+from . import audioloops
 from . import automation as autolanes
 from . import chords as chordtrack
+from . import players
 from . import regions as regionlib
 from .song import DEFAULT_SECTION_BARS, MAX_BARS, Note, NoteRegion, Section
 from .timeline import KeyChange, TempoChange, TimeSignatureChange
@@ -46,8 +49,9 @@ class Clip:
     automation: dict = field(default_factory=dict)
 
 
-def extract(song, start_bar, end_bar):
-    """Copy bars start_bar .. end_bar - 1 (notes that run past the end are shortened)."""
+def extract(song, start_bar, end_bar, loops_placed=None):
+    """Copy bars start_bar .. end_bar - 1 (notes that run past the end are shortened). loops_placed: a LoopsCarriedOn,
+    told when the copy holds pieces of a looping recording (audioloops.copy_playing_in)."""
     tl = song.timeline
     t0, t1 = tl.bar_to_tick(start_bar), tl.bar_to_tick(end_bar)
     ts = tl.time_signature_at_bar(start_bar)
@@ -67,9 +71,11 @@ def extract(song, start_bar, end_bar):
                            for n in track.notes if t0 <= n.tick < t1]
         regions[track.id] = [(r.tick - t0, copy.deepcopy(r)) for r in track.regions if t0 <= r.tick < t1]
         spans[track.id] = [NoteRegion(max(r.start, t0) - t0, min(r.end, t1) - t0, r.name, r.mute,
-                                      copy.deepcopy(r.player), r.loops if r.end <= t1 else 1)
+                                      players.carry_feel(copy.deepcopy(r.player), r.start),     # (Keep its feel)
+                                      r.loops if r.end <= t1 else 1)
                            for r in track.note_regions if r.start < t1 and r.end > t0]
         _copy_loops_playing_in(track, t0, t1, song_end, notes, spans)
+    audioloops.copy_playing_in(song, t0, t1, regions, loops_placed)     # (looping recordings too, 0.9.11)
     clip_chords = []
     starting = chordtrack.chord_at(song.chords, t0)
     if starting is not None:
@@ -109,7 +115,8 @@ def insert_clip(song, at_bar, clip, loops_placed=None):
     # looping regions still playing where the bars go in, worked out before anything moves (0.9.11)
     song_end = song.song_end_tick()
     across = {track.id: [_as_it_was(track, r) + (until,) for r, until in _looping(track, song_end)
-                         if r.start < at_tick < until] for track in song.tracks}
+                         if r.start < at_tick < until or _cut_at(track, r, until, at_tick)] for track in song.tracks}
+    audio_across = audioloops.across_insert(song, at_tick)              # (and looping recordings, in seconds)
 
     # Order matters: later entries win when two land on the same bar.
     # 1) what was in effect at the insertion point, restored after the clip
@@ -151,19 +158,23 @@ def insert_clip(song, at_bar, clip, loops_placed=None):
             elif r.start >= at_tick:
                 r.start += clip.ticks
                 r.end += clip.ticks
+                r.player = players.keep_feel(r.player, r.start - clip.ticks, r.start)        # (Keep its feel)
                 spans.append(r)
             else:  # the new bars go inside this region: it splits around them
                 spans.append(NoteRegion(r.start, at_tick, r.name, r.mute, copy.deepcopy(r.player)))
                 spans.append(NoteRegion(at_tick + clip.ticks, r.end + clip.ticks, r.name, r.mute,
-                                        copy.deepcopy(r.player)))
+                                        players.keep_feel(copy.deepcopy(r.player), r.start, at_tick + clip.ticks,
+                                                          clip.ticks)))      # (its notes there keep their feel)
         for r in clip.note_regions.get(track.id, []):
-            spans.append(NoteRegion(at_tick + r.start, at_tick + r.end, r.name, r.mute, copy.deepcopy(r.player),
-                                    r.loops))
+            # (with the feel it had, extract; back where that came from, it needs none)
+            settings = players.keep_feel(copy.deepcopy(r.player), at_tick + r.start, at_tick + r.start)
+            spans.append(NoteRegion(at_tick + r.start, at_tick + r.end, r.name, r.mute, settings, r.loops))
         spans.sort(key=lambda r: r.start)
         track.note_regions = spans
         _loops_around_inserted_bars(track, at_tick, clip.ticks, across.get(track.id, []),
                                     max(song_end, at_tick) + clip.ticks, loops_placed)
         _insert_lanes(track, at_tick, clip)
+    audioloops.after_insert(song, at_tick, clip.ticks, audio_across, loops_placed)
 
     # the chord track: what plays after the inserted bars is what played there before
     after = chordtrack.chord_at(song.chords, at_tick)
@@ -206,7 +217,9 @@ def delete_bars(song, start_bar, end_bar, loops_placed=None):
     # looping regions whose playing reaches into the deleted bars and out of them, worked out first (0.9.11)
     song_end = song.song_end_tick()
     across = {track.id: [_as_it_was(track, r) + (until,) for r, until in _looping(track, song_end)
-                         if r.start < t1 and until > t0 and (r.start < t0 or until > t1)] for track in song.tracks}
+                         if r.start < t1 and until > t0 and (r.start < t0 or until > t1)
+                         or _cut_at(track, r, until, t0)] for track in song.tracks}
+    audio_across = audioloops.across_delete(song, t0, t1)               # (and looping recordings, in seconds)
 
     def keep(bar):
         return bar < start_bar or bar >= end_bar
@@ -249,12 +262,16 @@ def delete_bars(song, start_bar, end_bar, loops_placed=None):
             end = r.end if r.end <= t0 else max(t0, r.end - span)
             if r.start >= t1:
                 start, end = r.start - span, r.end - span
+                r.player = players.keep_feel(r.player, r.start, start)                        # (Keep its feel)
+            elif r.start >= t0 and end > start:     # (it began in the deleted bars: what is left keeps its feel)
+                r.player = players.keep_feel(r.player, r.start, start, -span)
             if end > start:
                 r.start, r.end = start, end
                 spans.append(r)
         track.note_regions = spans
         _loops_around_deleted_bars(track, t0, t1, across.get(track.id, []), t1 >= song_end, loops_placed, song_end)
         _delete_lanes(track, t0, t1)
+    audioloops.after_delete(song, t0, t1, audio_across, t1 >= song_end, loops_placed)
 
     # the chord track: the chord playing at the end of the deleted bars carries on from where they were
     at_end = chordtrack.chord_at(song.chords, t1)
@@ -278,9 +295,14 @@ def delete_bars(song, start_bar, end_bar, loops_placed=None):
 class LoopsCarriedOn(list):
     """What an edit carried on of the looping regions it went through (insert_clip and delete_bars add to one given as
     loops_placed): (track, the regions placed, the region as it was, p, q, until), as regions.continue_loop has them.
-    written: whether the session wrote one of them out as notes (Session._matching_loops)."""
+    written: whether the session wrote one of them out as notes (Session._matching_loops). recordings: how many
+    looping recordings it cut into pieces (audioloops.py; the session says so)."""
 
     written = False
+    matched = False           # the session matches what is carried on to the loops, its feel too (_matching_loops)
+    recordings = 0
+    kept = ()                 # the same for the part of a repeat kept just before inserted or deleted bars (_keep)
+    kept_written = False      # whether the session wrote one of those out as notes
 
 
 def _looping(track, song_end):
@@ -296,6 +318,38 @@ def _as_it_was(track, region):
     return copy.deepcopy(region), [copy.copy(n) for n in track.notes if region.start <= n.tick < region.end]
 
 
+def _the_loops_feel(new, was, p, q):
+    """Copies carrying a loop on from q, with the phase it had at p, that nobody matches to the loop (a moved
+    section's): each plays the loop's own feel there (players.keep_loop_feel; Russell, 25 Oct 2026: "Keep its feel").
+    Where the session matches them to the loop (Session._match_loops), it gives them the feel itself."""
+    for region in new:
+        region.player = players.keep_loop_feel(region.player, was.player, was.start, was.length, region.start,
+                                               region.start - (q - p))
+
+
+def _cut_at(track, region, until, tick):
+    """Whether the next region cuts a looping region's playing exactly at `tick`, where bars go in or are taken out.
+    It then stops there, as a loop that region cuts one bar later always did: a section added there starts empty for
+    it, and a section taken out that starts with that region leaves the bars after it as they were (Russell, 25 Oct
+    2026, "The loop follows, and says so": until then the loop followed the region away and played on into the new
+    bars, or into the bars after the deleted ones)."""
+    return region.start < tick == until and any(r.start == tick for r in track.note_regions if r is not region)
+
+
+def _keep(placed, track, kept, was, tick):
+    """Give the session (placed: a LoopsCarriedOn) the part of a loop's repeat that stop_loop_at kept as a region of
+    its own just before `tick`, so a rhythm player's is matched to the loop, as what carries a loop on is: it starts
+    its pattern afresh and follows the chords where it is, so a pad's last bar before a section added in the middle of
+    its repeat played the chord there, not the loop's (found on 25 Oct 2026)."""
+    if placed is None or not kept:
+        return
+    entry = (track, kept, was, kept[0].start, kept[0].start, tick)
+    if isinstance(placed, LoopsCarriedOn):
+        placed.kept += (entry,)
+    else:
+        placed.append(entry)
+
+
 def _loops_around_inserted_bars(track, at_tick, ticks, across, song_end, placed=None):
     """After `ticks` of bars went in at at_tick: a loop that was playing there plays as it did up to them, they are
     empty for it, and the rest of its playing carries on after them with the phase it had. A loop that came in with
@@ -306,6 +360,8 @@ def _loops_around_inserted_bars(track, at_tick, ticks, across, song_end, placed=
         new = regionlib.continue_loop(track, was, own, at_tick, after, until, song_end - ticks)
         if placed is not None and new:
             placed.append((track, new, was, at_tick, after, until))
+        if new and not getattr(placed, "matched", False):
+            _the_loops_feel(new, was, at_tick, after)
     for region in [r for r in track.note_regions if at_tick <= r.start < after and r.loops != 1]:
         index = next(i for i, r in enumerate(track.note_regions) if r is region)
         if arrangement.note_region_repeats(track, index, song_end)[1] > after:
@@ -313,7 +369,7 @@ def _loops_around_inserted_bars(track, at_tick, ticks, across, song_end, placed=
     for was, own, _until in across:
         head = next((r for r in track.note_regions if r.start == was.start), None)
         if head is not None:
-            regionlib.stop_loop_at(track, head, at_tick, own, first_end=was.end)
+            _keep(placed, track, regionlib.stop_loop_at(track, head, at_tick, own, first_end=was.end), was, at_tick)
 
 
 def _loops_around_deleted_bars(track, t0, t1, across, at_the_end, placed=None, song_end=None):
@@ -327,11 +383,14 @@ def _loops_around_deleted_bars(track, t0, t1, across, at_the_end, placed=None, s
             new = regionlib.continue_loop(track, was, own, t1, t0, until, song_end)
             if placed is not None and new:
                 placed.append((track, new, was, t1, t0, until))
+            if new and not getattr(placed, "matched", False):
+                _the_loops_feel(new, was, t1, t0)
     for was, own, _until in across:
         if was.start < t0:
             head = next((r for r in track.note_regions if r.start == was.start), None)
             if head is not None:
-                regionlib.stop_loop_at(track, head, t0, own, ends_there=at_the_end, first_end=was.end)
+                _keep(placed, track, regionlib.stop_loop_at(track, head, t0, own, ends_there=at_the_end,
+                                                            first_end=was.end), was, t0)
 
 
 def _loops_stop_at_the_end(song, placed=None):
@@ -353,6 +412,7 @@ def _loops_stop_at_the_end(song, placed=None):
             new = regionlib.place_pieces(track, was, pieces[1:], region.start)
             if placed is not None and new:
                 placed.append((track, new, was, new[0].start, new[0].start, end))
+    audioloops.stop_at_the_end(song, placed)                           # (looping recordings too)
 
 
 def _copy_loops_playing_in(track, t0, t1, song_end, notes, spans):
@@ -370,7 +430,9 @@ def _copy_loops_playing_in(track, t0, t1, song_end, notes, spans):
         spans[track.id] = [s for s in spans[track.id] if s.start >= reach]
         notes[track.id] = [n for n in notes[track.id] if n[0] >= reach]
         for start, end, loops, piece_notes in pieces:
-            spans[track.id].append(NoteRegion(start, end, was.name, was.mute, copy.deepcopy(was.player), loops))
+            # (each plays the loop's own feel there, wherever the copy goes: Keep its feel)
+            settings = players.carry_feel(copy.deepcopy(was.player), was.start, (t0 + start - was.start) % was.length)
+            spans[track.id].append(NoteRegion(start, end, was.name, was.mute, settings, loops))
             notes[track.id] += [(start + tick, min(length, t1 - t0 - start - tick), pitch, velocity)
                                 for tick, length, pitch, velocity in piece_notes]
         spans[track.id].sort(key=lambda s: s.start)
@@ -409,31 +471,48 @@ def _glide_at(points, tick):
     return bool(before[-1][2]) if before else True
 
 
-def _value_at(points, tick):
+def _step_of(track, lane):
+    """How a lane keeps its values: a function that puts a value on the lane's own step, as a point set by hand and a
+    project file have it (automation.clamp_value: whole numbers for volume, pan and a percent setting, an effect
+    setting's own decimals), or None for a lane whose effect is gone (six decimals, as before; a project file leaves
+    such a lane out). Until the random-edit tester of 26 Oct 2026 a point that an edit added where it cut through a lane
+    kept six decimals (pan 33.333333), which the lane does not keep: Control+Z then Control+Y, or the project saved and
+    opened again, had 33, so the song in memory and its file differed."""
+    if lane.get("target") == autolanes.EFFECT and autolanes.param_of(track, lane) is None:
+        return None
+    return lambda value: autolanes.clamp_value(track, lane, value)
+
+
+def _on_step(value, step):
+    return round(float(value), 6) if step is None else step(value)
+
+
+def _value_at(points, tick, step=None):
+    """A lane's value at `tick`, on its step (_step_of)."""
     value = autolanes.value_at(points, tick)
-    return None if value is None else round(float(value), 6)
+    return None if value is None else _on_step(value, step)
 
 
-def _value_before(points, tick):
-    """The value a lane comes to just before `tick` (a point exactly at `tick` may jump away from it)."""
+def _value_before(points, tick, step=None):
+    """The value a lane comes to just before `tick` (a point exactly at `tick` may jump away from it), on its step."""
     before = [p for p in points if p[0] < tick]
     if not before:
-        return _value_at(points, tick)
+        return _value_at(points, tick, step)
     last = before[-1]
     following = points[len(before)] if len(before) < len(points) else None
     if not last[2] or following is None:
         return last[1]
     span = float(following[0] - last[0])
-    return round(last[1] + (following[1] - last[1]) * (tick - last[0]) / span, 6) if span > 0 else following[1]
+    return _on_step(last[1] + (following[1] - last[1]) * (tick - last[0]) / span, step) if span > 0 else following[1]
 
 
-def _cut_point(points, tick):
-    """A point at `tick` that keeps a lane exactly as it was there: [tick, value, glide]."""
-    return [int(tick), _value_at(points, tick), _glide_at(points, tick)]
+def _cut_point(points, tick, step=None):
+    """A point at `tick` that keeps a lane as it was there, its value on the lane's step: [tick, value, glide]."""
+    return [int(tick), _value_at(points, tick, step), _glide_at(points, tick)]
 
 
-def _needed(points, i):
-    """Whether the lane would sound different without points[i]."""
+def _needed(points, i, step=None):
+    """Whether the lane would sound different without points[i] (step: the lane's, _step_of)."""
     tick, value, glide = points[i][0], points[i][1], bool(points[i][2])
     if len(points) == 1:
         return True
@@ -447,16 +526,19 @@ def _needed(points, i):
         return value != prev[1]
     if not glide:
         return True
-    # three points with glides: this one is needed unless it lies on the straight line between its neighbours
+    # three points with glides: this one is needed unless it lies on the straight line between its neighbours (on the
+    # lane's step: an added point's value is on it, so it may be a little off the line, as the lane has it there)
     span = float(nxt[0] - prev[0])
     on_line = prev[1] + (nxt[1] - prev[1]) * (tick - prev[0]) / span if span > 0 else nxt[1]
+    if step is not None:
+        return step(on_line) != value
     return abs(on_line - value) > 1e-6
 
 
-def _tidy(entries):
+def _tidy(entries, step=None):
     """entries: [(point, added)] in any order; a later entry at the same tick wins, so the caller lists an
     added point before a real one at the same place. Returns the lane's points, in time order, without added
-    points it does not need."""
+    points it does not need (step: the lane's, _step_of)."""
     by_tick = {}
     for point, added in entries:
         if point[1] is None:
@@ -468,7 +550,7 @@ def _tidy(entries):
         changed = False
         points = [p for p, _added in ordered]
         for i in range(len(ordered) - 1, -1, -1):
-            if ordered[i][1] and not _needed(points, i):
+            if ordered[i][1] and not _needed(points, i, step):
                 del ordered[i]
                 changed = True
                 break
@@ -483,13 +565,14 @@ def _extract_lanes(track, t0, t1):
         if not points:
             continue
         inside = [[p[0] - t0, p[1], bool(p[2])] for p in points if t0 <= p[0] < t1]
-        start = _cut_point(points, t0) + [True]            # a fourth item True: a point added here, not placed
+        step = _step_of(track, lane)
+        start = _cut_point(points, t0, step) + [True]      # a fourth item True: a point added here, not placed
         start[0] = 0
         clip_points = ([start] if not inside or inside[0][0] > 0 else []) + inside
         last = clip_points[-1]
         if last[2] and t1 - 1 - t0 > last[0]:
             # the lane glides on past the end of the copied bars: keep where it has got to by their last tick
-            clip_points.append([t1 - 1 - t0, _value_at(points, t1 - 1), True, True])
+            clip_points.append([t1 - 1 - t0, _value_at(points, t1 - 1, step), True, True])
         found[autolanes.target_key(lane)] = clip_points
     return found
 
@@ -516,20 +599,21 @@ def _insert_lanes(track, at_tick, clip):
         if not points and not clip_points:
             continue          # a lane without points changes nothing; giving it one would
         entries = [(list(p), False) for p in points if p[0] < at_tick]
+        step = _step_of(track, lane)
         if points:
             if clip_points is None:
                 # new bars hold the value the lane had just before them (they belong to the section they follow)
-                entries.append(([at_tick, _value_before(points, at_tick), False], True))
+                entries.append(([at_tick, _value_before(points, at_tick, step), False], True))
             elif at_tick > 0 and _glide_at(points, at_tick - 1):
-                entries.append((_cut_point(points, at_tick - 1), True))        # a glide reaches the clip as before
+                entries.append((_cut_point(points, at_tick - 1, step), True))  # a glide reaches the clip as before
         for p in clip_points or []:
             entries.append(([at_tick + p[0], p[1], bool(p[2])], len(p) > 3 and bool(p[3])))
         if points:
-            after = _cut_point(points, at_tick)          # after the new bars the lane goes on as it did from at_tick
+            after = _cut_point(points, at_tick, step)    # after the new bars the lane goes on as it did from at_tick
             after[0] = at_tick + ticks
             entries.append((after, True))
         entries += [([p[0] + ticks, p[1], bool(p[2])], False) for p in points if p[0] >= at_tick]
-        lane["points"] = _tidy(entries)
+        lane["points"] = _tidy(entries, step)
 
 
 def _delete_lanes(track, t0, t1):
@@ -541,13 +625,14 @@ def _delete_lanes(track, t0, t1):
         if not points:
             continue
         entries = [(list(p), False) for p in points if p[0] < t0]
+        step = _step_of(track, lane)
         if t0 > 0 and _glide_at(points, t0 - 1):
-            entries.append((_cut_point(points, t0 - 1), True))        # a glide into the deleted bars ends as it did
-        joined = _cut_point(points, t1)
+            entries.append((_cut_point(points, t0 - 1, step), True))  # a glide into the deleted bars ends as it did
+        joined = _cut_point(points, t1, step)
         joined[0] = t0
         entries.append((joined, True))
         entries += [([p[0] - span, p[1], bool(p[2])], False) for p in points if p[0] >= t1]
-        lane["points"] = _tidy(entries)
+        lane["points"] = _tidy(entries, step)
 
 
 def _drop_redundant_changes(tl):
@@ -589,11 +674,33 @@ def duplicate_section(song, index, loops_placed=None):
     insert_clip."""
     start, end = song.section_bounds(index)
     song_end = song.section_bounds(len(song.sections) - 1)[1]
-    clip = extract(song, start, end)
+    clip = extract(song, start, end, loops_placed)
     _loops_stop_at_the_end(song, loops_placed)            # (the copy sounds like the section it copies)
-    insert_clip(song, song_end, clip)
+    # (loops_placed too: a copied looping recording that would play on past the copy is cut there, into a piece where
+    # a repeat is cut partway, and the session says so; at the end of the song no loop plays across, so it changes
+    # nothing else)
+    insert_clip(song, song_end, clip, loops_placed)
     song.sections.append(replace(song.sections[index]))
+    if song.last_music_bar() >= song.end_bar():
+        tl = song.timeline
+        _the_copy_stops_at_its_end(song, tl.bar_to_tick(song_end) - tl.bar_to_tick(start), loops_placed)
     return len(song.sections) - 1
+
+
+def _the_copy_stops_at_its_end(song, shift, placed=None):
+    """duplicate_section, the copy at the end of the song: a recording in it plays on past its end (into the next
+    section, where it came from), so the copy grows to hold it once the edit is done (Song.fit_last_section). A loop
+    that plays to the end of the song stops where the copy ends all the same, as one does where a section is added at
+    the end (_loops_stop_at_the_end; Russell, 25 Oct 2026, "Stop where the song ended"); until the random-edit tester
+    of 26 Oct 2026 it played on into the bar the copy grew by. What carries a rhythm player's loop on there is matched
+    (Session._match_loops) to what the section it was copied from played: shift, how far the copy is from it."""
+    mark = len(placed) if placed is not None else 0
+    _loops_stop_at_the_end(song, placed)
+    for number in range(mark, len(placed) if placed is not None else 0):
+        track, new, was, p, q, until = placed[number]
+        source = copy.copy(was)
+        source.start, source.end = was.start - shift, was.end - shift
+        placed[number] = (track, new, source, p - shift, q, until - shift)
 
 
 def delete_section(song, index, loops_placed=None):
@@ -606,8 +713,9 @@ def delete_section(song, index, loops_placed=None):
     del song.sections[index]
 
 
-def move_section(song, index, delta):
-    """Swap a section with its neighbour (delta -1 = earlier, +1 = later). Returns its new index."""
+def move_section(song, index, delta, loops_placed=None):
+    """Swap a section with its neighbour (delta -1 = earlier, +1 = later). Returns its new index. loops_placed: as
+    for insert_clip (the session asks whether a looping recording was cut into pieces)."""
     other = index + delta
     if not 0 <= other < len(song.sections) or delta not in (-1, 1):
         raise ValueError("That section cannot move further")
@@ -615,12 +723,14 @@ def move_section(song, index, delta):
     # move `second` in front of `first`
     s2, e2 = song.section_bounds(second)
     s1, _e1 = song.section_bounds(first)
-    clip = extract(song, s2, e2)
-    delete_bars(song, s2, e2)
+    # (looping recordings are cut where the bars part first, so nothing plays across them: audioloops.split_at)
+    audioloops.split_at(song, [song.timeline.bar_to_tick(bar) for bar in (s1, s2, e2)], loops_placed)
+    clip = extract(song, s2, e2, loops_placed)
+    delete_bars(song, s2, e2, loops_placed)
     # (0.9.11) the moved section is left out of the song while its bars are out of it, so the song's end is right for
     # the loops insert_clip keeps playing around them; the order comes out as the swap it always was
     moved = song.sections.pop(second)
-    insert_clip(song, s1, clip)
+    insert_clip(song, s1, clip, loops_placed)
     song.sections.insert(first, moved)
     return other
 

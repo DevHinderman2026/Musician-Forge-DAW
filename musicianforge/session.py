@@ -21,6 +21,7 @@ import numpy as np
 from . import (arpeggiator, arrange, audioimport, audiotracks, effects, exportcheck, latency, m4a, meterchange,
                midifile, packs, pitchfix, player_pieces,
                projects, regions, theory, wavfile)
+from . import audioloops
 from . import chords as chords_module
 from . import keyboard_map as km
 from .engine import PlaybackData, render_offline
@@ -61,6 +62,9 @@ TAKE_STOPS = "The take stops at the end of bar {}: a song can be at most {} bars
 # new bars at the end of the song, where a loop until the end of the song stops where the song ended (Russell, 25 Oct
 # 2026), and the part of its repeat the old end cut was written out as notes, to sound as it did
 STOPS_AS_NOTES = ". The loop stops where the song ended, and its last part is kept as notes, so it sounds as it did"
+# the part of a loop's repeat kept as a region of its own just before new bars, or bars taken out, written out as notes
+# to sound as it did, when nothing after them was (arrange._keep; 25 Oct 2026)
+KEPT_AS_NOTES = ". Part of the loop is kept as notes, so it sounds as it did"
 
 
 def room_words(room, what):
@@ -461,6 +465,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.song.tidy_regions()
             if self.song.past_max_bars():
                 raise TooLong(TOO_LONG)       # (the paths that lengthen the song say it in their own words first)
+            self._freeze_feel(snapshot)       # (a moved or copied rhythm player keeps the tempos its feel came from)
         except Exception:
             self.song = Song.from_dict(snapshot)
             self._sync_engine()
@@ -898,6 +903,37 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 self._playhead = start
         return self._playhead
 
+    def adding_tick(self):
+        """Where a window that adds something at the playhead starts (a note, a chord change, a tempo, time signature
+        or key change, an automation point), and Go to bar: the playhead, or at the end of the song, where a song
+        played to its end stays (0.9.11), the start of the last bar, where what is added is heard. They started at
+        the bar after the last, where nothing plays, and Add section then moved what was put there on again, so it
+        was never heard (Russell, 25 Oct 2026: "Carry on, start at the last bar"). A bar typed past the end is still
+        taken as it is."""
+        tick = self.position_tick()
+        if tick >= self.song.song_end_tick():
+            return max(0, self.song.timeline.bar_to_tick(max(1, self.song.end_bar() - 1)))
+        return tick
+
+    def _new_length_words(self, end_bar_before):
+        """After a paste or an audio import: when the song got longer, because the last section grew to hold what was
+        put there (at the end of the song, or running past it from the last bar), how long the song is now (Russell,
+        25 Oct 2026: "Yes, say the new length"); otherwise nothing. end_bar_before: Song.end_bar() before the
+        change."""
+        if self.song.end_bar() <= end_bar_before:
+            return ""
+        bars = self.song.end_bar() - 1
+        return "The song is now {} bar{} long.".format(bars, "" if bars == 1 else "s")
+
+    def _and_length(self, end_bar_before, more=""):
+        """A section edit's words go on with ". The song is now 12 bars long" when the song got longer (Russell, 26
+        Oct 2026, "Yes, say it there too"), with its full stop when nothing more is said after it (more: what comes
+        next, each sentence of it starting with ". "); "" when the song did not grow."""
+        longer = self._new_length_words(end_bar_before)
+        if not longer:
+            return ""
+        return ". " + (longer.rstrip(".") if more else longer)
+
     def _plan_region(self, tick, recording):
         """Where the engine loops, stops or goes quiet, for playing or recording from `tick`."""
         index = self.current_section_index(tick)
@@ -1269,6 +1305,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         take = self._take if self._take and self._take["track_id"] == track_id else None
         if take is None:
             take = self._new_take(track_id, notes[0].tick if notes else 0)
+        take.setdefault("end_bar_before", self.song.end_bar())     # before its first pass (_new_length_words)
+        if take["automatic"] and "loops_before" not in take:     # (_loop_words: the loops on the other tracks)
+            take["loops_before"] = self._loop_stops(self.regions_of(track_id))
         if partial:
             take["wrapped"] = True          # the loop went round: the whole looping section was recorded
         cap = self._cap_for(take)
@@ -1310,7 +1349,17 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                               interrupt=False)
             else:
                 self.announce("Nothing was recorded", interrupt=False)
-        words = [w for w in (take.get("words"), TAKE_STOPS if take.get("cut") else None) if w]
+        # an Automatic section grew to hold the take: how long the song is now, first (the words after "Stopped" end
+        # without a full stop); a looping recording it cut into pieces after the take's own words, in the order a take
+        # of sound says them ("The looping recording is cut into pieces, so it sounds as it did": _grow_for_take).
+        # The last section grew: a loop until the end of the song on another track plays on into the new bars, said
+        # after the new length (the take's own track is the take's: a loop there carries on after it, as before)
+        longer = self._new_length_words(take["end_bar_before"])
+        if longer and take["automatic"] and take["section"] == len(self.song.sections) - 1:
+            longer = self._and_loops(longer, self._loop_words(take.get("loops_before", ())))
+        words = [w for w in (longer.rstrip("."), take.get("words"),
+                             audioloops.pieces_words(take.get("loops_cut", 0)),
+                             TAKE_STOPS if take.get("cut") else None) if w]
         if words:
             self._say_after_stop(". ".join(words))
 
@@ -1462,7 +1511,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             loop = [[n.tick + shift, n.length, n.pitch, n.velocity] for n in grid if p <= n.tick < until]
             copied = [n.as_list() for n in self.sounding_notes(self._as_if_unmuted(track, (q, end)) if was.mute
                                                                else track, human=False) if q <= n.tick < end]
-            if copied == loop:
+            if copied == loop and self._plays_like_the_loop(track, placed, was, p, q, until, heard):
                 continue
             song_end = self.song.song_end_tick()     # (a note ringing past it would make the song longer: loop_pieces)
             regions.write_loop_out(track, q, end, [Note(n.tick + shift, min(n.length, song_end - n.tick - shift),
@@ -1471,6 +1520,55 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             written = True
         return written
 
+    def _plays_like_the_loop(self, track, placed, was, p, q, until, heard):
+        """For _match_loops, once a copy's notes on the grid are the loop's: whether it also sounds like the loop, its
+        human feel too (heard: what the track played before the edit). Where its own feel would not, each copy plays
+        the loop's own feel there (players.keep_loop_feel; Russell, 25 Oct 2026: "Play with the loop's own feel"):
+        until then it played a feel of its own, a few milliseconds off from what the loop played there."""
+        from . import players
+
+        shift, end = q - p, q + until - p
+        loop = [[n.tick + shift, n.length, n.pitch, n.velocity] for n in heard if p <= n.tick < until]
+
+        def now():
+            played = self._as_if_unmuted(track, (q, end)) if was.mute else track
+            return [n.as_list() for n in self.sounding_notes(played) if q <= n.tick < end]
+
+        if now() == loop:
+            return True
+        for region in placed:
+            if region.player:
+                region.player = players.keep_loop_feel(region.player, was.player, was.start, was.length,
+                                                       region.start, region.start - shift)
+        return now() == loop
+
+    def _keep_feel(self, moved):
+        """moved: (region, the tick it started at), for regions just moved, nudged, pasted or duplicated. Each rhythm
+        player region among them keeps the human feel it had there (players.keep_feel; Russell, 25 Oct 2026: "Keep
+        its feel"). Its notes stay on the song's bars, so they move as far as the bar it starts in."""
+        from . import players
+
+        tl = self.song.timeline
+        for region, was in moved:
+            if region.player and was != region.start:
+                bars = tl.bar_to_tick(tl.tick_to_bar(region.start)) - tl.bar_to_tick(tl.tick_to_bar(was))
+                region.player = players.keep_feel(region.player, was, region.start, bars)
+
+    def _freeze_feel(self, snapshot):
+        """At the end of an edit: each rhythm player region just given the feel of another place (feel_from, from
+        players.keep_feel and the like) keeps the tempos that place had before the edit (players.freeze_feel; the
+        sixth review, 26 Oct 2026), so a later change there never moves its notes. snapshot: the song before it."""
+        from . import players
+        from .timeline import Timeline
+
+        waiting = [r for t in self.song.tracks if not t.is_audio for r in t.note_regions
+                   if r.player and players.unfrozen(r.player)]
+        if not waiting:
+            return
+        before = Timeline.from_dict(snapshot.get("timeline", {}))
+        for region in waiting:
+            region.player = players.freeze_feel(region.player, before, region.length)
+
     @contextmanager
     def _matching_loops(self, without=(), tracks=None):
         """Around an arrange change that may carry loops on, inside its edit (so it is the same undo step): yields the
@@ -1478,17 +1576,21 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         its `written` then says whether a loop was written out as notes."""
         before = self._loop_snapshot(without, tracks)
         carried = arrange.LoopsCarriedOn()
+        carried.matched = True          # (each copy gets the loop's own feel where it needs it: _plays_like_the_loop)
         yield carried
         carried.written = self._match_loops(before, carried)
+        carried.kept_written = self._match_loops(before, carried.kept)     # (a part kept before them: arrange._keep)
 
     def _grow_for_take(self, section, notes, take):
         """A take in an Automatic section makes the section longer to hold notes played past its end
         (arrange.grow_section_for_recording). A loop playing across its end carries on after the new bars, matched to
-        the loop (_matching_loops); the take's words say so when it was written out as notes."""
+        the loop (_matching_loops); the take's words say so when it was written out as notes, and when a looping
+        recording was cut into pieces to carry on (audioloops.py), as a take of sound says it."""
         with self._matching_loops(take.get("notes", ())) as carried:
             arrange.grow_section_for_recording(self.song, section, notes, loops_placed=carried)
-        if carried.written:
+        if carried.written or carried.kept_written:
             take["loop_notes"] = True
+        take["loops_cut"] = take.get("loops_cut", 0) + carried.recordings     # (said after "Stopped")
 
     def _wait_for_engine(self, timeout=0.5):
         """After stop: give the audio thread a moment to hand back the recording."""
@@ -1548,22 +1650,29 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("Stop recording before changing sections")
         self._need_room(int(length), "no section can be added")
         after = self.current_section_index() if after_index is None else after_index
+        end_bar_before = self.song.end_bar()     # (_and_length)
         with self.edit("add section"), self._matching_loops() as carried:
             index = arrange.add_section_after(self.song, after, length, loops_placed=carried)
         words = ""
         if carried.written:
             words = (STOPS_AS_NOTES if index == len(self.song.sections) - 1 else
                      ". The loop carries on after the new section as notes, so it sounds as it did")
-        self.announce("Added {}{}".format(self.describe_section(index), words))
+        elif carried.kept_written:
+            words = KEPT_AS_NOTES
+        more = words + audioloops.words_after(carried)
+        self.announce("Added {}{}{}".format(self.describe_section(index), self._and_length(end_bar_before, more), more))
         return index
 
     def duplicate_section(self, index):
         if self.engine.recording:
             raise ValueError("Stop recording before changing sections")
         self._need_room(self.song.sections[index].length, "no section can be added")
+        end_bar_before = self.song.end_bar()     # (_and_length)
         with self.edit("duplicate section"), self._matching_loops() as carried:
             new = arrange.duplicate_section(self.song, index, loops_placed=carried)
-        self.announce("Copied to {}".format(self.describe_section(new)))
+        more = audioloops.words_after(carried)
+        self.announce("Copied to {}{}{}".format(self.describe_section(new), self._and_length(end_bar_before, more),
+                                                more))
         return new
 
     def delete_section(self, index):
@@ -1573,17 +1682,21 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         with self.edit("delete section"), self._matching_loops() as carried:
             arrange.delete_section(self.song, index, loops_placed=carried)
         self._clamp_playhead()
-        self.announce("Deleted {}{}".format(name, ". The loop carries on as notes, so it sounds as it did"
-                                            if carried.written else ""))
+        self.announce("Deleted {}{}{}".format(name, ". The loop carries on as notes, so it sounds as it did"
+                                              if carried.written else KEPT_AS_NOTES if carried.kept_written else "",
+                                              audioloops.words_after(carried)))
         return min(index, len(self.song.sections) - 1)
 
     def move_section(self, index, delta):
         if self.engine.recording:
             raise ValueError("Stop recording before changing sections")
         name = self.song.section_name(index)
+        carried = arrange.LoopsCarriedOn()      # (to hear whether a looping recording was cut into pieces)
+        end_bar_before = self.song.end_bar()     # (_and_length: what rang into the next section is at the end now)
         with self.edit("move section"):
-            new = arrange.move_section(self.song, index, delta)
-        self.announce("{} is now section {}".format(name, new + 1))
+            new = arrange.move_section(self.song, index, delta, loops_placed=carried)
+        more = audioloops.words_after(carried)
+        self.announce("{} is now section {}{}{}".format(name, new + 1, self._and_length(end_bar_before, more), more))
         return new
 
     def update_section(self, index, name=None, length=None, automatic=None):
@@ -1595,6 +1708,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         carried = None
         longer_end = (length is not None and index == len(self.song.sections) - 1
                       and int(length) > self.song.sections[index].length)
+        end_bar_before = self.song.end_bar()     # (_and_length)
         with self.edit("section settings"):
             section = self.song.sections[index]
             if name is not None:
@@ -1608,7 +1722,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         words = ""
         if carried is not None and carried.written:
             words = STOPS_AS_NOTES if longer_end else ". The loop carries on as notes, so it sounds as it did"
-        self.announce("Section settings saved. {}{}".format(self.describe_section(index), words))
+        elif carried is not None and carried.kept_written:
+            words = KEPT_AS_NOTES
+        more = words + audioloops.words_after(carried)
+        self.announce("Section settings saved. {}{}{}".format(self.describe_section(index),
+                                                              self._and_length(end_bar_before, more), more))
 
     def notes_lost_if_shortened(self, index, new_length):
         start, end = self.song.section_bounds(index)
@@ -1918,13 +2036,28 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         tl = self.song.timeline
         short_passes = []   # (region, its take index) of last passes cut short: kept, not played
         layered = {}        # region recorded over again -> how many takes it had before
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops(track.regions) if take["automatic"] else []     # (_loop_words: the other tracks)
         with self.edit("recording on {}".format(track.name)):
+            looping = audioloops.before_new_recordings(track, tl, self.song.song_end_tick())
             last_end = 0
             ours = set()    # regions this recording made or added a take to
+
+            def carries_on(region):
+                """A piece of an earlier recording that carries its loop on (a copy of it, made around bars put in or
+                taken out: audioloops.py): it shares a take with a recording that starts before it."""
+                own = {t.file for t in region.takes}
+                return any(other.tick < region.tick and own & {t.file for t in other.takes} for other in track.regions)
+
             for (start, data), file, whole_pass in zip(pieces, files, complete):
                 tick = max(0, int(round(tl.seconds_to_tick(start / float(AUDIO_RATE)))))
                 new_take = AudioTake(file, len(data))
-                region = next((r for r in track.regions if abs(r.tick - tick) <= 2), None)
+                # the same spot as a recording: this one's own pass, or one recorded there before, takes it as its next
+                # take; a piece carrying a loop on there does not (the sixth review, 26 Oct 2026: the take became its
+                # take 2, looped on to the end of the song, and the loop was gone): the take lays over it, as over the
+                # loop's repeats (audioloops.after_new_recordings)
+                region = next((r for r in track.regions if abs(r.tick - tick) <= 2
+                               and (id(r) in ours or not carries_on(r))), None)
                 if region is None:
                     region = AudioRegion(tick, [new_take], 0, layer=track.top_layer())
                     track.regions.append(region)
@@ -1941,8 +2074,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                     region.takes.append(new_take)      # cut short by Stop: kept, but the complete pass plays
                     short_passes.append((region, len(region.takes) - 1))
                 ours.add(id(region))
+                region.to_todays_rules()           # (made, or given a take, now: today's rules, song.RECORDING_RULES)
                 last_end = max(last_end, region.end_tick(tl))
             track.sort_regions()
+            # a looping recording the take lands on goes on after it (0.9.11; until then the bars after it went silent)
+            loops_cut = audioloops.after_new_recordings(track, tl, looping)
             loop_notes = False
             if take["automatic"]:
                 # (a loop on another track playing across the section's end carries on after the new bars, matched
@@ -1950,6 +2086,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 with self._matching_loops() as carried:
                     arrange.grow_section_to(self.song, take["section"], last_end, loops_placed=carried)
                 loop_notes = carried.written
+                loops_cut += carried.recordings
         warning = audiotracks.recording_warning(audio)
         if warning:
             self.announce(warning, interrupt=False)  # always said: something needs attention
@@ -1966,8 +2103,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         for region, index in short_passes:
             self.announce("The last pass was cut short when you stopped, so it is kept as take {} and take {} still "
                           "plays.".format(index + 1, region.active + 1), interrupt=False)
+        longer = self._new_length_words(end_bar_before)     # an Automatic section grew to hold the recording
+        if longer and take["automatic"] and take["section"] == len(self.song.sections) - 1:
+            longer = self._and_loops(longer, self._loop_words(loops))     # (a loop to the end plays on: as notes)
+        if longer:
+            self._say_after_stop(longer.rstrip("."))        # (after "Stopped", as a take of notes says it)
         if loop_notes:
             self.announce("The loop carries on after the recording as notes, so it sounds as it did", interrupt=False)
+        if loops_cut:
+            self.announce(audioloops.pieces_words(loops_cut), interrupt=False)
         if cut:
             self.announce(TAKE_STOPS, interrupt=False)
 
@@ -1979,10 +2123,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         return audiotracks.unique_path(folder, stem or "Recording {}".format(time.strftime("%Y-%m-%d %H-%M-%S")))
 
     def _save_recording(self, data, stem=None):
-        """Write a recording (24-bit WAV, 48 kHz) and return its full path."""
+        """Write a recording (24-bit WAV, 48 kHz) and return its full path.
+
+        It is kept in memory exactly as its file holds it (wavfile.as_saved_24bit), so it plays from now on exactly as
+        it will once the project is opened again from its file. Until now it was kept as it was made, a tiny step away
+        from its file, and pitch correction turned that into a difference that is heard (a take sounded up to 0.012
+        different after Save and Open; the random-edit tester, 26 Oct 2026). The file is written as before."""
         path = self._new_recording_path(stem)
         wavfile.write_wav(path, data, AUDIO_RATE, 24)
-        self._audio_cache[os.path.normpath(path)] = np.asarray(data, dtype=np.float32)
+        self._audio_cache[os.path.normpath(path)] = wavfile.as_saved_24bit(data)
         if not self.path:
             self._scratch.add(os.path.normpath(path))
         log.info("Saved recording: %s (%.1f seconds)", path, len(data) / float(AUDIO_RATE))
@@ -2046,7 +2195,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("Musician Forge could not save its copy of {} in {} ({}). Check that the disk has "
                              "room.".format(name, os.path.dirname(file), exc.strerror or exc)) from None
         log.info("Imported audio: %s (%d Hz, %d channel(s), read by %s) as %s", path, rate, channels, decoder, file)
-        return PreparedImport(path, os.path.normpath(file), audio, rate, channels, decoder)
+        # kept as its copy holds it, as a new take is (_save_recording), so it plays exactly as it will once the project
+        # is opened again: converted to 48 kHz, its samples lie between the steps of a 24-bit file (26 Oct 2026)
+        return PreparedImport(path, os.path.normpath(file), wavfile.as_saved_24bit(audio), rate, channels, decoder)
 
     def check_import_target(self, track_id=None, new_track=False):
         """Raise ValueError (in words) before the slow part of an import when it could not be placed: while
@@ -2090,22 +2241,28 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if not self.path:
             self._scratch.add(file)
         tick = self.position_tick() if tick is None else int(tick)
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
         if AudioRegion(tick, [AudioTake(file, len(audio))]).end_tick(self.song.timeline) > self.song.max_tick():
             raise ValueError("A song can be at most {} bars long, so {} cannot go at {}: it would end past bar "
                              "{}.".format(MAX_BARS, os.path.basename(path), self.song.timeline.spoken_bar_position(tick),
                                           MAX_BARS))
+        loops = self._loop_stops()     # (_loop_words: a loop the new recording now stops sooner, as Paste says)
         with self.edit("import audio"):
-            region = AudioRegion(tick, [AudioTake(file, len(audio))], 0, layer=track.top_layer())
+            region = AudioRegion(tick, [AudioTake(file, len(audio))], 0, layer=track.top_layer()).to_todays_rules()
             track.regions.append(region)
             track.sort_regions()
             index = next(i for i, r in enumerate(track.regions) if r is region)
         # short: it comes as the progress window closes and the focus goes back to the Tracks list (screen reader
         # audit C4, 23 Oct 2026); the sample rate and where the copy is kept are in the log
         log.info("Imported %s at %s; the copy is in %s", path, describe_rate(prepared.rate), file)
-        # and which track it went on: Import can make a new track for it (Guide walkthrough, 23 Oct 2026)
-        self.announce("Imported {} on {}{}, {}, at {}.".format(
+        # and which track it went on: Import can make a new track for it (Guide walkthrough, 23 Oct 2026); when the
+        # song got longer to hold it, how long the song is now ("The song is now 18 bars long."); then where each loop
+        # it made stop somewhere else now plays to, as Paste says it ("The recording at bar 1 now loops to bar 5.")
+        longer = self._new_length_words(end_bar_before)
+        self.announce(self._and_loops("Imported {} on {}{}, {}, at {}.{}".format(
             os.path.basename(path), "the new track " if new_track else "", track.name,
-            audiotracks.describe_seconds(len(audio)), self.describe_position(tick)))
+            audiotracks.describe_seconds(len(audio)), self.describe_position(tick), " " + longer if longer else ""),
+            self._loop_words(loops)))
         return index
 
     def import_audio_file(self, path, decoded=None, prepared=None, new_track=False):
@@ -2186,6 +2343,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self._stop_engine_quietly()
         notes_said = list(contents.warnings)
         made = []
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()     # (_loop_words: a loop to the end of the song plays on when the song grows)
         with self.edit("import MIDI file"):
             song = self.song
             if (empty and contents.tracks and len(song.tracks) == 1 and not song.tracks[0].effects
@@ -2253,9 +2412,19 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 self._count_words(len(tl.tempos), "tempo"), self._count_words(len(tl.time_signatures),
                                                                               "time signature"),
                 self._count_words(len(tl.keys), "key"), self._count_words(len(self.song.sections), "section"))
+        elif self.song.end_bar() > end_bar_before:
+            # the project's last section grew to hold the notes (Song.fit_last_section): said, with how long the song
+            # is now, instead of "kept its own sections" (Russell, 25 Oct 2026)
+            words += "; the project kept its own tempo, time signatures and keys, and {} grew to hold the notes".format(
+                self.song.section_name(len(self.song.sections) - 1))
         else:
             words += "; the project kept its own tempo, time signatures, keys and sections"
         words += "."
+        # the song got longer: how long it is now, also when it took the file's own sections (a new project's 8 bars
+        # became the file's 12), as every edit that makes the song longer says it (Russell, 25 Oct 2026)
+        if self.song.end_bar() > end_bar_before:
+            words += " " + self._new_length_words(end_bar_before)
+        words = self._and_loops(words, self._loop_words(loops))      # (then where a loop now plays to)
         if notes_said:
             words += " Note: " + "; ".join(notes_said) + "."
         log.info("Imported MIDI file %s: %s", path, words)
@@ -2299,15 +2468,20 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def delete_region(self, track_id, index):
         if self.engine.recording:
             raise ValueError("Stop recording before deleting a recording")
+        loops = self._loop_stops([self._region(track_id, index)[1]])
+        end_bar_before = self.song.end_bar()     # (_new_length_words: a loop it stopped plays all its times now)
         with self.edit("delete recording"):
             track, _region = self._region(track_id, index)
             del track.regions[index]
-        self.announce("Recording deleted")
+        longer = self._new_length_words(end_bar_before)
+        self.announce(self._and_loops("Recording deleted" + (". " + longer if longer else ""), self._loop_words(loops)))
 
     def update_region(self, track_id, index, tick=None, take=None, gain_db=None, speak=True):
         """Where a recording starts, which take plays, and its gain, as one undo step.
         Returns the recording's place in the track's list afterwards. speak=False: a list shows (and the screen
-        reader reads) the recording's new words anyway."""
+        reader reads) the recording's new words anyway; where a loop the change made stop somewhere else now plays to
+        is still said (_loop_words), after the list, as the windows that call it queue what is said, and before it
+        the song's new length when the change made it longer (moved, or a longer take, past the end)."""
         if self.engine.recording:
             raise ValueError("Stop recording before changing a recording")
         if gain_db is not None:
@@ -2320,8 +2494,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         _track, region = self._region(track_id, index)
         if take is not None and not 0 <= int(take) < len(region.takes):
             raise ValueError("There is no take {}".format(int(take) + 1))
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops([region])
         with self.edit("recording settings"):
             track, region = self._region(track_id, index)
+            was = region.to_list()
             if take is not None:
                 region.active = int(take)
             if gain_db is not None:
@@ -2329,9 +2506,16 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if tick is not None:
                 region.tick = int(tick)
                 track.sort_regions()
+            if region.to_list() != was:
+                region.to_todays_rules()           # (changed by hand: today's rules, song.RECORDING_RULES)
             new_index = next(i for i, r in enumerate(track.regions) if r is region)
+        words = self._loop_words(loops)
+        longer = self._new_length_words(end_bar_before)     # (its words, the new length, then the loops)
         if speak:
-            self.announce(self.describe_region(track_id, new_index))
+            text = self.describe_region(track_id, new_index)
+            self.announce(self._and_loops(text + ". " + longer if longer else text, words))
+        elif words or longer:
+            self.announce(self._and_loops(longer, words))      # (the recording's own window: Enter on it in a list)
         return new_index
 
     def move_region(self, track_id, index, bar, beat=1.0):
@@ -2546,6 +2730,102 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def _after_region_change(self):
         self.selected_regions.clear()
 
+    # -- where loops now play to, after a region edit ------------------------
+    # Russell, 25 Oct 2026, "The loop follows, and says so": a region looping until the next region follows it, so
+    # moving or deleting the region after it lets it play on to the next one or to the end of the song, and moving one
+    # closer stops it sooner (a region set to loop a number of times plays more of them, or fewer). That is what the
+    # setting says, and it stays; but nobody sees it happen, so the edit's words say where each such loop now plays to.
+    def _loop_stops(self, edited=()):
+        """Where each looping region and recording of the song stops playing now: [(track, region, tick)], leaving out
+        `edited`, the regions the edit itself changes (their own words say where they are). _loop_words compares with
+        it once the edit is done."""
+        from . import arrangement
+
+        song_end = self.song.song_end_tick()
+        tl = self.song.timeline
+        found = []
+        for track in self.song.tracks:
+            for index, region in enumerate(track.regions if track.is_audio else track.note_regions):
+                if region.loops == 1 or any(region is e for e in edited):
+                    continue
+                stop = (arrangement.audio_region_repeats(track, index, tl, song_end) if track.is_audio else
+                        arrangement.note_region_repeats(track, index, song_end))[1]
+                found.append((track, region, stop))
+        return found
+
+    def _loop_words(self, before):
+        """Where each loop of `before` (_loop_stops) that the edit made stop somewhere else now plays to: "Riff now
+        loops to bar 13", or "Riff now plays once"; two in one sentence ("Riff 1 now loops to bar 6, and Riff 2 loops
+        to bar 17"), three or more in short. "" when no loop stops somewhere else (Mute, Split, Join: nothing more is
+        said)."""
+        tl = self.song.timeline
+        now = {id(region): (region, stop) for _track, region, stop in self._loop_stops()}
+        changed = []
+        for track, region, stop in before:
+            found = now.get(id(region))
+            if found is None and not track.is_audio:
+                # (a region pasted or moved onto a loop's own bars leaves its first part a region of its own: claim)
+                found = next((now[id(r)] for r in track.note_regions if r.start == region.start and id(r) in now), None)
+            if found is not None and found[1] != stop:
+                changed.append((track,) + found)
+        if len(changed) > 2:
+            return "{} loops now stop somewhere else; the Regions list says where".format(len(changed))
+        said = []
+        for track, region, stop in changed:
+            once = stop <= (region.end_tick(tl) if track.is_audio else region.end)
+            name = self._loop_name(track, region)
+            if said and name.startswith("The "):
+                name = "the " + name[4:]
+            said.append("{} {}{}".format(name, "" if said else "now ",
+                                         "plays once" if once else "loops to {}".format(tl.spoken_bar_position(stop))))
+        return ", and ".join(said)
+
+    def _loop_name(self, track, region):
+        """How _loop_words names a loop: by its name, or by what it is and where it starts ("The Piano region at bar
+        1", "The Spark Pad region at bar 5", "The recording at bar 9")."""
+        tl = self.song.timeline
+        if track.is_audio:
+            return "The recording at {}".format(tl.spoken_bar_position(region.tick))
+        if region.name:
+            return region.name
+        what = "{} region".format(track.name)
+        if region.player:
+            from . import players
+
+            settings = players.clean_settings(region.player)
+            what = "rhythm player region"
+            if settings:
+                player = players.PLAYERS[settings["player"]]
+                what = "{} {} region".format(player.name, player.style(settings["style"]).name)
+        return "The {} at {}".format(what, tl.spoken_bar_position(region.start))
+
+    @staticmethod
+    def _and_loops(text, loops):
+        """An edit's words, then where the loops it made stop somewhere else now play to (_loop_words), if any:
+        "Deleted 1 region. Riff now loops to bar 13". After words that end with a full stop (the song's new length,
+        "The song is now 13 bars long."), the loop's sentence ends with one too; with no words of the edit's own, it
+        is said alone."""
+        if not loops:
+            return text
+        if not text:
+            return loops
+        return "{} {}.".format(text, loops) if text.endswith(".") else "{}. {}".format(text, loops)
+
+    def _timeline_words(self, words, end_bar_before, loops, before=None):
+        """After a tempo or time signature change: its words, then the song's new length when a recording (it plays
+        in seconds) now runs past the end, then where each loop that now stops somewhere else plays to (_loop_words: a
+        recording set to play a number of times, or a loop to the end of a song that got longer). before: the
+        timeline before a time signature change, where everything keeps its bar and its place in the bar
+        (meterchange.keep_bars): each loop's old stop is first put where that place is now, so a loop kept in its
+        bars says nothing."""
+        longer = self._new_length_words(end_bar_before)
+        if longer:
+            words += ". " + longer
+        if before is not None:
+            loops = [(track, region, meterchange._place(stop, before, self.song.timeline)[0])
+                     for track, region, stop in loops]
+        return self._and_loops(words, self._loop_words(loops))
+
     # -- whole tracks ------------------------------------------------------
     def copy_tracks(self, track_ids, speak=True):
         if not track_ids:
@@ -2569,13 +2849,19 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError("There are no copied tracks to paste")
         if self.engine.recording:
             raise ValueError("Stop recording before pasting")
+        end_bar_before = self.song.end_bar()     # (_new_length_words: tracks from a longer song)
+        loops = self._loop_stops()               # (_loop_words: a loop to the end of the song then plays on)
         with self.edit("paste tracks"):
             index = self.song.index_of(self.selected_track_id) + 1 if self.selected_track_id else len(self.song.tracks)
             added = self._insert_track_copies(self.clipboard["tracks"], index,
                                               same_project=self._clipboard_project == self._project_token)
         self.selected_track_id = added[0].id
         self.notify("selection")
-        self.announce("Pasted {}".format(self._count_words(len(added), "track")))
+        words = "Pasted {}".format(self._count_words(len(added), "track"))
+        longer = self._new_length_words(end_bar_before)     # the last section grew to hold them
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return added
 
     def duplicate_tracks(self, track_ids):
@@ -2682,23 +2968,32 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         else:
             copies = regions.copy_regions(track, indices)
             self.clipboard = {"kind": "notes", "copies": copies,
-                              "end": max(c.offset + c.length for c in copies)}
+                              "end": max(c.offset + c.length for c in copies),
+                              "from": min(track.note_regions[i].start for i in indices)}     # (_keep_feel)
         if speak:
             self.announce("Copied {}".format(self._count_words(len(indices), "region")))
 
     def cut_regions(self, track_id, indices):
         self.copy_regions(track_id, indices, speak=False)
+        loops = self._loop_stops([self.regions_of(track_id)[i] for i in indices])
+        end_bar_before = self.song.end_bar()     # (_new_length_words: a loop they stopped plays all its times now)
         with self.edit("cut regions"):
             self._remove_regions(self.song.track_by_id(track_id), indices)
         self._after_region_change()
-        self.announce("Cut {}".format(self._count_words(len(indices), "region")))
+        longer = self._new_length_words(end_bar_before)
+        self.announce(self._and_loops("Cut {}{}".format(self._count_words(len(indices), "region"),
+                                                        ". " + longer if longer else ""), self._loop_words(loops)))
 
     def delete_regions(self, track_id, indices):
         self._need_regions(track_id, indices)
+        loops = self._loop_stops([self.regions_of(track_id)[i] for i in indices])
+        end_bar_before = self.song.end_bar()     # (_new_length_words: a loop they stopped plays all its times now)
         with self.edit("delete regions"):
             self._remove_regions(self.song.track_by_id(track_id), indices)
         self._after_region_change()
-        self.announce("Deleted {}".format(self._count_words(len(indices), "region")))
+        longer = self._new_length_words(end_bar_before)
+        self.announce(self._and_loops("Deleted {}{}".format(self._count_words(len(indices), "region"),
+                                                            ". " + longer if longer else ""), self._loop_words(loops)))
 
     def _remove_regions(self, track, indices):
         if track.is_audio:
@@ -2723,17 +3018,25 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if self.engine.recording:
             raise ValueError("Stop recording before pasting")
         tick = self.position_tick() if tick is None else int(tick)
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()               # (_loop_words: a loop that the pasted regions now stop sooner)
         try:
             first = self._place_clipboard(track, clip, tick, "paste regions")
         except TooLong:
             raise ValueError(REGIONS_TOO_LONG) from None
-        self.announce("Pasted {} at {}".format(self._count_words(self._clip_count(clip), "region"),
-                                              self.describe_position(tick)))
+        words = "Pasted {} at {}".format(self._count_words(self._clip_count(clip), "region"),
+                                         self.describe_position(tick))
+        longer = self._new_length_words(end_bar_before)     # the song got longer: "The song is now 18 bars long."
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return first
 
     def duplicate_regions(self, track_id, indices):
         """Copies of the regions right after the last one."""
         track = self._need_regions(track_id, indices)
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()               # (_loop_words: a loop that the copies now stop sooner, its own too)
         saved = self.clipboard
         try:
             self.copy_regions(track_id, indices, speak=False)
@@ -2746,8 +3049,12 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             raise ValueError(REGIONS_TOO_LONG) from None
         finally:
             self.clipboard = saved
-        self.announce("Duplicated {}, starting at {}".format(self._count_words(len(indices), "region"),
-                                                             self.describe_position(at)))
+        words = "Duplicated {}, starting at {}".format(self._count_words(len(indices), "region"),
+                                                       self.describe_position(at))
+        longer = self._new_length_words(end_bar_before)     # the song got longer: "The song is now 18 bars long."
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return first
 
     def _plays_until(self, track_id, index):
@@ -2769,6 +3076,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         track = self._need_regions(track_id, indices)
         tick = self._bar_beat_tick(bar, beat)
         saved = self.clipboard
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops([self.regions_of(track_id)[i] for i in indices])
         try:
             self.copy_regions(track_id, indices, speak=False)
             clip = self.clipboard
@@ -2780,7 +3089,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         finally:
             self.clipboard = saved
         self._after_region_change()
-        self.announce("Moved {} to {}".format(self._count_words(len(indices), "region"), self.describe_position(tick)))
+        words = "Moved {} to {}".format(self._count_words(len(indices), "region"), self.describe_position(tick))
+        longer = self._new_length_words(end_bar_before)     # moved past the end: as Paste, the new length
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return first
 
     def _place_clipboard(self, track, clip, tick, label):
@@ -2792,11 +3105,12 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def _paste_into(self, track, clip, tick):
         if clip["kind"] == "notes":
             placed = regions.paste_regions(track, clip["copies"], tick)
+            self._keep_feel(zip(placed, [clip.get("from", tick) + c.offset for c in clip["copies"]]))
             self.song.tidy_regions()
             return next(i for i, r in enumerate(track.note_regions) if r is placed[0])
         placed = []
         for offset, region in clip["regions"]:
-            new = copy.deepcopy(region)
+            new = copy.deepcopy(region).to_todays_rules()     # (a new copy: today's rules, song.RECORDING_RULES)
             new.tick = tick + offset
             new.layer = track.top_layer()
             track.regions.append(new)
@@ -2819,29 +3133,126 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.announce("{} {}".format("Muted" if value else "Unmuted", self._count_words(len(indices), "region")))
 
     def split_region(self, track_id, index, tick=None):
-        """Split a region in two at the playhead. Returns the second part's index."""
+        """Split a region in two at the playhead. Returns the second part's index.
+
+        A looping region keeps what you hear (Russell, 25 Oct 2026): split inside its first time, both parts play once
+        and the loop carries on right after them; split inside its repeats, it loops up to the playhead and the rest
+        of its playing carries on from there (regions.split_region; until then both parts played once, the repeats
+        went silent, and the playhead in the repeats was refused). A rhythm player copy carrying the loop on that
+        would not sound like it becomes notes (_matching_loops). The words say where the loop carries on, and whether
+        as notes."""
+        from . import arrangement
+
         track = self._need_regions(track_id, [index] if index is not None else [])
         if track.is_audio:
             raise ValueError("Splitting recordings comes in a later version. You can split regions on "
                              "instrument tracks.")
         tick = self.position_tick() if tick is None else int(tick)
+        until = None
+        if track.note_regions[index].loops != 1:
+            until = arrangement.note_region_repeats(track, index, self.song.song_end_tick())[1]
         with self.edit("split region"):
-            second = regions.split_region(self.song.track_by_id(track_id), index, tick)
+            target = self.song.track_by_id(track_id)
+            with self._matching_loops(tracks=[target]) as carried:
+                regions.split_region(target, index, tick, until, self.song.song_end_tick(), carried)
+        track = self.song.track_by_id(track_id)
+        second = next(i for i, r in enumerate(track.note_regions) if r.start == tick)
+        words = ""
+        if until is not None:
+            part = track.note_regions[second]
+            after = next((r for r in track.note_regions if r.start == part.end and r.start < until), None)
+            if after is not None:
+                words = ". The loop carries on from {}".format(self.song.timeline.spoken_bar_position(after.start))
+                if carried.written:
+                    words += " as notes, so it sounds as it did"
+            elif carried.written:
+                words = ". The loop carries on as notes, so it sounds as it did"
         self._after_region_change()
-        self.announce("Split at {}. {}".format(self.describe_position(tick),
-                                               self.describe_region_item(track_id, second)))
+        self.announce("Split at {}. {}{}".format(self.describe_position(tick),
+                                                 self.describe_region_item(track_id, second), words))
         return second
 
     def join_regions(self, track_id, indices):
+        """Join the chosen regions (and any between them) into one. Returns its index. It keeps what you hear
+        (Russell, 25 Oct 2026): what it writes out as notes for that is _heard_in_join's. Regions that are not all
+        muted or all unmuted are not joined: the words say which is which (_join_mute_refusal)."""
         track = self._need_regions(track_id, indices)
         if track.is_audio:
             raise ValueError("Joining recordings comes in a later version. You can join regions on "
                              "instrument tracks.")
+        refusal = self._join_mute_refusal(track, indices)
+        if refusal:
+            raise ValueError(refusal)
+        notes, until, words = self._heard_in_join(track, indices)
         with self.edit("join regions"):
-            joined = regions.join_regions(self.song.track_by_id(track_id), indices)
+            joined = regions.join_regions(self.song.track_by_id(track_id), indices, notes, until,
+                                          keep_player=not words)
         self._after_region_change()
-        self.announce("Joined. {}".format(self.describe_region_item(track_id, joined)))
+        self.announce("Joined. {}{}".format(self.describe_region_item(track_id, joined), words))
         return joined
+
+    def _join_mute_refusal(self, track, indices):
+        """Why Join changes nothing, in words, or "" to join (Russell, 26 Oct 2026, "Refuse, and say why"): some of
+        the regions it would join (the chosen ones and any between them) are muted and some are not. The joined region
+        has one mute setting, so notes you heard would go quiet, or muted notes would start playing (until then it
+        took the first region's). The words name the first muted region and the first one that is not, as the loop
+        words name them (_loop_name: its name, or "The Piano region at bar 5"), and where each starts when the two
+        names are the same (the halves of a split): "Riff 2 is muted and Riff 1 is not. Mute or unmute them so they
+        match, then join." (M on the regions still selected does that.)"""
+        chosen = sorted(indices)
+        span = track.note_regions[chosen[0]:chosen[-1] + 1] if chosen else []
+        muted = next((r for r in span if r.mute), None)
+        playing = next((r for r in span if not r.mute), None)
+        if muted is None or playing is None:
+            return ""
+        names = [self._loop_name(track, r) for r in (muted, playing)]
+        if names[0] == names[1]:
+            where = self.song.timeline.spoken_bar_position
+            names = ["{} at {}".format(name, where(r.start)) for name, r in zip(names, (muted, playing))]
+        if not playing.name and names[1].startswith("The "):
+            names[1] = "the " + names[1][4:]
+        return "{} is muted and {} is not. Mute or unmute them so they match, then join.".format(*names)
+
+    def _heard_in_join(self, track, indices):
+        """What Join writes out as notes, so the joined region plays what you heard (Russell, 25 Oct 2026, "Keep what
+        you hear"): (Note objects to add, where the joined region ends, the words that say so), or ([], None, "")
+        when the regions join as they always did.
+
+        Among the regions joined (the chosen ones and any between them), each one that loops has its repeats written
+        out, up to where its playing stopped, and the joined region reaches there (until then it played once, and the
+        repeats went silent). A rhythm player region comes in as notes, as heard, when the joined region starts with
+        a note region (until then its music was lost, loop or not) or holds a loop (a joined rhythm player plays
+        across all its bars, so it would play over the loop's). Regions that play once, starting with a rhythm player
+        region, join as before: that rhythm player plays across all the joined bars. A muted region gives what it
+        would play unmuted, as Turn into notes has it; a note ringing past the song's end ends there, as it is
+        heard."""
+        from . import arrangement
+
+        chosen = sorted(indices)
+        if len(chosen) < 2:
+            return [], None, ""          # (regions.join_regions says why)
+        song_end = self.song.song_end_tick()
+        span = range(chosen[0], chosen[-1] + 1)
+        stops = {i: arrangement.note_region_repeats(track, i, song_end)[1] for i in span
+                 if track.note_regions[i].loops != 1}
+        looping = [i for i in span if stops.get(i, 0) > track.note_regions[i].end]
+        players = [i for i in span if i not in looping and track.note_regions[i].player
+                   and (looping or not track.note_regions[chosen[0]].player)]
+        if not looping and not players:
+            return [], None, ""
+        notes = []
+        for i in sorted(looping + players):
+            region = track.note_regions[i]
+            heard = self._heard_in_loop(track, region, stops[i] if i in looping else region.end)
+            notes += [n if n.end <= song_end else Note(n.tick, song_end - n.tick, n.pitch, n.velocity) for n in heard]
+        things = ([("the loop" if len(looping) == 1 else "the loops")] if looping else []) + \
+                 ([("the rhythm player" if len(players) == 1 else "the rhythm players")] if players else [])
+        one = len(looping) + len(players) == 1
+        words = " and ".join(things)
+        words = ". {}{} {} written out as notes, so {}".format(words[0].upper(), words[1:], "is" if one else "are",
+                                                              "it sounds as it did" if one else "they sound as they did")
+        until = max([track.note_regions[chosen[-1]].end] + [stops[i] for i in looping])
+        return copy.deepcopy(notes), until, words
 
     def rename_region(self, track_id, index, name):
         track = self._need_regions(track_id, [index])
@@ -2894,6 +3305,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if type_key == "pitch":
                 track.effects.insert(0, effect)
                 index = 0
+                self._recordings_changed(track)
             else:
                 track.effects.append(effect)
                 index = len(track.effects) - 1
@@ -2911,6 +3323,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             target = self.song.track_by_id(track_id)
             removed = target.effects.pop(index)
             self._drop_lanes_for_effect(target, removed.get("id"))       # its automation goes with it
+            if removed["type"] == "pitch":
+                self._recordings_changed(target)
         self.announce("Removed {}. {}".format(name, self._count_words(len(self.effects_of(track_id)), "effect")))
 
     def move_effect(self, track_id, index, delta):
@@ -2936,7 +3350,10 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         track = self._effect_track(track_id, index)
         value = (not track.effects[index].get("on", True)) if on is None else bool(on)
         with self.edit("turn effect {}".format("on" if value else "off")):
-            self.song.track_by_id(track_id).effects[index]["on"] = value
+            target = self.song.track_by_id(track_id)
+            if target.effects[index]["type"] == "pitch" and target.effects[index].get("on", True) != value:
+                self._recordings_changed(target)
+            target.effects[index]["on"] = value
         if speak:
             self.announce(self.describe_effect(track_id, index, number=False))
 
@@ -2965,12 +3382,15 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 return
         with self.edit("{} settings".format(kind.name)):
             effect = self.song.track_by_id(track_id).effects[index]
+            heard = (effect.get("on", True), dict(effect["params"]))
             if preset is not None:
                 effect["preset"] = preset
             if cleaned is not None:
                 effect["params"] = cleaned
             if on is not None:
                 effect["on"] = bool(on)
+            if kind.key == "pitch" and (effect.get("on", True), effect["params"]) != heard:
+                self._recordings_changed(self.song.track_by_id(track_id))
         text = "{} settings saved. {}".format(kind.name, self.describe_effect(track_id, index, number=False))
         if kind.key == "pitch":
             text += ". " + self._pitch_report(track_id)
@@ -3007,21 +3427,41 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self._sync_engine()
 
     # -- pitch correction (worked out for each recording, then cached) --------
+    @staticmethod
+    def _recordings_changed(track):
+        """Pitch correction turned on or off, or its settings changed: every recording on the track is changed by
+        hand, so it plays by today's rules (song.RECORDING_RULES: its key changes come at the right moment)."""
+        for region in track.regions if track.is_audio else ():
+            region.to_todays_rules()
+
     def _pitch_effect(self, track):
         for effect in getattr(track, "effects", []):
             if effect["type"] == "pitch" and effect.get("on", True):
                 return effect
         return None
 
-    def _key_spans(self, region, frames, timeline=None):
-        """The song's keys during a recording: [(first sample, allowed pitch classes)]. timeline: the song's being
-        exported (a copy), so a key changed while it runs, or the program closing, does not reach the export (the
-        review of 25 Oct 2026); the project's own when None."""
+    def _key_spans(self, region, frames, timeline=None, repeat=0):
+        """The song's keys during a recording: [(first sample, allowed pitch classes)], in samples of the recording
+        itself. timeline: the song's being exported (a copy), so a key changed while it runs, or the program closing,
+        does not reach the export (the review of 25 Oct 2026); the project's own when None.
+
+        A recording of rules 2 (song.RECORDING_RULES, 0.9.11) changes key where the song does: the sample after what
+        is trimmed off its start (offset) plays where it starts in the song. Until then the trim was left out, so a
+        recording trimmed at its start changed key too early, by as much as was trimmed off (25 Oct 2026); a recording
+        of rules 1 (an older project's, until it is changed by hand) keeps that, so it sounds as it did.
+
+        repeat: which repeat of a looping recording (0: its first play). Rules 2 corrects each repeat for the keys
+        where it plays, n times its length later (Russell, 26 Oct 2026: "Follow every key change"); with rules 1
+        every repeat plays the first play's correction, as before."""
         tl = timeline if timeline is not None else self.song.timeline
         start_seconds = tl.tick_to_seconds(region.tick)
+        trimmed = getattr(region, "offset", 0) if getattr(region, "rules", 1) >= 2 else 0
+        if repeat and getattr(region, "rules", 1) >= 2:
+            played = max(0, frames - region.offset)          # (each repeat's length, as the engine plays it)
+            trimmed -= repeat * (min(played, region.length) if region.length else played)
         spans = []
         for change in tl.keys:
-            offset = int(round((tl.tick_to_seconds(tl.bar_to_tick(change.bar)) - start_seconds) * AUDIO_RATE))
+            offset = int(round((tl.tick_to_seconds(tl.bar_to_tick(change.bar)) - start_seconds) * AUDIO_RATE)) + trimmed
             if offset >= frames:
                 break
             classes = frozenset(theory.scale_pitch_classes(change.tonic, change.scale))
@@ -3034,9 +3474,9 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             spans = [(0, frozenset(theory.scale_pitch_classes(key.tonic, key.scale)))]
         return tuple(spans)
 
-    def _take_audio(self, track, region, timeline=None):
-        """A recording as it should play: pitch-corrected when the track has pitch correction on (timeline: see
-        _key_spans)."""
+    def _take_audio(self, track, region, timeline=None, repeat=0):
+        """A recording as it should play: pitch-corrected when the track has pitch correction on (timeline, and repeat:
+        which repeat of a looping recording, see _key_spans). Repeats in the same keys share one correction."""
         take = region.take
         data = self.load_audio(take.file) if take is not None else None
         if data is None or not len(data):
@@ -3044,9 +3484,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         effect = self._pitch_effect(track)
         if effect is None:
             return data
-        spans = self._key_spans(region, len(data), timeline)
+        spans = self._key_spans(region, len(data), timeline, repeat)
         params = effect["params"]
-        key = (os.path.normcase(self.audio_path(take.file)), tuple(sorted(params.items())), spans)
+        # (and the rules it plays by: a recording never plays what was worked out for it under the other rules)
+        key = (os.path.normcase(self.audio_path(take.file)), tuple(sorted(params.items())), spans,
+               getattr(region, "rules", 1))
         corrected = self._corrected.get(key)
         if corrected is None:
             starts = [start for start, _classes in spans]
@@ -3171,17 +3613,13 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             if self.settings is not None and self.settings["announce_note_names"]:
                 self.announce(self._name_of_key(char, notes, drums))
             return True
-        if char == "z":
-            if self.typing.octave_down():
-                self.announce("Octave {}".format(self.typing.octave))
-            else:
-                self.announce("Lowest octave")
-            return True
-        if char == "x":
-            if self.typing.octave_up():
-                self.announce("Octave {}".format(self.typing.octave))
-            else:
-                self.announce("Highest octave")
+        if char in ("z", "x"):
+            # on a drum kit the octave changes nothing the keys play, and the words say so, as Control+J does
+            # (Russell, 25 Oct 2026: "Words for the layout"); everywhere else just the octave
+            moved = self.typing.octave_down() if char == "z" else self.typing.octave_up()
+            words = "Octave {}".format(self.typing.octave) if moved else (
+                "Lowest octave" if char == "z" else "Highest octave")
+            self.announce("{}. {}".format(words, km.DRUM_OCTAVE_WORDS) if drums else words)
             return True
         if char == "c":
             self.typing.velocity_down()
@@ -3290,10 +3728,13 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         self.notify("keyboard")
 
     def set_octave(self, octave, speak=False):
+        """speak: the Keyboard menu's Octave submenu. On a drum kit the words say the octave changes nothing, as Z and
+        X do (Russell, 25 Oct 2026: "Words for the layout")."""
         if not self.typing.set_octave(octave):
             raise ValueError("The octave can go from {} to {}".format(km.OCTAVES[0], km.OCTAVES[-1]))
         if speak:
-            self.announce("Octave {}".format(self.typing.octave))
+            words = "Octave {}".format(self.typing.octave)
+            self.announce("{}. {}".format(words, km.DRUM_OCTAVE_WORDS) if self.is_drum_track() else words)
         self.notify("keyboard")
 
     def set_velocity(self, velocity, speak=False):
@@ -3349,10 +3790,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def describe_chord_strips(self):
         """Which chord each key plays right now (the key's chords follow key changes; your own stay as you set them)."""
         key = self.current_key()
+        lowest = self.typing.octave <= km.OCTAVES[0]
         if self.song.strips:
-            return "Your own chord strips. {}".format(km.describe_chord_strips(self.typing.chords_for(key)))
+            return "Your own chord strips. {}".format(km.describe_chord_strips(self.typing.chords_for(key), lowest))
         return "Chord strips in {}. {}".format(theory.key_name(key.tonic, self.typing.scale_for(key)),
-                                              km.describe_chord_strips(self.typing.chords_for(key)))
+                                              km.describe_chord_strips(self.typing.chords_for(key), lowest))
 
     # -- your own chord strips (Russell, 10 Oct 2026) ----------------------
     def chord_strip_entries(self):
@@ -3375,9 +3817,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         chord = self.typing.chords_for(self.current_key())[index]
         return "{}: {}".format(km.CHORD_KEYS[index].upper(), km.strip_name(chord))
 
-    def set_chord_strip(self, index, root, quality, bass=None):
+    def set_chord_strip(self, index, root, quality, bass=None, speak=True):
         """Your own chord on strip `index` (0 to 7, the keys A to K). The first one you set starts the other seven
-        from the key's chords, so they keep playing what they did. One undo step."""
+        from the key's chords, so they keep playing what they did. One undo step. Returns the strip's words ("A: C
+        major"). speak=False: the Chord strips window's list shows them as the strip's line, which the screen reader
+        reads, so nothing is said (said as well, NVDA said the line twice; the keyboard monkey, 26 Oct 2026)."""
         if not 0 <= index < 8:
             raise ValueError("There are 8 chord strips")
         if quality not in chords_module.QUALITY_KEYS:
@@ -3388,7 +3832,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         with self.edit("chord strip"):
             self.song.strips = entries
         text = self.chord_strip_words(index)
-        self.announce(text)
+        if speak:
+            self.announce(text)
         return text
 
     def reset_chord_strips(self):
@@ -3411,11 +3856,16 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             self.engine.audition(PREVIEW_CHANNEL, pitch, 96, seconds=0.9)
 
     def describe_keyboard(self):
-        text = "{}. {}. Velocity {}.".format(self.describe_layout(), self.typing.describe_octave(),
+        text = "{}. {}. Velocity {}.".format(self.describe_layout(), self.typing.describe_octave(self.is_drum_track()),
                                              self.typing.velocity)
         if self.arp["on"]:
             text += " {}.".format(self.describe_arpeggiator())
         return text
+
+    def octave_choices(self):
+        """The Octave choice's and the Keyboard menu's Octave submenu's items for the layout in use (the Drum layout
+        on a drum kit), in the words describe_keyboard says."""
+        return km.octave_choices(self.typing.mode, self.is_drum_track())
 
     def _flats(self):
         key = self.current_key()
@@ -3425,9 +3875,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     # tempo, time signature and key changes
     # ------------------------------------------------------------------
     def set_tempo(self, bar, beat, bpm):
+        end_bar_before, loops = self.song.end_bar(), self._loop_stops()     # (_timeline_words)
         with self.edit("tempo change"):
             self.song.timeline.set_tempo(bar, beat, bpm)
-        self.announce("Tempo {} at bar {}".format(format_number(bpm), bar))
+        self.announce(self._timeline_words("Tempo {} at bar {}".format(format_number(bpm), bar), end_bar_before,
+                                           loops))
 
     # kind: (the timeline's list, its remove method, its set method, the undo label)
     _CHANGE_KINDS = {"tempo": ("tempos", "remove_tempo", "set_tempo", "tempo change"),
@@ -3459,6 +3911,7 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                 raise ValueError("Another {} is already at {}, so this one was not moved. Choose another {}, or edit "
                                  "that one instead".format(label, place, choose))
         lost = 0
+        end_bar_before, loops = self.song.end_bar(), (self._loop_stops() if kind != "key" else [])
         with self.edit(label):
             timeline = self.song.timeline
             before = copy.deepcopy(timeline)
@@ -3470,34 +3923,42 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
         if kind == "time":
             self._keep_playhead_bar(before)
         if kind == "tempo":
-            self.announce("Tempo {} at bar {}".format(format_number(values[2]), values[0]))
+            self.announce(self._timeline_words("Tempo {} at bar {}".format(format_number(values[2]), values[0]),
+                                               end_bar_before, loops))
         elif kind == "time":
-            self.announce("{} {} time from bar {}{}".format(values[1], values[2], values[0], self._lost_words(lost)))
+            self.announce(self._timeline_words("{} {} time from bar {}{}".format(
+                values[1], values[2], values[0], self._lost_words(lost)), end_bar_before, loops, before))
         else:
             self.announce("{} from bar {}".format(theory.key_name(values[1], values[2]), values[0]))
 
     def remove_tempo(self, index):
+        end_bar_before, loops = self.song.end_bar(), self._loop_stops()     # (_timeline_words)
         with self.edit("remove tempo change"):
             self.song.timeline.remove_tempo(index)
-        self.announce("Tempo change removed")
+        self.announce(self._timeline_words("Tempo change removed", end_bar_before, loops))
 
     def set_time_signature(self, bar, numerator, denominator):
         """A time signature from `bar`: every section keeps its number of bars, and everything in them keeps its bar
         and its place in the bar (meterchange.py; Russell, 10 Oct 2026)."""
+        end_bar_before, loops = self.song.end_bar(), self._loop_stops()     # (_timeline_words)
         with self.edit("time signature change"):
             before = copy.deepcopy(self.song.timeline)
             self.song.timeline.set_time_signature(bar, numerator, denominator)
             lost = meterchange.keep_bars(self.song, before)
         self._keep_playhead_bar(before)
-        self.announce("{} {} time from bar {}{}".format(numerator, denominator, bar, self._lost_words(lost)))
+        self.announce(self._timeline_words("{} {} time from bar {}{}".format(numerator, denominator, bar,
+                                                                           self._lost_words(lost)),
+                                           end_bar_before, loops, before))
 
     def remove_time_signature(self, index):
+        end_bar_before, loops = self.song.end_bar(), self._loop_stops()     # (_timeline_words)
         with self.edit("remove time signature change"):
             before = copy.deepcopy(self.song.timeline)
             self.song.timeline.remove_time_signature(index)
             lost = meterchange.keep_bars(self.song, before)
         self._keep_playhead_bar(before)
-        self.announce("Time signature change removed" + self._lost_words(lost))
+        self.announce(self._timeline_words("Time signature change removed" + self._lost_words(lost), end_bar_before,
+                                           loops, before))
 
     def _keep_playhead_bar(self, before):
         """After a time signature change, where everything keeps its bar and its place in the bar
@@ -3556,19 +4017,31 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def add_note(self, track_id, note):
         _validate_note(note)
         self._need_track(track_id)
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()     # (a note in a bar no region holds gets a region there, which can stop a loop)
         with self.edit("add note"):
             track = self.song.track_by_id(track_id)
             track.notes.append(note)
             track.sort_notes()
+        longer = self._new_length_words(end_bar_before)     # a note past the end: the last section grew to hold it
+        words = self._and_loops(longer, self._loop_words(loops))
+        if words:
+            self.announce(words)
         return self.song.track_by_id(track_id).notes.index(note)
 
     def update_note(self, track_id, index, new_note):
         _validate_note(new_note)
         self._need_track(track_id)
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()     # (moved to a bar no region holds, it gets a region there: as add_note)
         with self.edit("edit note"):
             track = self.song.track_by_id(track_id)
             track.notes[index] = new_note
             track.sort_notes()
+        longer = self._new_length_words(end_bar_before)     # moved or held past the end: as add_note
+        words = self._and_loops(longer, self._loop_words(loops))
+        if words:
+            self.announce(words)
         return self.song.track_by_id(track_id).notes.index(new_note)
 
     def delete_notes(self, track_id, indices):
@@ -3604,6 +4077,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
     def quantize(self, track_ids, grid_ticks, strength=1.0, lengths=False, note_indices=None):
         """Quantize whole tracks, or only `note_indices` of a single track."""
         count = 0
+        end_bar_before = self.song.end_bar()     # (_new_length_words)
+        loops = self._loop_stops()     # (a note moved out of its region gets one of its own: as add_note)
         with self.edit("quantize"):
             for track_id in track_ids:
                 track = self.song.track_by_id(track_id)
@@ -3618,7 +4093,11 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
                     track.notes = rest + done
                     track.sort_notes()
                     count += len(done)
-        self.announce("Quantized {} note{}".format(count, "" if count == 1 else "s"))
+        words = "Quantized {} note{}".format(count, "" if count == 1 else "s")
+        longer = self._new_length_words(end_bar_before)     # a note moved to the end: the last section grew
+        if longer:
+            words += ". " + longer
+        self.announce(self._and_loops(words, self._loop_words(loops)))      # (its words, the new length, the loops)
         return count
 
     def audition_note(self, track_id, note):
@@ -3821,7 +4300,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             for block in render_offline(song, synth, sample_rate, progress=progress, cancelled=cancelled,
                                         audio_loader=self.load_audio, tail_seconds=MAX_TAIL_SECONDS if tail else 0.0,
                                         until_silent=tail and only_track is None,
-                                        take_loader=lambda t, r: self._take_audio(t, r, song.timeline),
+                                        take_loader=lambda t, r, repeat=0: self._take_audio(
+                                            t, r, song.timeline, repeat),
                                         notes_by_track=notes_by_track, fade_seconds=fade_seconds,
                                         on_levels=levels_heard):
                 peak = max(peak, float(abs(block).max()))
@@ -3892,7 +4372,8 @@ class Session(MusicMixin, AutomationMixin, NudgeMixin):
             try:
                 for block in render_offline(alone, synth, rate, cancelled=cancelled, audio_loader=self.load_audio,
                                             tail_seconds=0.0,
-                                            take_loader=lambda t, r, tl=alone.timeline: self._take_audio(t, r, tl),
+                                            take_loader=lambda t, r, repeat=0, tl=alone.timeline: self._take_audio(
+                                                t, r, tl, repeat),
                                             notes_by_track=notes_by_track, fade_seconds=fade_seconds,
                                             on_levels=heard.append):
                     levels = heard.pop() if heard else np.max(np.abs(block), axis=1)

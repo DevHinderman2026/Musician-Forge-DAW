@@ -96,7 +96,7 @@ MICROPHONE_TEST_MS = 3000
 NO_REGIONS = "No regions on this track yet. Record, import or paste to make one."
 NO_TRACKS = "No tracks yet. Press Control+T to add one."    # the Tracks list's only line in a project with none
 KEYBOARD_SCALE_CHOICES = ["Follow the song's key"] + list(theory.SCALE_NAMES)
-OCTAVE_CHOICES = ["{} (the A key plays C {})".format(o, o) for o in keyboard_map.OCTAVES]
+OCTAVE_CHOICES = keyboard_map.octave_choices(keyboard_map.MODE_PIANO)   # the Piano layout's: each layout has its own
 ARP_OCTAVE_CHOICES = ["1 octave"] + ["{} octaves".format(n) for n in range(2, arpeggiator.MAX_OCTAVES + 1)]
 
 
@@ -443,8 +443,16 @@ class MainFrame(wx.Frame):
         drums = s.is_drum_track()
         items = ["Drums (this track is a drum kit)"] if drums else [keyboard_map.MODE_NAMES[m]
                                                                    for m in keyboard_map.MODES]
+        refilled = False
         if self.layout_choice.GetItems() != items:
             self.layout_choice.Set(items)
+            refilled = True
+        # what the octave means in this layout ("3 (the A key plays C 3)" only in the Piano layout): filled again only
+        # when the words change, so the screen reader is not given the same words again; the octave stays selected
+        octaves = s.octave_choices()
+        if self.octave_choice.GetItems() != octaves:
+            self.octave_choice.Set(octaves)
+            refilled = True
         found = self.keyboard_setting_indexes()           # the same as the Keyboard menu's check marks
         arp = s.arp
         for choice, key in ((self.layout_choice, "layout"), (self.scale_choice, "scale"),
@@ -456,6 +464,15 @@ class MainFrame(wx.Frame):
                 choice.SetSelection(index)
         if self.arp_check.GetValue() != bool(arp["on"]):
             self.arp_check.SetValue(bool(arp["on"]))
+        if refilled and self.keyboard_controls_shown():
+            # new words get the room they need at once (the review, 26 Oct 2026): a choice kept the width of its
+            # first words, so longer ones ("3 (chords in octave 3, bass notes in octave 2)") were cut off on screen
+            # until the window was laid out again, which matters with Magnifier. wxWidgets works a refilled
+            # choice's best size out again from its widest item, and FitInside lays the scrolling area out again,
+            # with the Keyboard controls group in it, giving it that width: the whole area, by its own scrolled
+            # layout, where it has scrolled to (the group laid out on its own would go back to where it was before
+            # the area scrolled). Only sizes change: the keyboard focus stays where it is, and nothing new is read
+            self.body.FitInside()
 
     def _build_buttons(self, panel, sizer):
         """The Transport and Song groups, then the Menus group: a button for each menu of the menu bar, so Tab reaches
@@ -1320,8 +1337,11 @@ class MainFrame(wx.Frame):
 
     def refresh_menus(self):
         indexes = self.keyboard_setting_indexes()
+        octaves = self.session.octave_choices()              # the Octave submenu says what the layout's octave means
         for key, items in self.keyboard_menu_items.items():
             for index, item in enumerate(items):
+                if key == "octave" and item.GetItemLabel() != octaves[index]:
+                    item.SetItemLabel(octaves[index])
                 item.Check(index == indexes[key])
                 if key == "layout":
                     item.Enable(indexes[key] is not None)     # a drum kit always uses the drum layout
@@ -2313,8 +2333,11 @@ class MainFrame(wx.Frame):
                 values = self.ask_values(dlg, dlg.get_values)
             if values is None:
                 return
-            # the Regions list reads the recording's new words when the focus comes back to it: not said twice
-            self.select_region_in_list(s.update_region(tid, index, speak=False, **values))
+            # the Regions list reads the recording's new words when the focus comes back to it: not said twice; where a
+            # loop the change made stop somewhere else now plays to comes after that (Session.update_region)
+            with s.pressed("window"):
+                new_index = s.update_region(tid, index, speak=False, **values)
+            self.select_region_in_list(new_index)
         else:
             start, end = s.region_span(tid, index)
             with EventListDialog(self, s, tid, span=(start, end), span_name=s.region_name(tid, index)) as dlg:
@@ -2386,6 +2409,8 @@ class MainFrame(wx.Frame):
         """Alt+Enter in the Regions list: trim a region's start and end, and loop it."""
         s = self.session
         tid, index = self._need_region()
+        trimmed = []        # where a loop the trim made stop somewhere else now plays to (Session.trim_region)
+
         def apply():
             # The trim is made when OK is pressed, while the window is still open (RegionSettingsDialog.on_ok): a
             # trim the song refuses (it would overlap the next region, say) keeps the window open with everything
@@ -2396,6 +2421,7 @@ class MainFrame(wx.Frame):
             new_index = index
             if start is not None:
                 new_index = s.trim_region(tid, index, start, end, speak=False)
+                trimmed[:] = [s.loop_words]
             return (new_index, loops), ("Trimmed" if start is not None else None)
 
         with RegionSettingsDialog(self, s, tid, index) as dlg:
@@ -2407,9 +2433,26 @@ class MainFrame(wx.Frame):
         if values is None:
             return
         index, loops = values
+        # said after the list has read the region (the window has just closed), in one go: where a loop the trim made
+        # stop somewhere else now plays to ("Riff now loops to bar 7": a loop the trimmed region cut short follows its
+        # new start; Russell, 25 Oct 2026, "The loop follows, and says so"), then a new loop count's words. Queued one
+        # after the other, the second took the place of the first while it waited (common.say_after): the loop
+        # count's words were never heard, and the last words could name a stop the loop count had moved on again
+        said = [trimmed[0]] if trimmed and trimmed[0] else []
         if loops != s.region_loops(tid, index):
-            with s.pressed("window"):       # said after the list has read the region (the window has just closed)
-                s.set_region_loops(tid, index, loops)
+            queue, s.say_later = s.say_later, lambda say, text: said.append(text)
+            try:
+                with s.pressed("window"):
+                    s.set_region_loops(tid, index, loops)
+            finally:
+                s.say_later = queue
+            if trimmed and trimmed[0]:
+                # one sentence names each loop once, where it finally plays to, and the new length once: the trim's
+                # words leave out what the loop count's words say again (Session.loop_words_again)
+                said[:1] = [words for words in (s.loop_words_again(),) if words]
+        if said:
+            with s.pressed("window"):
+                s.announce(". ".join(said))
         self.select_region_in_list(index)
         self.region_list.SetFocus()
 
@@ -2563,7 +2606,7 @@ class MainFrame(wx.Frame):
 
     def go_to_bar(self):
         tl = self.session.song.timeline
-        bar = tl.tick_to_bar(self.session.position_tick())
+        bar = tl.tick_to_bar(self.session.adding_tick())     # at the end of the song: the last bar
         with GoToBarDialog(self, bar, 1) as dlg:
             values = self.ask_values(dlg, dlg.get_values)
         if values is not None:
@@ -2793,8 +2836,8 @@ Musician Forge opens on the start screen: New project, Browse projects, and the 
 Open and Remove from list buttons. Enter (or Open) on a recent project opens it. Browse projects (Control+O in a project) lists your recent projects
 first, then every other project in Musician Forge Songs, newest first; there Enter opens the selected
 project, and Browse finds one in another folder. Delete (or Remove from list) in the Recent projects list removes a
-project from the list (the file itself is kept). Control+W closes the project you are in, asks to save any
-changes, and goes back to the start screen.
+project from the list (the file itself is kept). Escape (or Quit) on the start screen quits Musician Forge.
+Control+W closes the project you are in, asks to save any changes, and goes back to the start screen.
 
 Moving around the project window
 F6: go to the next area. Shift+F6: go to the previous area. They go round in a circle, in the order

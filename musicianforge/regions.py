@@ -42,6 +42,8 @@ def region_at(track, tick):
 def claim(track, start, end, name="", mute=False, player=None, loops=1):
     """Make [start, end) a region of its own: regions it overlaps get shorter, are split around it,
     or disappear if it covers them. Returns the new region (notes are not touched)."""
+    from . import players
+
     kept = []
     for r in track.note_regions:
         if r.end <= start or r.start >= end:
@@ -49,8 +51,9 @@ def claim(track, start, end, name="", mute=False, player=None, loops=1):
             continue
         if r.start < start:
             kept.append(NoteRegion(r.start, start, r.name, r.mute, copy.deepcopy(r.player), r.loops))
-        if r.end > end:
-            kept.append(NoteRegion(end, r.end, r.name, r.mute, copy.deepcopy(r.player)))
+        if r.end > end:             # (a rhythm player's notes that stay keep their feel: players.keep_feel)
+            kept.append(NoteRegion(end, r.end, r.name, r.mute, players.keep_feel(copy.deepcopy(r.player), r.start, end,
+                                                                                 0)))
     region = NoteRegion(int(start), int(end), name, mute, player, loops)
     kept.append(region)
     kept.sort(key=lambda r: r.start)
@@ -174,28 +177,67 @@ def delete_regions(track, indices):
     track.note_regions = [r for r in track.note_regions if all(r is not c for c in chosen)]
 
 
-def split_region(track, index, tick):
-    """Split a region in two at `tick` (inside it). Returns the index of the second part."""
+def split_region(track, index, tick, until=None, song_end=None, carried=None):
+    """Split a region in two at `tick` (inside it). Returns the index of the second part.
+
+    until: where a looping region's playing stops (arrangement.note_region_repeats). It is then split as it is heard
+    (Russell, 25 Oct 2026, "Keep what you hear"; until then both parts played once, and the repeats went silent):
+    inside its first time both parts play once, and the loop carries on right after them for the repeats left, or
+    until the next region; inside its repeats (tick before `until`) it loops up to tick, and from tick the rest of its
+    playing carries on with the phase it had there (continue_loop). song_end: where the song ends (loop_pieces).
+    carried: a list to add what carried the loop on to, as arrange.LoopsCarriedOn has it, so the session can match a
+    rhythm player's copy to the loop (Session._match_loops)."""
     r = track.note_regions[index]
+    if until is not None and r.loops != 1:
+        return _split_loop(track, r, tick, until, song_end, carried)
     if not r.start < tick < r.end:
         raise ValueError("Move the playhead inside the region to split it there")
-    second = NoteRegion(tick, r.end, r.name, r.mute, copy.deepcopy(r.player))
+    from . import players
+
+    # (a rhythm player's notes that stay keep their feel: players.keep_feel)
+    second = NoteRegion(tick, r.end, r.name, r.mute, players.keep_feel(copy.deepcopy(r.player), r.start, tick, 0))
     r.end = tick
     r.loops = 1          # each part plays once (a loop of the whole would not make sense in two halves)
     track.note_regions.insert(index + 1, second)
     return index + 1
 
 
-def join_regions(track, indices):
-    """Join the chosen regions (and anything between them) into one. Returns its index."""
+def _split_loop(track, region, tick, until, song_end, carried):
+    """split_region of a looping region: what it plays from where both parts end (or from tick, in its repeats)
+    carries on there as it did, then the region is split (both parts play once) or plays its repeats up to tick."""
+    if not region.start < tick < until:
+        raise ValueError("Move the playhead inside the region or its repeats to split it there")
+    was = copy.deepcopy(region)
+    own = [copy.copy(n) for n in track.notes if region.start <= n.tick < region.end]
+    at = max(tick, was.end)
+    placed = continue_loop(track, was, own, at, at, until, song_end)
+    if carried is not None and placed:
+        carried.append((track, placed, was, at, at, until))
+    if tick < was.end:
+        return split_region(track, next(i for i, r in enumerate(track.note_regions) if r is region), tick)
+    stop_loop_at(track, region, tick, own, first_end=was.end)     # (the region carrying on from tick cuts it there)
+    return next(i for i, r in enumerate(track.note_regions) if r.start == tick)
+
+
+def join_regions(track, indices, notes=(), until=None, keep_player=True):
+    """Join the chosen regions (and anything between them) into one. Returns its index.
+
+    notes: Note objects to add to it, what loops and rhythm players among them played, written out as notes
+    (Session._heard_in_join; Russell, 25 Oct 2026, "Keep what you hear"). until: where it then ends, when a loop played
+    on past the last region's end. keep_player False: it is an ordinary note region (its rhythm players are in
+    `notes`); otherwise it takes the first region's rhythm player, if it has one, as it always did."""
     chosen = sorted(indices)
     if len(chosen) < 2:
         raise ValueError("Select two or more regions to join")
     first, last = track.note_regions[chosen[0]], track.note_regions[chosen[-1]]
-    joined = NoteRegion(first.start, last.end, first.name, first.mute, copy.deepcopy(first.player))
+    joined = NoteRegion(first.start, max(last.end, until or 0), first.name, first.mute,
+                        copy.deepcopy(first.player) if keep_player else None)
     track.note_regions = [r for r in track.note_regions if r.end <= joined.start or r.start >= joined.end]
     track.note_regions.append(joined)
     track.note_regions.sort(key=lambda r: r.start)
+    if notes:
+        track.notes.extend(notes)
+        track.sort_notes()
     return next(i for i, r in enumerate(track.note_regions) if r is joined)
 
 
@@ -348,4 +390,10 @@ def stop_loop_at(track, region, tick, notes=None, ends_there=False, first_end=No
     if not pieces:
         return []
     region.loops = pieces[0][2]                       # the region itself: its whole repeats up to `tick`
-    return place_pieces(track, was, pieces[1:], region.start)
+    from . import players
+
+    placed = place_pieces(track, was, pieces[1:], region.start)
+    for piece in placed:                              # (the part of a repeat: it plays the loop's own feel there)
+        piece.player = players.keep_loop_feel(piece.player, was.player, was.start, was.length, piece.start,
+                                              piece.start)
+    return placed

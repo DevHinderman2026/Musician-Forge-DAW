@@ -1063,6 +1063,12 @@ BEAT_WORDS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "n
               "thirteen", "fourteen", "fifteen", "sixteen")
 
 
+def beats_words(counts):
+    """'two', 'two and three', 'two, four and five': the beats of a bar, counted from one (BEAT_WORDS)."""
+    names = [BEAT_WORDS[count - 1] if count <= len(BEAT_WORDS) else str(count) for count in counts]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def step_words(step, beat_steps=4):
     """'one', 'the e of two', 'the and of two', 'the a of two' (sixteenths in a beat of four steps)."""
     beat, inside = divmod(int(step), beat_steps)
@@ -1148,9 +1154,11 @@ def choice_words(key, value):
 CRASH_AFTER_FILLS = ("dubstep", "house", "trap", "rock", "hard_rock", "metal", "funk", "pop")
 
 
-def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_notes=None):
+def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_notes=None, meter=None):
     """The line in the Kit pieces list: 'Crash cymbals: on, where the region starts and after fills, crash'.
-    kit_notes: the notes the kit has (None: every drum note), so a piece or sound the kit lacks is said."""
+    kit_notes: the notes the kit has (None: every drum note), so a piece or sound the kit lacks is said.
+    meter: (numerator, denominator) of the region's first bar, where the Hi-hat pedal's line is worked out (None:
+    four four)."""
     piece = PIECE_BY_KEY[piece_key]
     full = piece_settings(settings, piece_key)
     words = []
@@ -1178,6 +1186,26 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
                 words.append("in fills only")
             # (no "not in this groove": Russell, 25 Oct 2026, "the only time something is not in the groove is if
             # it's off"; a piece turned on plays a pattern of its own, and one that is off just says off)
+    if piece_key == "pedal" and not off and not full["steps"] and kit_voices(piece, kit_notes):
+        # what the foot is heard playing in the region's meter (players.pedal_heard): the beats it really plays
+        # (Russell, 26 Oct 2026, "Name the real beats": "the foot on two and three" in 3/4), that it rests where it
+        # has no place ("the foot rests in 2/8"), and, from rules 7, that it waits for an open hi-hat (the
+        # coordinator, 25 Oct 2026: "if anywhere the foot still waits on every step, the line must say so")
+        from . import players                       # (here, not at the top: players uses this module)
+        heard = players.pedal_heard(settings, meter)
+        by_itself = "the foot on two and four" in words
+        words[:] = [w for w in words if w != "the foot on two and four"]
+        if not heard["beats"]:
+            words.append("the foot rests in {}/{}".format(*(meter or (4, 4))))
+        elif heard["waits"] == "every":
+            words.append("the foot waits for the {} hi-hat".format(heard["hat"]))
+        else:
+            if by_itself:
+                words.append("the foot on " + beats_words(heard["beats"]))
+            if heard["waits"] == "some":
+                where = "half open" if heard["hat"] == "half-open" else "open"
+                words.append(("waiting where the hi-hat is {}" if by_itself
+                              else "the foot waits where the hi-hat is {}").format(where))
     if piece.kind == "crash":
         when = choice_words("when", full["when"])
         if full["when"] == "accents" and settings.get("follow") != "track":
