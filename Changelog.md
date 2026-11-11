@@ -1,5 +1,58 @@
 # Musician Forge release notes
 
+## 0.9.12 (10 November 2026, in testing)
+
+### New features and improvements
+
+- The drummer's fills are played as a drummer plays them (new and changed regions). A fill is a rhythm that keeps
+  every beat: it comes in on the beat it starts on, and Fill complexity decides how full each beat is (the beat
+  alone, eighth notes, three notes, sixteenth notes), fuller towards the end of the fill. Flams come on the beats and
+  the eighth notes only, each grace note the same short moment before its stroke at every tempo, and they stay with
+  their stroke through swing and the human feel. Thirty-second notes come only as a ruff at the end of a snare roll,
+  into the next bar (from Fill complexity 60, up to 140 beats a minute). The hits of a run are evenly loud, a little
+  louder on the beats and towards the end, and the kick lands with the fill's last stroke. A drum machine's doubled
+  hits are the last steps of its roll, in a row.
+- A change of variation or style puts the hi-hat, the ride and the crash cymbals back to what the new groove plays,
+  so the cymbal the groove keeps time on always plays, and Musician Forge says what changed ("Hi-hat off, crash
+  on"). A Pattern you chose for one of them is kept: it waits where the new groove keeps time on another cymbal
+  ("Hi-hat: off, the crash cymbals keep time") and plays again in a groove that keeps time on its own cymbal. A
+  cymbal you turned off by hand comes back on with the change. The kick, the snare and the other pieces stay as you
+  set them.
+- Where the groove keeps time on the crash (metal's thrash and breakdown), the Crash cymbals turned on or off by hand
+  take turns with the hi-hat and the ride, as those two do with the crash ("Crash cymbals on, hi-hat off").
+- Follow locks to every hit of a sparse riff (new and changed regions): in a bar where the followed part has fewer
+  hits than eighth notes, every hit is followed, the syncopated ones too. A busier part is followed on its stronger
+  half: a part in sixteenth notes on its eighth notes, a part in eighth notes on its beats.
+- A player following a recording that loops follows every repeat (new and changed regions).
+- Track to follow offers a track wherever it plays, under a looping region's or a looping recording's repeats too.
+- Changing the style says which cymbal keeps time now, as changing the variation does.
+
+### Bug fixes
+
+- Fixes the hi-hat staying on in metal's breakdown and thrash after it had been turned on by hand, or given a Pattern,
+  in another variation: the breakdown's china and the thrash's crash were turned off for it. The same for the ride
+  or the hi-hat wherever a variation keeps time on another cymbal.
+- Fixes a ride turned on and then off again leaving the ride's own variation with no cymbal at all (hard rock
+  variation 2, rock variation 3, metal variation 5).
+- Fixes a change of style leaving the hi-hat off for a ride that no longer played, so the new style had no cymbal.
+- Fixes fills that came in late with the backbeat gone, or skipped a beat in their middle: at a middle Fill
+  complexity each sixteenth of a fill was left out by chance, the beat it started on too (new and changed regions).
+- Fixes flams on every sixteenth note of a fill, which no drummer can play, and grace notes left far from a stroke
+  that swung (new and changed regions).
+- Fixes a player following a part in sixteenth notes played at one loudness landing on every single sixteenth, and a
+  player following a riff played at one loudness skipping its hits between the beats (new and changed regions).
+- Fixes the Crash cymbals turned on by hand in metal's thrash or breakdown reading "on" beside a hi-hat that also
+  read "on" and was not heard.
+
+### Older projects
+
+- They play the same notes as before: every rhythm player region keeps the rules it was made under, its fills and
+  what it follows too, until you change something in it.
+
+### New projects
+
+- New and changed rhythm player regions use this version's rules.
+
 ## 0.9.11 (25 October 2026, in testing)
 
 ### New features and improvements

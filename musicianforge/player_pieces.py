@@ -297,6 +297,12 @@ def visible_kit_levels(levels):
 # hi-hat both on keeps playing them both.
 TAKES_TURNS = {"ride": ("hat",), "hat": ("ride",)}
 TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "pedal": "hi-hat pedal", "crash": "crash"}
+# The cymbals a hand keeps time on (0.9.12; Russell, 10 Nov 2026: "when you switch to the variations, the cymbals
+# should switch, or whatever needs to switch should switch"): a change of style or variation puts these three back to
+# what the new groove plays (session_music._turns_after_a_change). Until then a hi-hat turned on in metal's thrash
+# stayed on in the breakdown and kept its china off, and a ride turned off by hand stayed off in the ride's own
+# variation.
+CYMBALS = ("hat", "ride", "crash")
 # Russell, 25 Oct 2026: where the crash keeps time (metal's grooves with no hi-hat and no ride), turning the Hi-hat on
 # takes the crash's turn too: the crash's groove goes off, marked off for the hi-hat ("off_for"), and comes back when
 # the Hi-hat is turned off again (the crash where a section starts and after fills keeps its When setting). The Ride
@@ -348,6 +354,8 @@ def others_words(piece_key, before, after):
     """What a change to this piece did to the other's turn (TAKES_TURNS), or '': 'hi-hat off', 'ride on'.
     before and after: {piece key: turn_state}."""
     keys = TAKES_TURNS.get(piece_key, ()) + (("crash",) if piece_key in CRASH_GIVES_WAY_TO else ())
+    if piece_key == "crash":
+        keys = CRASH_GIVES_WAY_TO       # (0.9.12: the crash turned on or off by hand where it keeps time)
     return ", ".join("{} {}".format(TURN_NAMES[key], after[key]) for key in keys
                      if key in before and before.get(key) != after.get(key))
 
@@ -440,7 +448,8 @@ def clean_value(piece, key, value, player_key=None):
     if key in ("on", "open_offbeats", "in_fills", "bell", "chords", "root_only", "passing", "auto"):
         return bool(value)
     if key == "off_for":
-        return value if value in ("ride", "hat") else ""
+        # ("crash", 0.9.12: a hi-hat or ride whose own pattern waits where the groove keeps time on the crash)
+        return value if value in ("ride", "hat") or (value == "crash" and piece.key != "crash") else ""
     if key == "old_off":
         return value if value in ("closed", "closed_groove", "open") else ""
     if key == "old_steps":
@@ -1166,7 +1175,9 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
         state = turn_state(settings, piece_key, has_groove)
         words.append(state)
         if state == "off" and (piece_key in TAKES_TURNS or piece_key == "crash") and full["off_for"]:
-            words.append("the {} keeps time".format(TURN_NAMES[full["off_for"]]))   # the other took its turn
+            # the other took its turn (the crash and the china are both the Crash cymbals piece)
+            words.append("the crash cymbals keep time" if full["off_for"] == "crash" else
+                         "the {} keeps time".format(TURN_NAMES[full["off_for"]]))
         if not kit_voices(piece, kit_notes):
             words.append("not in this kit")
     # a piece's pattern is said only while it plays (Russell, 24 Oct 2026: "Ride: off, the hi-hat keeps time", not

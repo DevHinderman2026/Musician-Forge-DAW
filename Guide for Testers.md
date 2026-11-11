@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.11 before its first release.
+For people trying Musician Forge 0.9.12 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -311,6 +311,56 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 **What to expect:** It opens and plays as before.
 
+## New in 0.9.12
+
+### Step AA.1: The cymbals follow the variation
+
+**What to check:** Add a metal drummer (Anvil, Metal) and choose variation 3 (thrash). In its Kit pieces, press Space on the Hi-hat. Then choose variation 4 (the half-time breakdown) and play.
+
+**What to expect:** In variation 3, Space says "Hi-hat on with eighth notes, crash off": turned on by hand, the hi-hat takes over there. Choosing variation 4 says "Hi-hat off, crash on" after the variation's own line, and you hear the breakdown as it is described: the china on the beats and no hi-hat. The Hi-hat's line reads "Hi-hat: off". Before 0.9.12 the hi-hat stayed on and the china was not heard. Control+Z brings back variation 3 with the hi-hat on.
+
+### Step AA.2: A pattern of your own waits, and comes back
+
+**What to check:** Add a metal drummer. In its Kit pieces, press Enter on the Hi-hat, choose Sixteenth notes in the Pattern list and close the window. Choose variation 4 and listen, and read the Hi-hat's line. Then choose variation 2.
+
+**What to expect:** Variation 4 says "Hi-hat off" and plays its china; the Hi-hat's line reads "Hi-hat: off, the crash cymbals keep time". Variation 2 says "Hi-hat on", and the hi-hat plays your sixteenth notes again: its line reads "Hi-hat: on, pattern changed".
+
+### Step AA.3: A cymbal you turned off comes back
+
+**What to check:** Add a metal drummer and choose variation 5 (the blast beat, with the ride on top). In its Kit pieces, press Space on the Ride to turn it off. Choose variation 1, then variation 5 again.
+
+**What to expect:** Coming back to variation 5 says "Hi-hat off, ride on", and the ride plays: a change of variation or style always gives you the groove's own cymbals. Before 0.9.12 the ride stayed off there, and the blast beat had no cymbal at all. The kick, the snare and the other pieces you turn off stay off.
+
+### Step AA.4: The drummer's fills
+
+**What to check:** Add a rock drummer, set its Fill amount to 100 and leave Fill complexity at 50. Play, and press Control+R (Reforge) a few times. Then try Fill complexity 0 and 100, and a metal drummer.
+
+**What to expect:** Every fill comes in on a beat and keeps every beat: none stumbles in late, and the backbeat is never just missing. At 0 a fill is a couple of eighth notes into the next bar; at 100 it runs in sixteenth notes. Flams come on the beats and the eighth notes, never packed a sixteenth apart, and fast doubled notes come only as a short ruff at the very end of a snare roll. A crash, with the kick under it, follows each fill as before.
+
+### Step AA.5: Following a recording that loops
+
+**What to check:** Import or record a short riff, one or two bars long, on an audio track. In the Regions list, press Alt+Enter on it and set it to play 4 times. Add a rock drummer under all four times, and in its editor set Follow to Another track, Track to follow to the audio track, and Follow amount to 100. Play.
+
+**What to expect:** The summary counts the hits of all four times through, and the kick locks to the riff every time it plays. Before 0.9.12 it followed only the first time through and played its own beat under the repeats.
+
+### Step AA.6: Following a riff played at one loudness
+
+**What to check:** On an instrument track, make one bar of five notes: on one, on the last sixteenth of beat one, on the and of two, on three and on four. Add a rock drummer in the same bar, set Follow to Another track, choose that track, and set Follow amount to 100. Play.
+
+**What to expect:** The kick lands on all five notes, the two between the beats too. Before 0.9.12 it landed on one, three and four only.
+
+### Step AA.7: A region under a loop can follow it
+
+**What to check:** Make a one-bar riff on an instrument track and set it to play 4 times (Alt+Enter in the Regions list). Add a bass (Bellows) region in bars 3 and 4 only, and in its editor set Follow to Another track.
+
+**What to expect:** The riff's track is in the Track to follow list, and the bass plays along with the riff's repeats. Before 0.9.12 the list did not offer it there.
+
+### Step AA.8: An older project still sounds the same
+
+**What to check:** Open a project saved with 0.9.11 or earlier that has rhythm players, and play it.
+
+**What to expect:** It plays exactly as it did, its fills and what its players follow too. The new fills and the new Follow come to a region only once you change something in it.
+
 ## New in 0.9.11
 
 ### Step Z.1: Reforge while the song plays
@@ -563,7 +613,7 @@ Last, add a Reverb with the Hall preset to the pad's track and, while the song p
 
 **What to check:** Add a jazz drummer. In its Kit pieces, open the Ride's settings (Enter) and choose eighth notes in its Pattern list, then close the window. Change the region's Style to Rock and listen to the Kit pieces list. Press Control+Z.
 
-**What to expect:** After the style change you hear "Hi-hat off", and the Hi-hat line reads "Hi-hat: off, the ride keeps time": the ride keeps time, and the hi-hat does not play over it. Control+Z brings back the jazz drummer as it was.
+**What to expect:** After the style change you hear "Ride off, hi-hat on", and the Ride's line reads "Ride: off, the hi-hat keeps time": rock's own hi-hat keeps time, and the ride does not play over it. (Since 0.9.12 the new style's own cymbal keeps time; your ride pattern is kept for a style or variation that rides. Before, the ride kept the time.) Control+Z brings back the jazz drummer as it was.
 
 ### Step X.2: A piece that is on always plays
 

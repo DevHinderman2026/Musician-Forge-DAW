@@ -3048,6 +3048,9 @@ turning the Hi-hat off brings the Ride back if the Hi-hat had turned it off. The
 have the other's Play check box too. The Hi-hat pedal takes no part in this. A ride with nothing of its own to play
 takes over the hi-hat's rhythm. A fill takes both hands: from its first note to the end of the bar the Ride and the
 Hi-hat stop, and the kick and the Hi-hat pedal keep going. Each is one undo step.
+A change of variation or style puts the Hi-hat, the Ride and the Crash cymbals back to what the new groove plays, so
+the cymbal the groove keeps time on always plays, and says what changed ("Hi-hat off, crash on"). A Pattern you chose
+for one of them is kept: it waits where another cymbal keeps time, and plays again in a groove of its own cymbal.
 Above 120 beats a minute the ride
 plays no runs of sixteenth notes (its eighth notes stay; those patterns leave the Pattern list there); the hi-hat keeps
 its sixteenth notes at any tempo. A part has the chord track on or off, an octave, a note length, the root

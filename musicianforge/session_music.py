@@ -505,25 +505,16 @@ class MusicMixin:
         if warning and not reset_steps:
             raise HandMadeSteps(warning)
         before = copy.deepcopy(settings)
-        states = self._turn_states(settings) if settings["player"] == "anvil" else {}
         settings["variation"] = variation
         for stored in settings["pieces"].values():
             stored.pop("steps", None)
         settings["pieces"] = {key: value for key, value in settings["pieces"].items() if value}
-        # The ride and the hi-hat taking turns (_take_turns): a cymbal that kept time with hand-made steps and has
-        # nothing to play now the steps are gone gives the other its turn back, as turning it off by hand does, so
-        # somebody keeps time (until the review of 24 Oct 2026 the hi-hat stayed off for a ride that played nothing).
+        # The hi-hat, the ride and the crash go back to what the new groove plays (_turns_after_a_change; 0.9.12,
+        # Russell, 10 Nov 2026), so the cymbal the variation keeps time on always plays: a cymbal that kept time with
+        # hand-made steps and has nothing to play now the steps are gone gives the turn back the same way.
         # self.turn_words says what changed ("Ride off, hi-hat on"), or None.
         self.turn_words = None
-        rhythm = None
-        words = []
-        for key in (player_pieces.TAKES_TURNS if settings["player"] == "anvil" else ()):
-            if self._hand(before, key) and not self._hand(settings, key):
-                given = self._take_turns(before, settings, key, {"steps": None})
-                rhythm = given or rhythm
-                words.append(player_pieces.turns_words(key, states, self._turn_states(settings), given))
-        if settings["player"] == "anvil":
-            words.append(self._turns_after_a_change(before, settings))
+        words = [self._turns_after_a_change(before, settings)]
         with self.edit("variation"):
             players.to_todays_rules(settings)               # changed by hand: it plays by today's rules
             self.song.track_by_id(track_id).note_regions[index].player = settings
@@ -607,6 +598,8 @@ class MusicMixin:
         # turning that ride off would leave nothing keeping time (the review of 24 Oct 2026). Turning on takes the
         # other's turn only on a drummer a real drummer plays (takes_turns).
         taken = player_pieces.TAKES_TURNS.get(piece_key, ())
+        if settings["player"] == "anvil" and piece_key == "crash" and "on" in changes:
+            self._crash_turned(before, settings)        # (0.9.12: where the groove keeps time on the crash)
         if settings["player"] != "anvil" or not taken:
             return None
         pieces = settings["pieces"]
@@ -662,6 +655,9 @@ class MusicMixin:
                            and not in_the_groove(settings, "ride"))
             if now and not then and crash_rides and player_pieces.piece_on(settings, "crash", True):
                 change("crash", on=False, off_for=piece_key)
+                for other in taken:         # (0.9.12: one that was off for the crash is off for this one now)
+                    if pieces.get(other, {}).get("off_for") == "crash":
+                        change(other, off_for=piece_key)
         # the crash gave way to a cymbal that stopped (turned off, or giving way to the other one: Hi-hat on, then
         # the Ride): it stays off for the one keeping time now, and comes back once neither keeps time (0.9.11, the
         # Ride taking the crash's turn as the Hi-hat does)
@@ -756,58 +752,110 @@ class MusicMixin:
         return "eighth notes"
 
     def _turns_after_a_change(self, before, settings):
-        """After a change of style or variation. A pattern a piece was given for having nothing to play
-        (player_pieces "auto") goes where the new groove has the piece, so it plays the groove. On a drummer a real
-        drummer plays: if the ride and the hi-hat would both keep time now and did not both before, the one that kept
-        time before keeps it (the Hi-hat when neither did) and the other is turned off for it, as turning a piece on
-        does (_take_turns; the review of 25 Oct 2026: changing the style left both playing). Where the new groove
-        keeps time on the crash, a Hi-hat that plays turns the crash off for it; a crash turned off for the hi-hat
-        comes back where it no longer keeps time, or the hi-hat no longer plays. Changes settings; returns what to
-        say ("Hi-hat off") or None."""
+        """After a change of style or variation, the Hi-hat, the Ride and the Crash cymbals go back to what the new
+        groove plays (0.9.12; Russell, 10 Nov 2026: "when you switch to the variations, the cymbals should switch, or
+        whatever needs to switch should switch". Until then a hi-hat turned on in metal's thrash stayed on in the
+        breakdown and kept its china off, and a ride turned off by hand stayed off in the ride's own variation).
+        Each one's on or off set by hand, a turn it gave to another ("off_for") and a pattern it was given for having
+        nothing to play (player_pieces "auto") go, so a cymbal turned off by hand plays again where the new groove
+        has it ("Bring it back on"); a Pattern you chose stays. Another piece's given pattern goes where the new
+        groove has that piece, as before.
+        On a drummer a real drummer plays, one cymbal keeps time: the one the new groove keeps time on (its hi-hat,
+        its ride, or its crash or china where it has neither). A hi-hat or ride that would play there only by a
+        Pattern of your own is turned off for it and keeps the pattern ("The variation's cymbal"), so it plays again
+        after a change to a groove of its own; so is a crash whose own Pattern keeps time (a hit on every beat) where
+        the hi-hat or the ride keeps it. Where the groove keeps time on no cymbal (pop's toms), one that plays a
+        Pattern of your own does: the one that kept time before, the Hi-hat when neither did.
+        Changes settings; returns what to say ("Hi-hat off, crash on") or None."""
         if settings["player"] != "anvil":
             return None
-        for key, own in list(settings["pieces"].items()):
-            if own.get("auto") and in_the_groove(settings, key):
-                own = {k: v for k, v in own.items() if k not in ("auto", "pattern")}
-                if own:
-                    settings["pieces"][key] = own
-                else:
-                    settings["pieces"].pop(key)
-        states = self._turn_states(settings)
-        words = []
-        was = {key: self._hand(before, key) for key in player_pieces.TAKES_TURNS}
-        now = {key: self._hand(settings, key) for key in player_pieces.TAKES_TURNS}
-        # (both kept time before only where they do not take turns, a drum machine, or in a region from before
-        # 0.9.7, which keeps them both until changed by hand: from a drum machine the Hi-hat keeps time)
-        if settings["style"] in player_pieces.LIVE_DRUMMER_STYLES and all(now.values()) and not (
-                all(was.values()) and before["style"] in player_pieces.LIVE_DRUMMER_STYLES):
-            keep = "ride" if was["ride"] and not was["hat"] else "hat"
-            other = "hat" if keep == "ride" else "ride"
-            own = dict(settings["pieces"].get(other, {}))
-            self._store_on(settings, other, own, False)
-            own["off_for"] = keep
-            settings["pieces"][other] = own
-            words.append(player_pieces.turns_words(keep, states, self._turn_states(settings)))
-        crash_rides = (in_the_groove(settings, "crash") and not in_the_groove(settings, "hat")
-                       and not in_the_groove(settings, "ride"))
-        crash = dict(settings["pieces"].get("crash", {}))
-        hat_plays = self._plays_something(settings, "hat")
-        if crash_rides and hat_plays and player_pieces.piece_on(settings, "crash", True):
-            self._store_on(settings, "crash", crash, False)
-            crash["off_for"] = "hat"
-            settings["pieces"]["crash"] = crash
-            words.append("Crash off")
-        elif crash.get("off_for") == "hat" and not (crash_rides and hat_plays):
-            crash.pop("off_for")
-            crash.pop("on", None)               # back to what it does by itself in this groove
-            if crash:
-                settings["pieces"]["crash"] = crash
+        cymbals = player_pieces.CYMBALS
+        states = self._turn_states(before)
+        pieces = settings["pieces"]
+        crash_was = pieces.get("crash", {})
+        crash_set = "on" in crash_was or bool(crash_was.get("off_for"))      # (by hand, or by a turn)
+        for key, own in list(pieces.items()):
+            given = own.get("auto") and (key in cymbals or in_the_groove(settings, key))
+            kept = {k: v for k, v in own.items() if not (given and k in ("auto", "pattern"))
+                    and not (key in cymbals and k in ("on", "off_for"))}
+            if kept:
+                pieces[key] = kept
             else:
-                settings["pieces"].pop("crash", None)
-            if player_pieces.piece_on(settings, "crash", in_the_groove(settings, "crash")) and states.get(
-                    "crash") == "off":
-                words.append("Crash on")
-        return ". ".join(w for w in words if w) or None
+                pieces.pop(key)
+        if settings["style"] in player_pieces.LIVE_DRUMMER_STYLES:
+            keeper = next((key for key in cymbals if in_the_groove(settings, key)), None)
+            playing = [key for key in ("hat", "ride") if self._hand(settings, key)]
+            if keeper is None:
+                first = "ride" if self._hand(before, "ride") and not self._hand(before, "hat") else "hat"
+                keeper = first if first in playing else (playing[0] if playing else None)
+            for key in playing:
+                if keeper is not None and key != keeper:
+                    self._off_for(settings, key, keeper)
+            if keeper in player_pieces.TAKES_TURNS and self._crash_wash(settings):
+                self._off_for(settings, "crash", keeper)
+        now = self._turn_states(settings)
+        names = player_pieces.TURN_NAMES
+        # (the crash is said only where its on or off was set, by hand or by a turn, before or now: by itself it is
+        # on wherever the groove has a crash or a china in it, which is not news)
+        said = [key for key in cymbals if key != "crash" or crash_set or pieces.get("crash", {}).get("off_for")]
+        words = ", ".join(["{} off".format(names[key]) for key in said if (states[key], now[key]) == ("on", "off")]
+                          + ["{} on".format(names[key]) for key in said if (states[key], now[key]) == ("off", "on")])
+        return words[0].upper() + words[1:] if words else None
+
+    @staticmethod
+    def _off_for(settings, piece_key, keeper):
+        """Turn a cymbal off for the one that keeps time (its "off_for"), keeping its pattern."""
+        own = dict(settings["pieces"].get(piece_key, {}))
+        MusicMixin._store_on(settings, piece_key, own, False)
+        own["off_for"] = keeper
+        settings["pieces"][piece_key] = own
+
+    @staticmethod
+    def _crash_wash(settings):
+        """Whether the Crash cymbals keep time by a Pattern of your own: on, and one of its cymbals has a hit on every
+        beat (a crash on every beat, a wash in eighth notes, another variation's crash or china on the beats)."""
+        full = player_pieces.piece_settings(settings, "crash")
+        if full["pattern"] in ("style", "none") or full["steps"] or not player_pieces.piece_on(
+                settings, "crash", in_the_groove(settings, "crash")):
+            return False
+        rows = player_pieces.drum_pattern_rows(settings["style"], settings["variation"], "crash", full["pattern"],
+                                               players._DRUM_STYLES) or {}
+        return any(all(entry[0][place] >= 1.0 for place in range(0, 16, 4)) for entry in rows.values())
+
+    def _crash_turned(self, before, settings):
+        """0.9.12: the Crash cymbals turned on or off by hand where the groove keeps time on them (metal's thrash and
+        breakdown: a crash or china in the groove, with no hi-hat and no ride). Turned off, a hi-hat or ride that was
+        off for them plays again (the Hi-hat first; the Ride then stays off, for the hi-hat), so something keeps
+        time. Turned on, the hi-hat or ride keeping time there gives way: one given its pattern for being turned on
+        (player_pieces "auto") goes back to what the groove gives it, and one with a Pattern of your own is turned
+        off for the crash and keeps the pattern."""
+        if (settings["style"] not in player_pieces.LIVE_DRUMMER_STYLES or not in_the_groove(settings, "crash")
+                or in_the_groove(settings, "hat") or in_the_groove(settings, "ride")):
+            return
+        was = player_pieces.piece_on(before, "crash", True)
+        now = player_pieces.piece_on(settings, "crash", True)
+        pieces = settings["pieces"]
+
+        def keep(key, own, gone):
+            own = {k: v for k, v in own.items() if k not in gone}
+            if own:
+                pieces[key] = own
+            else:
+                pieces.pop(key, None)
+
+        if was and not now:
+            for key in ("hat", "ride"):
+                own = pieces.get(key, {})
+                if own.get("off_for") == "crash":
+                    keep(key, own, ("off_for", "on"))
+            if self._hand(settings, "hat") and self._hand(settings, "ride"):
+                self._off_for(settings, "ride", "hat")
+        elif now and not was:
+            for key in ("hat", "ride"):
+                if self._hand(settings, key) and pieces.get(key, {}).get("auto"):
+                    keep(key, pieces[key], ("auto", "pattern", "on", "off_for"))
+                if self._hand(settings, key):
+                    self._off_for(settings, key, "crash")
 
     def pieces_turned_off(self, track_id, index, piece_key, on=True, **changes):
         """What turning this piece on (on True), or another change (pattern=..., steps=...), would stop the hand
@@ -816,8 +864,9 @@ class MusicMixin:
             changes = {"on": on}
         settings = self.player_settings(track_id, index)
         after = self._apply_piece_change(settings, piece_key, changes, self.kit_notes(track_id))
-        found = [key for key in player_pieces.takes_turns(settings["style"], piece_key)
-                 if self._hand(settings, key) and not self._hand(after, key)]
+        others = player_pieces.takes_turns(settings["style"], piece_key) or (
+            player_pieces.CRASH_GIVES_WAY_TO if piece_key == "crash" else ())
+        found = [key for key in others if self._hand(settings, key) and not self._hand(after, key)]
         if piece_key in player_pieces.CRASH_GIVES_WAY_TO:
             was, now = (player_pieces.piece_on(s, "crash", in_the_groove(s, "crash")) for s in (settings, after))
             if was and not now:
@@ -1131,14 +1180,31 @@ class MusicMixin:
         in the region's span (never the player's own track)."""
         track, region = self._player_region(track_id, index)
         found = []
+        tl = self.song.timeline
+        song_end = self.song.song_end_tick()
+
+        def plays_here(other, number, part):
+            """Whether a region or recording of another track plays inside this region, its loop's repeats too
+            (0.9.12: a track was offered only where its region itself lay, so a region under a looping riff's or a
+            looping recording's repeats could not choose it)."""
+            if other.is_audio:
+                stop = part.end_tick(tl) if part.loops == 1 else arrangement.audio_region_repeats(
+                    other, number, tl, song_end)[1]
+                return part.tick < region.end and stop > region.start
+            if part.loops == 1:
+                return bool(part.player) and part.start < region.end and part.end > region.start
+            stop = arrangement.note_region_repeats(other, number, song_end)[1]
+            return (part.start < region.end and stop > region.start
+                    and (bool(part.player) or any(part.start <= n.tick < part.end for n in other.notes)))
+
         for other in self.song.tracks:
             if other.id == track.id:
                 continue
             if other.is_audio:
-                busy = any(r.tick < region.end and r.end_tick(self.song.timeline) > region.start for r in other.regions)
+                busy = any(plays_here(other, number, r) for number, r in enumerate(other.regions))
             else:
                 busy = any(region.start <= n.tick < region.end for n in other.notes) or any(
-                    r.player and r.start < region.end and r.end > region.start for r in other.note_regions)
+                    plays_here(other, number, r) for number, r in enumerate(other.note_regions))
             if busy:
                 found.append((other.id, self._track_label(other)))
         return found
@@ -1391,14 +1457,29 @@ class MusicMixin:
         tl = self.song.timeline
         if other.is_audio:
             hits = []
-            for recording in other.regions:
+            # rules 8 (0.9.12): a recording that loops is followed through every repeat that plays in the region.
+            # Until then only its first time through was heard, so a player following a looping riff locked to it in
+            # the first bars and played its own style under all the repeats.
+            repeats = players.rules_8(settings)
+            song_end = self.song.song_end_tick() if repeats else 0
+            for number, recording in enumerate(other.regions):
                 if recording.mute or recording.take is None:
                     continue
-                for hit in self._recording_hits(recording, settings["sensitivity"]):
-                    seconds = tl.tick_to_seconds(recording.tick) + hit.sample / float(AUDIO_RATE)
-                    tick = int(round(tl.seconds_to_tick(seconds)))
-                    if region.start <= tick < region.end:
-                        hits.append(players.Hit(tick, 0.5 * hit.loudness + 0.3 * hit.low + 0.2, hit.low))
+                found = self._recording_hits(recording, settings["sensitivity"])
+                began = tl.tick_to_seconds(recording.tick)
+                first, last, stop = 0, 0, None
+                each = recording.frames / float(AUDIO_RATE)
+                if repeats and recording.loops != 1 and each > 0 and found:
+                    count, stop = arrangement.audio_region_repeats(other, number, tl, song_end)
+                    # (only the repeats that can reach the region: a loop to the end of a long song has thousands)
+                    first = max(0, int((tl.tick_to_seconds(region.start) - began) / each) - 1)
+                    last = min(count - 1, int((tl.tick_to_seconds(region.end) - began) / each) + 1)
+                for k in range(first, last + 1):
+                    for hit in found:
+                        seconds = began + k * each + hit.sample / float(AUDIO_RATE)
+                        tick = int(round(tl.seconds_to_tick(seconds)))
+                        if region.start <= tick < region.end and (stop is None or tick < stop):
+                            hits.append(players.Hit(tick, 0.5 * hit.loudness + 0.3 * hit.low + 0.2, hit.low))
             hits.sort(key=lambda h: h.tick)
             return hits
         # the followed player's notes on the grid (the review, 23 Oct 2026): with its human feel each note of a rolled

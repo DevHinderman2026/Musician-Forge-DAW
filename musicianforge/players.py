@@ -185,8 +185,11 @@ MAX_PERFORMANCE = 2 ** 53 - 1
 # plays an open hi-hat, a percussion sound you turn on is not held to the drummer's two hands, a follower plays its own
 # part in a bar where the followed track is silent, the lead-in note an eighth before the change in meters counted in
 # threes, a long arpeggio note cut by a chord change gives way to the new chord at once, a step "as the style plays
-# it" at Loudness 0 plays the style's notes; see rules_7). New regions get 7.
-RULES = 7
+# it" at Loudness 0 plays the style's notes; see rules_7). 8: from 0.9.12 (10 Nov 2026, Russell: "the fills sound a
+# little bit rough in certain spots": the drummer's fills are played as a drummer plays them, a rhythm that keeps
+# every beat, flams on the beats and the eighth notes only, thirty-second notes only as a ruff into the next bar; see
+# rules_8 and _drum_fill_8). New regions get 8.
+RULES = 8
 
 
 def rules_4(settings):
@@ -207,6 +210,11 @@ def rules_6(settings):
 def rules_7(settings):
     """The changes of 0.9.11 (RULES): only for regions made or changed since."""
     return settings.get("rules", 1) >= 7
+
+
+def rules_8(settings):
+    """The changes of 0.9.12 (RULES): only for regions made or changed since."""
+    return settings.get("rules", 1) >= 8
 
 
 def to_todays_rules(settings):
@@ -400,6 +408,41 @@ def accents(hits):
     weights = sorted(h.weight for h in hits)
     middle = weights[len(weights) // 2]
     return [h for h in hits if h.weight >= min(middle, 0.75)]
+
+
+def _followed(hits, bars, settings):
+    """The hits of the followed part a player locks to. Rules 8 (0.9.12; Russell, 10 Nov 2026, "Lock to every hit"),
+    bar by bar: in a bar where the followed part has fewer hits than eighth notes, every one of them, the syncopated
+    ones too; in a busier bar its stronger half: the stronger hits first, and of hits as strong as each other those on
+    the beats, then those on the eighth notes, so a part in sixteenth notes is followed on its eighth notes and a
+    part in eighth notes on its beats. Until then (accents) the hits as strong as the middle one of the whole region:
+    of a riff played at one loudness, as notes from the computer keyboard are, only the hits on the beats (a riff on
+    one, the a of one, the and of two, three and four got its kicks on one, three and four), and of a part in
+    sixteenth notes at one loudness every single one."""
+    if not rules_8(settings) or not hits or not bars:
+        return accents(hits)
+    starts = [bar.start for bar in bars]
+    in_bars = {}
+    for hit in hits:
+        in_bars.setdefault(max(0, bisect.bisect_right(starts, hit.tick) - 1), []).append(hit)
+    kept = set()
+    for k, found in in_bars.items():
+        bar = bars[k]
+        if len(found) * 2 < bar.steps:
+            kept.update(id(hit) for hit in found)
+            continue
+
+        def place(hit, bar=bar):
+            """2 on a beat, 1 on an eighth note, 0 between."""
+            step = (hit.tick - bar.start) / float(STEP)
+            whole = int(round(step))
+            if abs(step - whole) * STEP > 30 or not 0 <= whole < bar.steps:
+                return 0
+            return {0: 2, 2: 1}.get(bar.map[whole] % 4, 0)
+
+        ranked = sorted(found, key=lambda hit: (-round(hit.weight, 3), -place(hit), hit.tick))
+        kept.update(id(hit) for hit in ranked[:(len(found) + 1) // 2])
+    return [hit for hit in hits if id(hit) in kept]
 
 
 # ----------------------------------------------------------------------
@@ -1074,6 +1117,194 @@ def _drum_fill(bar, style_key, settings, rng, start_step):
             and steps:
         hits.append((steps[-1], KICK, _velocity(110, intensity, rng)))
     return hits
+
+
+# Rules 8 (0.9.12; Russell, 10 Nov 2026: "the fills sound a little bit rough in certain spots"; his answers: the
+# drummer's fills stumble or miss hits, their fast notes are messy, "fix what you find"). Until then a fill left each
+# sixteenth out by chance (at Fill complexity 50, about one in seven), the beat it started on too, so a fill could
+# come in late on the "e" of a beat with the backbeat gone, or skip a beat in its middle; its flams could come on
+# every sixteenth, which no drummer can play, each with a grace note a fixed part of a sixteenth before (wide at slow
+# tempos, and nowhere near its stroke once the stroke was swung); and its thirty-second notes were doubled hits
+# scattered one by one. Now a fill is a rhythm first, made beat by beat (_fill_rhythm): every beat of it is struck,
+# and Fill complexity decides how full each beat is (the beat alone, eighth notes, three notes, sixteenths), fuller
+# towards the end. The same kinds of fill as before are played on that rhythm.
+FLAM_MS = 28.0                   # a flam's grace note is struck this long before its stroke, at every tempo
+FLAMS_ON_EIGHTHS_UP_TO = 150     # beats a minute: faster than this a drummer flams the beats only
+RUFF_UP_TO = 140                 # beats a minute: faster than this a drummer's fill has no thirty-second notes
+FILL_SIXTEENTHS_UP_TO = 200      # beats a minute: faster than this it has no beat of four sixteenths either
+FILL_LEAN = {"metal": 0.15, "hard_rock": 0.05, "pop": -0.05}     # how much fuller (or sparser) a style's fills are
+
+
+def _cell(length, level, pick, triplets=False):
+    """Rules 8: the sixteenths of a beat `length` sixteenths long that a fill strikes. level 0: the beat alone;
+    1: its eighth notes; 2: three notes in a beat of four (an eighth and two sixteenths, or two sixteenths and an
+    eighth, by `pick`, 0 to 1), in a longer beat its eighth notes and the sixteenth before the next beat; 3: every
+    sixteenth. triplets: the triplet feel of eighth swing (_triplet_lock), where a beat of four holds three notes:
+    levels 2 and 3 are that triplet."""
+    if level <= 0 or length <= 1:
+        return [0]
+    eighths = list(range(0, length, 2))
+    if level == 1:
+        return eighths
+    if triplets and length == 4:
+        return [0, 1, 2]
+    if level == 2 and length > 2:
+        if length == 4:
+            return [0, 2, 3] if pick < 0.6 else [0, 1, 2]
+        return sorted(set(eighths + [max(o for o in range(1, length, 2))]))
+    return list(range(length))
+
+
+def _fill_rhythm(bar, start, size, rng, lean=0.0, most=3, triplets=False):
+    """Rules 8: the rhythm of a fill from sixteenth `start` to the end of the bar, beat by beat: [(step, how far
+    through the fill it is from 0 to 1, where in its beat: 0 on the beat, 2 on an eighth note, 1 on a sixteenth
+    between)]. The first sixteenth of every beat is struck, so a fill starts where it starts and never loses a
+    beat. How full a beat is (_cell) grows with Fill complexity (size, 0 to 1), with how far through the fill the
+    beat is, and with the style (lean); the last beat has its eighth notes at least, so the fill leads into the next
+    bar. most: the fullest a beat may be (flams, fast tempos)."""
+    top = bar.steps
+    beats = []
+    for first, length in bar.pulses:
+        low, high = max(first, start), min(first + length, top)
+        if low < high:
+            beats.append((low, high - low))
+    if not beats:
+        beats = [(start, max(1, top - start))]
+    # each fill a little fuller or sparser than the last; not at Fill complexity 0 or 100, the sparsest and the fullest
+    sway = rng.uniform(-0.1, 0.1) * (1.0 - abs(2.0 * size - 1.0))
+    span = float(max(1, top - start))
+    rhythm = []
+    for k, (first, length) in enumerate(beats):
+        drive = 0.75 * size + 0.35 * (k + 1) / float(len(beats)) + lean + sway
+        level = 0 if drive < 0.3 else (1 if drive < 0.55 else (2 if drive < 0.8 else 3))
+        if k == len(beats) - 1:
+            level = max(level, 1)
+        pick = rng.random()                     # (drawn for every beat, so the beats after it stay as they are)
+        for offset in _cell(length, min(level, most), pick, triplets):
+            rhythm.append((first + offset, (first + offset - start) / span,
+                           0 if offset == 0 else (2 if offset % 2 == 0 else 1)))
+    return rhythm
+
+
+def _drum_fill_8(bar, style_key, settings, rng, start_step):
+    """Rules 8: a fill from `start_step` to the end of the bar (see above). Fill complexity (0 to 1) makes it fuller;
+    each performance picks one of the kinds, chosen as before (_drum_fill), so a region keeps each fill's kind when it
+    moves to these rules. A drummer's fill (not a drum machine's) keeps to what two hands can play at the bar's
+    tempo: flams on the beats and, up to FLAMS_ON_EIGHTHS_UP_TO, the eighth notes, never a sixteenth apart, each
+    grace note FLAM_MS before its stroke; thirty-second notes only in a snare roll, as a ruff into the next bar (its
+    last two sixteenths from Fill complexity 60, its last beat from 85), up to RUFF_UP_TO. The hits are louder on the
+    beats and grow a little through the fill, with less left to chance than before, so a run sounds even."""
+    steps = list(range(start_step, bar.steps))
+    if not steps:
+        return []
+    intensity = settings["intensity"]
+    size = settings.get("fill_complexity", 50) / 100.0
+    tempo = bar.tempo or 120.0
+    live = style_key in LIVE_DRUMMER_STYLES
+    triplets = swing_grid(settings) == 4 and settings["swing"] >= TRIPLET_LOCK_FROM
+    span = float(len(steps))
+    hits = []
+    if style_key in ("dubstep", "trap", "house"):
+        kind = rng.choice(["snare roll", "snare roll", "triplet roll", "stutter", "clap roll"])
+    elif style_key in ("hand_percussion", "shakers"):
+        kind = "congas"
+    elif style_key == "jazz":
+        kind = rng.choice(["snare comp", "toms", "snare comp"])
+    else:
+        kind = rng.choice(["toms", "snare and toms", "snare roll", "toms up", "flams", "kick and snare", "alternating"])
+    toms = [TOM_HIGH, TOM_MID, TOM_LOW, TOM_FLOOR]
+
+    def hit(step, note, loud, spread=3):
+        hits.append((step, note, _velocity(loud, intensity, rng, spread)))
+
+    # the drum machines' rolls: every sixteenth, as before; the doubled hits are the roll's last steps, in a row
+    if kind in ("snare roll", "clap roll") and not live:
+        sound = CLAP if (style_key == "house" or kind == "clap roll") else SNARE
+        doubled = int(round(size * (4 if size <= 0.6 else 8)))
+        for i, step in enumerate(steps):
+            rise = i / span
+            hit(step, sound, 60 + 50 * rise, 4)
+            if len(steps) - i <= doubled:
+                hit(step + 0.5, sound, 70 + 40 * rise, 4)
+        return hits
+    if kind == "triplet roll":
+        count = len(steps) * 3 // 4 or 1
+        for i in range(count * 2):
+            hit(start_step + i * len(steps) / float(count * 2), SNARE, 65 + 40 * i / (2.0 * count), 4)
+        return hits
+    if kind == "stutter":                    # eighths, then sixteenths, then thirty-seconds, rising
+        third = max(1, len(steps) // 3)
+        doubled = int(round((0.5 + size / 2.0) * third))
+        for i, step in enumerate(steps):
+            rise = i / span
+            if i < third and i % 2:
+                continue
+            hit(step, SNARE, 60 + 55 * rise, 4)
+            if len(steps) - i <= doubled:
+                hit(step + 0.5, SNARE, 65 + 55 * rise, 4)
+        return hits
+    if kind == "snare comp":                 # jazz comping: syncopated by nature, as before
+        for step in steps:
+            if rng.random() < size:
+                hit(step, SNARE, 70, 8)
+        return hits
+    most = 2 if live and tempo > FILL_SIXTEENTHS_UP_TO else 3
+    if kind == "flams":
+        most = 1                             # a flam takes both hands: on the eighth notes at most
+    rhythm = _fill_rhythm(bar, start_step, size, rng, FILL_LEAN.get(style_key, 0.0), most, triplets)
+    if kind == "congas":
+        drums = [CONGA_OPEN, CONGA_MUTE, CONGA_LOW, BONGO_HIGH, BONGO_LOW]
+        for step, _through, place in rhythm:
+            hit(step, rng.choice(drums), 92 if place == 0 else 86, 5)
+        return hits
+    for k, (step, through, place) in enumerate(rhythm):
+        accent = 1.0 if place == 0 else (0.92 if place == 2 else 0.85)
+        swell = 0.9 + 0.18 * through             # a little louder as it goes
+        if kind == "snare roll":
+            hit(step, SNARE, (62 + 48 * through) * (1.0 if place == 0 else 0.94))
+        elif kind == "kick and snare":           # unison hits that climb
+            loud = 78 + 42 * through
+            hit(step, SNARE, loud)
+            hit(step, KICK, loud)
+        elif kind == "flams":                    # a soft grace note just before the stroke
+            note = SNARE if through < 0.5 else toms[min(3, int(through * 4))]
+            loud = 100 * (0.92 + 0.12 * through)
+            if step > 0 and (place == 0 or tempo <= FLAMS_ON_EIGHTHS_UP_TO):
+                gap = max(0.1, min(0.4, FLAM_MS / 1000.0 * tempo / 60.0 * PPQ / STEP))      # in sixteenths
+                hit(step - gap, note, loud * 0.45)
+            hit(step, note, loud)
+        elif kind == "alternating":              # snare and a tom in turn, the tom moving down
+            hit(step, SNARE if k % 2 == 0 else toms[min(3, int(through * 4))], 94 * accent * swell)
+        else:
+            order = list(reversed(toms)) if kind == "toms up" else toms
+            note = SNARE if kind == "snare and toms" and through < 0.5 else order[min(3, int(through * 4))]
+            hit(step, note, 96 * accent * swell)
+    if kind == "snare roll" and live and not triplets and tempo <= RUFF_UP_TO and size >= 0.6:
+        # a ruff into the next bar: the roll's last sixteenths in thirty-second notes, every one of them struck
+        struck = {step for step, _through, _place in rhythm}
+        for step in range(max(start_step, bar.steps - (4 if size >= 0.85 else 2)), bar.steps):
+            loud = 62 + 48 * (step - start_step) / span
+            if step not in struck:
+                hit(step, SNARE, loud * 0.94)
+            hit(step + 0.5, SNARE, loud * 0.9)
+    if style_key in ("rock", "hard_rock", "metal") and kind != "kick and snare" and hits:
+        # the kick lands with the fill's last stroke (it was always on the bar's last sixteenth, struck or not)
+        last = max(int(h[0]) for h in hits if h[0] == int(h[0]))
+        hits.append((last, KICK, _velocity(110, intensity, rng)))
+    return hits
+
+
+def _graces(hits):
+    """Rules 8: {(place, sound): the place of its stroke} for a fill's flam grace notes: a fill's hit between two
+    sixteenths, less than half a sixteenth before a fill's hit of the same sound on the next sixteenth."""
+    strokes = {(h[0], h[1]) for h in hits if h[3] == FILL and h[0] == int(h[0])}
+    found = {}
+    for h in hits:
+        if h[3] == FILL and h[0] != int(h[0]):
+            stroke = int(math.ceil(h[0]))
+            if stroke - h[0] < 0.5 and (stroke, h[1]) in strokes:
+                found[(h[0], h[1])] = stroke
+    return found
 
 
 # Rules 3: styles whose crash after a fill is always the crash. Their Forge kits (Dubstep, Trap) have a reverse-cymbal
@@ -2064,6 +2295,7 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         settings = dict(settings, intensity=drum_intensity(settings["intensity"]))   # how hard the notes are played
     kit.settings = settings
     rules3 = rules_3(settings)
+    rules8 = rules_8(settings)
     # rules 7: the percussion a second player plays (_SECOND_PLAYER), in the styles a real drummer plays
     second_player = _SECOND_PLAYER if rules_7(settings) and style_key in LIVE_DRUMMER_STYLES else frozenset()
     changing = _changes_only(chord_spans) if rules3 else chord_spans
@@ -2074,7 +2306,7 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
     changing = _ChordSpans(changing)          # (each bar finds the chord changes inside it at once)
     notes = []
     fill_bars = []
-    followed = accents(hits_in) if follow else []
+    followed = _followed(hits_in, bars, settings) if follow else []
     matched = set()
     for bar in bars:
         rng = rng_for(bar.index)
@@ -2111,7 +2343,7 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
                                                       and rng.random() < 0.5 and h[1] not in second_player)]
             thinned = {(h[0], h[1]) for h in filled if h not in kept_through}
             filled = kept_through
-            fill = _drum_fill if rules_now else _drum_fill_rules_1
+            fill = _drum_fill_8 if rules8 else (_drum_fill if rules_now else _drum_fill_rules_1)
             # rules 3: the fill ends where the region does (in a region ending partway through a bar it was cut off)
             played = _played_bar(bar) if rules3 else bar
             fill_hits = fill(played, style_key, settings, rng, start)
@@ -2214,7 +2446,9 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
         sound = kit.sound_as_heard(bar, hits) if for_steps and rules_7(settings) else (lambda h: h[1])
         hits = _triplet_lock(hits, bar, settings["swing"], grid, sound, stays=lambda h: h[3] == CHOKE)
         if grid == 4 and settings["swing"] >= TRIPLET_LOCK_FROM:   # a fill's doubled 32nds have no place in triplets
-            hits = [h for h in hits if not (h[3] == FILL and h[0] != int(h[0]))]
+            # (rules 8: a flam's grace note is no doubled note: it stays with its stroke)
+            graces = _graces(hits) if rules8 else {}
+            hits = [h for h in hits if not (h[3] == FILL and h[0] != int(h[0])) or (h[0], h[1]) in graces]
         if rules3:
             hits = _no_ghost_under_a_stroke(_one_hat_a_step(hits))
         if style_key in LIVE_DRUMMER_STYLES:        # the Step pattern view too: it shows what is heard
@@ -2225,8 +2459,14 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
                                                           kit.wash))
             # (the half-open hi-hats' silent notes, once the bar is done; none where both kicks take both feet)
             hits = kit.two_feet(kit.closing_notes(bar, hits))
+        graces = _graces(hits) if rules8 and style_key in LIVE_DRUMMER_STYLES else {}
         for step, note, velocity, origin in hits:
             tick = _swing_tick(bar, step, swing, grid)
+            if (step, note) in graces:
+                # rules 8: a flam's grace note is as long before its stroke wherever the swing puts the stroke (notes
+                # between the sixteenths are not swung, so it was left far before a stroke that swung late)
+                stroke = graces[(step, note)]
+                tick = max(bar.start, _swing_tick(bar, stroke, swing, grid) - int(round((stroke - step) * STEP)))
             if tick >= bar.end:
                 continue
             length = 480 if note in (CRASH, CRASH2, RIDE, CHINA, OPEN_HAT, FORGE_IMPACT, FORGE_RISER) else STEP
@@ -3014,7 +3254,7 @@ def _perform_melodic(settings, bars, chord_spans, hits_in, follow, rng_for, for_
     state = {}
     step_state = {}                       # the hand-made steps' own voice leading
     fill_bars = []
-    followed = accents(hits_in) if follow else []
+    followed = _followed(hits_in, bars, settings) if follow else []
     matched = set()
 
     def event_notes(bar, event, rng, own_state, next_role="root", plain=None):
@@ -3524,6 +3764,7 @@ HUMAN_FEEL = {
     "hammer": {"jitter": 3.5, "pocket": {"all": (-1.0, 3.0)}},
 }
 DRIFT_MS = 4.0                  # how far the time drifts, slowly, beat by beat (the band breathes)
+GRACE_TICKS = STEP * 45 // 100  # rules 8: the same drum struck again this soon is a flam's grace note and its stroke
 CHORD_TICKS = 100               # notes this close (under a tenth of a beat) are one chord or strum (a six-string strum
                                 # spreads over 70)
 
@@ -3701,6 +3942,17 @@ def _humanize(notes, settings, timeline, start, end):
 
     limit = 2.5 * feel["jitter"]
     drums = settings["player"] == "anvil"
+    # rules 8: a flam's grace note moves with its stroke, so the flam stays as wide as it is played (each moved by
+    # its own few milliseconds: a flam could close up to nothing or open to twice its width). A grace note: the same
+    # sound struck again within GRACE_TICKS.
+    strokes = {}
+    if drums and rules_8(settings):
+        last = {}
+        for note in sorted(notes, key=lambda n: (n.tick, n.pitch), reverse=True):
+            later = last.get(note.pitch)
+            if later is not None and 0 < later - note.tick <= GRACE_TICKS:
+                strokes[(note.tick, note.pitch)] = later
+            last[note.pitch] = note.tick
     # what is played together: for a melodic player a chord or a strum (notes within CHORD_TICKS of its first, so a
     # strum's spread stays in order, all moved alike), for the drummer each note on its own (each limb)
     groups = []
@@ -3711,12 +3963,14 @@ def _humanize(notes, settings, timeline, start, end):
             groups.append((note.tick, [note]))
     out = []
     for tick, together in groups:
-        drift = drift_at(max(0, tick - start + into) // PPQ)
+        # (rules 8: a flam's grace note takes every number of its stroke's, its drift too; any other note its own)
+        at = strokes.get((tick, together[0].pitch), tick) if strokes else tick
+        drift = drift_at(max(0, at - start + into) // PPQ)
         shared = own(tick + shift)[0] * feel["jitter"]
         rolled = 0.0
         for k, note in enumerate(together):
             if drums:
-                ms = own(tick + shift, note.pitch)[0] * feel["jitter"]
+                ms = own(at + shift, note.pitch)[0] * feel["jitter"]
                 ms += next((late for sounds, late in pocket.items() if note.pitch in sounds), 0.0)
             else:
                 # a rolled chord, low to high: each note a little after the one below it (the review, 23 Oct 2026:
@@ -3725,7 +3979,7 @@ def _humanize(notes, settings, timeline, start, end):
                     rolled += own(tick + shift, note.pitch)[1] * feel.get("roll", 0.0)
                 ms = shared + pocket.get("all", 0.0) + rolled
             ms = max(-limit, min(limit + 10.0, ms + drift))
-            moved = int(round(note.tick + ticks(ms, max(0, tick + shift))))
+            moved = int(round(note.tick + ticks(ms, max(0, at + shift))))
             out.append(Note(max(start, min(end - 1, moved)), note.length, note.pitch, note.velocity))
     if drums:
         grid = sorted(notes, key=lambda n: (n.tick, n.pitch))
