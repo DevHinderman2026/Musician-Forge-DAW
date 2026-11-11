@@ -1,6 +1,9 @@
 @echo off
 rem Sets MF_BASE_PY to a Python that Musician Forge can use: python.org's 64-bit Python 3.14, 3.13 or 3.12, newest
 rem first (check_python.py says why others cannot be used). Never Musician Forge's own environment.
+rem From 0.9.13 the Microsoft Store's Python (3.12 to 3.14) is used when it is the only one: python.org's folders and
+rem the py launcher come first, then "python" and the Store's own names for each version. install.py then keeps
+rem Musician Forge's files in the user folder, where the Store's Python does not hide them.
 rem When none is found, MF_BASE_PY stays empty, MF_ANY_PY is the first other Python found (Diagnose uses it) and
 rem MF_PY_REASON says in words why it cannot be used, and which Python to install.
 set "MF_BASE_PY="
@@ -18,6 +21,8 @@ for %%V in (314 313 312) do call :try "%ProgramFiles%\Python%%V\python.exe"
 rem 2. The py launcher, asking for each version Musician Forge can use, then for its own choice; then "python".
 for %%V in (3.14 3.13 3.12 3) do call :try_command py -%%V
 call :try_command python
+rem 3. The Microsoft Store's Python by its version names: "python" alone can be an older one.
+for %%V in (3.14 3.13 3.12) do call :try_command python%%V
 goto :eof
 
 :try_command

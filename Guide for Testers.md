@@ -1,8 +1,8 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.12 before its first release.
+For people trying Musician Forge 0.9.13 before its first release.
 
-Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python from python.org (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
+Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
 ## How this guide works
 
@@ -20,7 +20,8 @@ On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the 
 ## Before you start: Python
 
 - Install 64-bit Python 3.14 (or 3.13 or 3.12) from python.org (Downloads, Windows). In the installer's first screen, tick "Add python.exe to PATH", then choose Install Now. Python 3.15 does not work yet: wxPython, which Musician Forge's windows use, has no build for it; 3.14 can be installed beside it. On an ARM64 PC, choose the x64 (AMD64) installer.
-- The Microsoft Store's Python does not work: it quietly moves the files Musician Forge makes into a private folder. If it is the only Python on the computer (or no suitable Python is found), the installer offers to install Python 3.14 from python.org for you: press Y. It installs for your Windows user only and needs no administrator rights. If you press N, or it can't, it tells you how to install it yourself (both can stay installed).
+- Python from the Microsoft Store works too, from 0.9.13, when it is 64-bit Python 3.12, 3.13 or 3.14. The Store's Python quietly moves every new file under AppData into a private folder of its own, so with it Musician Forge keeps its own files (its Python environment and packages, the instrument engine, the sounds and its settings) in the MusicianForge folder of your user folder instead, C:\Users\your name\MusicianForge, and the installer says so. When a computer has both, python.org's Python is used.
+- If no suitable Python is found, the installer offers to install Python 3.14 from python.org for you: press Y. It installs for your Windows user only and needs no administrator rights. If you press N, or it can't, it tells you how to install it yourself (both can stay installed).
 
 ## What you need
 
@@ -310,6 +311,74 @@ To update to a newer test version, put its files in the same folder and run "Ins
 **What to check:** Run Install or Update Musician Forge again, then Start Musician Forge and open one of your projects.
 
 **What to expect:** It opens and plays as before.
+
+## New in 0.9.13
+
+### Step AB.1: The Toms take the hand that keeps time
+
+**What to check:** Add a rock drummer (Anvil, Rock). In its Kit pieces, press Space on the Toms and play. Press Space on the Toms again. Then turn the Toms on once more and press Space on the Hi-hat.
+
+**What to expect:** The first Space says "Toms on, hi-hat off": the floor tom plays eighth notes and the hi-hat stops, as a drummer's hand moves to the toms. The lines read "Toms: on, pattern changed" and "Hi-hat: off, the toms keep time". The second Space says "Toms off, hi-hat on", and the Toms read "Toms: off, in fills only" again. With the Toms on, Space on the Hi-hat says "Hi-hat on, toms off", and the Toms read "Toms: off, in fills only, the hi-hat keeps time". Before 0.9.13 the hi-hat kept playing on top of the toms. Control+Z takes back each of these in one step.
+
+### Step AB.2: The Ride and the crash give way to the Toms too
+
+**What to check:** Add a rock drummer, choose variation 3 (the ride) and press Space on the Toms. Then add a metal drummer, choose variation 4 (the half-time breakdown, which keeps time on the china), and press Space on the Toms, twice.
+
+**What to expect:** On the rock drummer you hear "Toms on, ride off", and the Ride's line reads "Ride: off, the toms keep time". On the metal drummer the first Space says "Toms on, crash off", and the Crash cymbals' line begins "Crash cymbals: off, the toms keep time"; the second says "Toms off, crash on", and the china is back. Whichever cymbal keeps time gives way, and only that one.
+
+### Step AB.3: The Toms keep the hand through a change of variation
+
+**What to check:** Add a rock drummer and turn the Toms on. Choose variation 2, then another style.
+
+**What to expect:** The Toms keep playing, and the new groove's own cymbal waits for them: its line says "the toms keep time". Changing the variation says only "Variation 2 of 6", since no cymbal changed for the ear. Turn the Toms off, and that groove's cymbal plays.
+
+### Step AB.4: The breakdown gets busier
+
+**What to check:** Add a metal drummer and choose variation 4 (the half-time breakdown). Set Complexity to 40 and play; then 60, 80 and 100.
+
+**What to expect:** At 45 and below it plays as it always did: about five kicks a bar and the one snare on three. Above that the kick fills in, more with every step up, and above 60 soft snare notes come in late in the bar. At 100 you hear about twelve kicks and four snares a bar: the loud snare on three, a soft one just before it, and two soft ones at the end of the bar. It is still half time: the snare on three stays the loudest, and nothing lands on two or four. Before 0.9.13 the breakdown played the same at every Complexity.
+
+### Step AB.5: Seven more grooves get busier
+
+**What to check:** Try Complexity 40 and then 100 on metal's variation 3 (thrash) and variation 5 (the blast beat), hard rock's variations 3 and 5, rock's variation 6, funk's variation 2 and jazz's variation 4.
+
+**What to expect:** Each adds notes of its own above 45, where before it played the same at every Complexity: the thrash kick runs in sixteenth notes at 100, and hard rock's and rock's kicks push between the beats. Funk's linear groove adds kicks and soft ghost notes on the snare, still with no two of the kit at the same moment. Jazz's variation 4 adds ride bell notes and rim clicks. At 45 and below each plays as before.
+
+### Step AB.6: Flams and stop breaks
+
+**What to check:** Add a metal drummer over at least eight bars, set Fill amount to 100 and leave Fill complexity at 50. Play, and press Control+R (Reforge) several times. Then try a hard rock drummer, and a region that ends where a section ends.
+
+**What to expect:** Among the fills you now hear flams on the snare with the kick right after each one, both hands landing together on the snare and a tom, and the hands and the feet taking turns. Now and then the groove stops altogether, its kick too, for a stop break: a few big hits with silence between them, both hands on the snare and the floor tom, then a flam on the snare and the kick (or both hands again), and the crash lands on the next bar. Stop breaks come most in the last bar of a section or of the region. Before 0.9.13 the groove's own kick went on under every fill.
+
+### Step AB.7: Bigger fills use the snare and the toms
+
+**What to check:** On a rock, hard rock or metal drummer with Fill amount 100, set Fill complexity to 100 and Reforge several times. Then set it to 50.
+
+**What to expect:** At 100 the fills run in sixteenth notes and move between the snare and the toms: the snare first and then down the toms, two strokes on the snare and two on a tom, a snare accent leading a tom, or the two in turn. None is the toms alone. At 50 a short fill of the toms alone can still come now and then. Before 0.9.13 more than a third of metal's biggest fills were tom runs from top to bottom.
+
+### Step AB.8: A cymbal kept going in a fill
+
+**What to check:** Add a metal drummer, choose variation 4 (the china keeps time), set Fill amount to 100, and Reforge several times.
+
+**What to expect:** In some fills one hand stays on the china: the snare on the beats, and the china on the offbeats with the kick under it. On a rock drummer the same fill uses the crash cymbal. A crash and a kick still land on the bar after every fill.
+
+### Step AB.9: Python from the Microsoft Store (only if you have it)
+
+**What to check:** Only on a computer whose Python comes from the Microsoft Store (Python 3.12 or 3.13 from the Store, and no Python from python.org). Run Install or Update Musician Forge, then Start Musician Forge. Open File Explorer on your user folder (C:\Users, then your name).
+
+**What to expect:** Step 1 says "This computer's Python comes from the Microsoft Store, which hides new files under AppData. Musician Forge keeps its files in" and then the MusicianForge folder of your user folder. The install finishes with "All steps finished", and Start Musician Forge opens the program. Your user folder has a MusicianForge folder with about_this_folder.txt in it, which says what the folder is. Before 0.9.13 the installer refused the Store's Python and asked for python.org's. This step could not be tried on a real Microsoft Store Python before the release, so please send the install log (logs, install_log.txt) whether it worked or not. Remove Musician Forge takes that folder away again.
+
+### Step AB.10: The Snare's own Complexity keeps the backbeat
+
+**What to check:** Add a rock drummer. In its Kit pieces, press Enter on the Snare, set its Complexity to 100 and close the window. Play.
+
+**What to expect:** Soft snare notes come in between the beats, and the snare on two and four is still clearly the loudest. Before 0.9.13 a snare as loud as the backbeat landed on nearly every eighth note, so the backbeat was lost.
+
+### Step AB.11: An older project still sounds the same
+
+**What to check:** Open a project saved with 0.9.12 or earlier that has rhythm players, and play it.
+
+**What to expect:** It plays exactly as it did: its fills, its grooves at every Complexity, and what its players follow. The new fills and the busier grooves come to a region only once you change something in it. Toms and a hi-hat that were both on in an older region both still play, until you turn one of them on or off.
 
 ## New in 0.9.12
 
@@ -882,7 +951,7 @@ Then add a metal drummer, choose variation 3, and press Space on its Hi-hat, the
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.11
+## Known limits in 0.9.13
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

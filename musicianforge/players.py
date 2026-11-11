@@ -188,8 +188,15 @@ MAX_PERFORMANCE = 2 ** 53 - 1
 # it" at Loudness 0 plays the style's notes; see rules_7). 8: from 0.9.12 (10 Nov 2026, Russell: "the fills sound a
 # little bit rough in certain spots": the drummer's fills are played as a drummer plays them, a rhythm that keeps
 # every beat, flams on the beats and the eighth notes only, thirty-second notes only as a ruff into the next bar; see
-# rules_8 and _drum_fill_8). New regions get 8.
-RULES = 8
+# rules_8 and _drum_fill_8). 9: from 0.9.13 (10 Nov 2026, Russell: metal's breakdown at Complexity 100 "is supposed to
+# have a lot more kick drum and a lot more snare", and the fills need flams, stop breaks, the snare and the toms
+# together and the china kept going "depending on where the drummer's hands are": the grooves that played the same at
+# every Complexity get busier, player_variations.BUSIER, and the drummer's fills are orchestrated as drummers play
+# them, _drum_fill_9; see rules_9). New regions get 9.
+RULES = 9
+
+
+NEWER_RULES = 999               # the highest rules number taken for a newer version's (a larger one is damage: 1)
 
 
 def rules_4(settings):
@@ -215,6 +222,11 @@ def rules_7(settings):
 def rules_8(settings):
     """The changes of 0.9.12 (RULES): only for regions made or changed since."""
     return settings.get("rules", 1) >= 8
+
+
+def rules_9(settings):
+    """The changes of 0.9.13 (RULES): only for regions made or changed since."""
+    return settings.get("rules", 1) >= 9
 
 
 def to_todays_rules(settings):
@@ -314,6 +326,11 @@ def clean_settings(raw):
     settings["play_after_reforge"] = bool(raw.get("play_after_reforge", True))
     rules = raw.get("rules")
     settings["rules"] = rules if type(rules) is int and 1 <= rules <= RULES else 1      # (2 stays 2)
+    if type(rules) is int and RULES < rules <= NEWER_RULES:
+        # a region made by a newer version, under rules this one does not have yet: the newest it has are the
+        # nearest to what was made (0.9.13; until then it fell back to the oldest, rules 1, so a project from a
+        # tester with a newer copy played its new regions as a version of early October did)
+        settings["rules"] = RULES
     settings["pieces"] = pp.clean_pieces(player.key, raw.get("pieces"))
     feel = raw.get("feel_from")         # (where a moved or copied region's feel comes from, keep_feel; damaged: none)
     if isinstance(feel, (list, tuple)) and len(feel) in (2, 3) and all(type(x) is int for x in feel[:2]) \
@@ -466,6 +483,15 @@ def _piece_seed(settings, piece_key, salt):
     """Random choices that belong to one piece's own settings, kept apart from the performance's, so changing a
     piece never changes what the other pieces play."""
     return _seed(settings, ["piece", piece_key, salt])
+
+
+def _steady_seed(settings, salt):
+    """Rules 9: random choices that stay the same when Complexity changes (every other choice is made anew at each
+    Complexity, _seed), so the notes a groove adds as it gets busier (_busier_hits) come in one by one and stay:
+    more Complexity never takes one of them away."""
+    values = [settings.get(key) for key in ("player", "style", "swing")] + [
+        settings.get("performance", 1), settings.get("variation", 1), salt]
+    return int.from_bytes(hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).digest()[:8], "big")
 
 
 # ----------------------------------------------------------------------
@@ -830,11 +856,15 @@ def _table_hits(bar, table, settings, rng, complexity=None):
     return hits
 
 
-def _piece_density(bar, hits, rows, busy, rng, intensity, kick=False):
+def _piece_density(bar, hits, rows, busy, rng, intensity, kick=False, soft=False):
     """One piece's own Complexity, 0 to 100 (Russell, 10 Oct 2026), on the hits its rows play in a bar. 50 leaves
     them; lower leaves out the sixteenths first, then the in-between eighths, down to the beats; higher adds notes
     where the piece rests, the in-between eighths first, then some sixteenths, never all of them (a kick adds fewer),
-    so even at 100 a drummer could play it."""
+    so even at 100 a drummer could play it.
+    soft: rules 9, the snare (0.9.13; Russell, 10 Nov 2026, of the breakdown: "it still keeps the halftime feel, it
+    just needs to be more complex"): the notes it adds are between the beats only and a good deal softer than the
+    backbeat, as a drummer fills in around it. Until then the Snare's own Complexity at 100 put a snare as loud as
+    the backbeat on nearly every eighth note, the other beats too, so no backbeat was left to hear."""
     amount = (busy - 50) / 50.0
     if amount == 0 or not rows:
         return hits
@@ -867,14 +897,59 @@ def _piece_density(bar, hits, rows, busy, rng, intensity, kick=False):
         if step in taken:
             continue
         place = place_of(step)
+        if soft and place % 4 == 0:
+            continue                                       # (the beats are the backbeat's: none added there)
         if place % 2 == 0:
             chance = amount * (0.6 if kick else 0.9)
         else:
             chance = max(0.0, amount - (0.5 if kick else 0.35)) * (0.4 if kick else 0.7)
         if chance > 0 and rng.random() < chance:
-            accent = 0.82 if place % 2 == 0 else 0.7
-            added.append((step, note, _velocity(velocity * accent, intensity, rng), GROOVE))
+            accent = (0.82 if place % 2 == 0 else 0.7) * (SOFTER_THAN_THE_BACKBEAT if soft else 1.0)
+            added.append((step, note, _velocity(velocity * accent, intensity, rng, 4 if soft else 8), GROOVE))
     return hits + added
+
+
+BUSIER_RAMP = 0.2            # rules 9: a note a groove adds comes in over this much of the Complexity slider
+SOFTER_THAN_THE_BACKBEAT = 0.55     # rules 9: how loud the notes the Snare's own Complexity adds are, against it
+
+
+def _busier_hits(bar, extras, settings, complexity=None):
+    """Rules 9 (0.9.13; Russell, 10 Nov 2026): the notes a groove adds as Complexity rises (player_variations.BUSIER;
+    extras: its entries for the voices wanted). Until then the grooves whose kick and snare are all fixed steps
+    (metal's thrash, breakdown and blast beat, hard rock's pushed and gallop, rock's driving sixteenths, funk's
+    linear groove, Latin jazz) played the same at every Complexity. Each note has a Complexity where it starts to
+    come in; from BUSIER_RAMP above that it always plays, and in between it plays in some bars. The choice for each
+    step is made once for the performance (_steady_seed), so raising Complexity only ever adds notes.
+    Returns [(step, note, velocity, GROOVE or ROW_GHOST)]."""
+    complexity = settings["complexity"] / 100.0 if complexity is None else complexity
+    hits = []
+    for voice, velocity, places, marks in extras:
+        rng = random.Random(_steady_seed(settings, ["busier", voice, bar.index]))
+        for step in range(bar.steps):
+            draw, wobble = rng.random(), rng.uniform(-8, 8)        # (drawn for every step: see above)
+            place = bar.map[step]
+            entry = places.get(place)
+            if entry is None:
+                continue
+            # (its own loudness against the row's, held closer to it than the rows' notes are, so a note meant to be
+            # softer than the backbeat always is; else the step's accent, as the rows are played, _table_hits)
+            if isinstance(entry, tuple):
+                start, loud, wobble = entry[0], entry[1], wobble / 2.0
+            else:
+                start, loud = entry, _ACCENT_STEPS.get(place, 0.82 if place % 2 == 0 else 0.7)
+            if complexity <= start or draw >= (complexity - start) / BUSIER_RAMP:
+                continue
+            scale = 0.5 + 0.75 * settings["intensity"] / 100.0         # (as _velocity plays it)
+            hits.append((step, voice, max(1, min(127, int(round(velocity * loud * scale + wobble)))),
+                         ROW_GHOST if "g" in marks else GROOVE))
+    return hits
+
+
+def _linear_gives_way(hits, added):
+    """Rules 9, a linear groove (LINEAR): a note the groove adds takes the hi-hat's place on its step, so still no
+    two of the kit play at the same moment."""
+    steps = {h[0] for h in added}
+    return [h for h in hits if not (h[1] in (HAT, OPEN_HAT) and h[3] == GROOVE and h[0] in steps)]
 
 
 # Rules 3: variations where no two of the kit play at the same moment (a linear groove): ghost notes and the
@@ -891,6 +966,11 @@ def _drum_bar(bar, style_key, table, settings, rng):
     complexity = settings["complexity"] / 100.0
     hits = _table_hits(bar, table, settings, rng)
     rules3 = rules_3(settings)
+    if rules_9(settings):                   # what this groove adds as Complexity rises (pv.BUSIER)
+        added = _busier_hits(bar, pv.busier(style_key, settings.get("variation", 1)), settings)
+        if added and _linear(settings):
+            hits = _linear_gives_way(hits, added)
+        hits += added
     # rules 3: no ghost note where the snare (or the rim) already plays, so the soft rim click is never struck with a
     # snare at once, and in a linear groove none where anything plays
     taken = {int(h[0]) for h in hits if h[1] in (SNARE, SNARE2, RIM) or _linear(settings)} if rules3 else set()
@@ -1294,6 +1374,291 @@ def _drum_fill_8(bar, style_key, settings, rng, start_step):
     return hits
 
 
+# Rules 9 (0.9.13; Russell, 10 Nov 2026: "in metal, hard rock, whatever, especially in the metal and hard rock, the
+# drummers, you need to have some flams for the fills ... at the end of certain bars for certain performances the
+# drummer hits the snare with both hands, and then right after that, they hit the bass drum and then the crash ...
+# stop breaks, where at the end of certain bars, especially on the very last bar of the section, the drummer could
+# hit the snare and tom at the same time, and then crash cymbal after that on the next bar"; "if I set the fill
+# complexity to 100% on the drums, it needs to have more snare, it needs to have more tom. Even though the fills are
+# bigger, a lot of them are just tom runs ... You have to look at an actual drummer and see how they play"; "some
+# fills have the China cymbal still crashing on the offbeats depending on where the drummer's hands are").
+# Until then one fill in seven of a rock, hard rock or metal drummer had flams, two in seven were the toms alone
+# from top to bottom (at Fill complexity 100, 15 of 40 metal fills), none had a cymbal in it, and under every fill
+# the groove's own kick went on. Now the rock, hard rock, metal, funk and pop drummers' fills are orchestrated the
+# ways drummers build them (the rhythm is still _fill_rhythm's, every beat struck):
+# - the snare and the toms together: the snare first and then down the toms ("around"), two strokes on the snare and
+#   two on a tom ("pairs"), a snare accent leading three strokes on a tom ("anchor"), three on the snare and one on a
+#   tom ("tail"), the two in turn ("turns"), or a shape chosen beat by beat ("mixed"). The toms alone only as a short
+#   fill (up to two beats, below Fill complexity 75);
+# - both hands together on the snare and a tom, with the kick between ("both hands");
+# - the hands and the feet in turn, two strokes of each (one kick where the drummer has one pedal; "hand and foot");
+# - flams on the snare with the kick after each ("flams"), and a flam on the first stroke of other fills now and then;
+# - a stop break ("stop"): the groove stops, its kick too, for big hits with silence between them, both hands on the
+#   snare and the floor tom, the last beat a flam and the kick (or both hands twice), and the crash lands on the next
+#   bar; three times as likely in the last bar of a section or of the region;
+# - the cymbal kept going ("cymbals"): one hand plays the snare on the beats and the other the china or crash on the
+#   offbeats with the kick, and in a groove that keeps time on a crash or china the free hand does the same in the
+#   flam and both-hands fills half the time.
+# Jazz, the drum machines and the hand percussion play their fills as before (_drum_fill_8).
+FILL_KINDS_9 = {
+    "metal": {"around": 3, "pairs": 3, "anchor": 3, "tail": 2, "turns": 2, "mixed": 3, "both hands": 3,
+              "hand and foot": 4, "flams": 4, "stop": 3, "snare roll": 2, "cymbals": 3, "toms": 2,
+              "kick and snare": 1},
+    "hard_rock": {"around": 3, "pairs": 3, "anchor": 3, "tail": 2, "turns": 2, "mixed": 3, "both hands": 3,
+                  "hand and foot": 2, "flams": 4, "stop": 3, "snare roll": 2, "cymbals": 2, "toms": 2,
+                  "kick and snare": 1},
+    "rock": {"around": 3, "pairs": 2, "anchor": 3, "tail": 2, "turns": 2, "mixed": 2, "both hands": 1,
+             "hand and foot": 1, "flams": 2, "stop": 2, "snare roll": 2, "cymbals": 1, "toms": 2,
+             "kick and snare": 1},
+    "funk": {"around": 2, "pairs": 2, "anchor": 3, "tail": 2, "turns": 2, "mixed": 2, "hand and foot": 2,
+             "flams": 1, "stop": 1, "snare roll": 2, "toms": 1, "kick and snare": 1},
+    "pop": {"around": 3, "pairs": 2, "anchor": 2, "tail": 2, "turns": 1, "mixed": 1, "flams": 1, "stop": 1,
+            "snare roll": 2, "toms": 2, "kick and snare": 1},
+}
+FILL_SHAPES = {"pairs": "SSTT", "anchor": "STTT", "tail": "SSST", "turns": "STST"}     # one beat: snare or a tom
+FILL_OWN_FEET = ("both hands", "hand and foot", "flams", "stop", "cymbals", "kick and snare")   # they play the kick
+FIRST_FLAM = {"metal": 0.45, "hard_rock": 0.45, "rock": 0.25, "funk": 0.1, "pop": 0.1}   # a flam opens other fills
+STOP_AT_SECTION_END = 3.0        # how much likelier a stop break is in the last bar of a section or of the region
+TOM_RUN_BELOW = 0.75             # Fill complexity (0 to 1) from which no fill is the toms alone
+KICK_DOUBLES_UP_TO = {"metal": None, "hard_rock": 150, "rock": 120, "funk": 110, "pop": 110}
+
+
+def _kick_doubles(style_key, tempo):
+    """Whether this style's drummer plays two kicks a sixteenth apart in a fill at this tempo: the metal drummer has
+    two pedals; the others one, which doubles only up to KICK_DOUBLES_UP_TO beats a minute."""
+    limit = KICK_DOUBLES_UP_TO.get(style_key, 110)
+    return limit is None or tempo <= limit
+
+
+def fill_cymbal(rows):
+    """Rules 9: (the cymbal a fill plays with the free hand, whether the groove keeps time on it), from the rows the
+    Crash cymbals play in the groove ({voice: (16 chances, ...)}): the china where the groove has one, else the
+    crash; it keeps time where one of them has a hit on every beat (metal's thrash and breakdown, or a Pattern of
+    your own)."""
+    keeper = next((voice for voice in (CHINA, CRASH, CRASH2, SPLASH)
+                   if voice in rows and all(rows[voice][0][place] >= 1.0 for place in range(0, 16, 4))), None)
+    if keeper is not None:
+        return keeper, True
+    return (CHINA if CHINA in rows else CRASH), False
+
+
+def _drum_fill_9(bar, style_key, settings, rng, start_step, ends_section=False, cymbal=CRASH, keeps_time=False):
+    """Rules 9: a fill from `start_step` to the end of the bar (see above). Returns (the hits [(step, note,
+    velocity)], whether the fill plays the kick itself, so the groove's own kick stops where it starts).
+    ends_section: the bar is the last of a section or of the region. cymbal, keeps_time: fill_cymbal."""
+    weights = FILL_KINDS_9.get(style_key)
+    if weights is None:
+        return _drum_fill_8(bar, style_key, settings, rng, start_step), False
+    if start_step >= bar.steps:
+        return [], False
+    intensity = settings["intensity"]
+    size = settings.get("fill_complexity", 50) / 100.0
+    tempo = bar.tempo or 120.0
+    triplets = swing_grid(settings) == 4 and settings["swing"] >= TRIPLET_LOCK_FROM
+    doubles = _kick_doubles(style_key, tempo) and not triplets
+    lean = FILL_LEAN.get(style_key, 0.0)
+    span = float(bar.steps - start_step)
+    beats = [(max(first, start_step), min(first + length, bar.steps) - max(first, start_step))
+             for first, length in bar.pulses if max(first, start_step) < min(first + length, bar.steps)]
+    if not beats:
+        beats = [(start_step, bar.steps - start_step)]
+    weights = dict(weights)
+    if len(beats) > 2 or size >= TOM_RUN_BELOW:
+        weights.pop("toms", None)
+    if ends_section:
+        weights["stop"] = weights.get("stop", 0) * STOP_AT_SECTION_END
+        if "both hands" in weights:
+            weights["both hands"] *= 2
+    if size >= 0.75 and "stop" in weights:
+        weights["stop"] *= 0.5              # a big fill is more often a full one
+    if keeps_time and "cymbals" in weights:
+        weights["cymbals"] *= 2
+    names = sorted(weights)
+    kind = rng.choices(names, [weights[name] for name in names])[0]
+    toms = [TOM_HIGH, TOM_MID, TOM_LOW, TOM_FLOOR]
+    hits = []
+
+    def hit(step, note, loud, spread=3):
+        hits.append((step, note, _velocity(loud, intensity, rng, spread)))
+
+    def flam(step, note, loud):
+        """A stroke with a soft grace note FLAM_MS before it (both hands)."""
+        if step > 0:
+            gap = max(0.1, min(0.4, FLAM_MS / 1000.0 * tempo / 60.0 * PPQ / STEP))      # in sixteenths
+            hit(step - gap, note, loud * 0.45)
+        hit(step, note, loud)
+
+    def both(step, tom, loud):
+        """Both hands together: the snare and a tom."""
+        hit(step, SNARE, loud)
+        hit(step, tom, loud * 0.96)
+
+    def tom_at(through, up=False):
+        order = list(reversed(toms)) if up else toms
+        return order[min(3, int(through * 4))]
+
+    def swell(through, place):
+        return (1.0 if place == 0 else (0.92 if place == 2 else 0.85)) * (0.9 + 0.18 * through)
+
+    def offset_in_beat(step):
+        first, length = bar.pulse_at(int(step))
+        return min(3, (int(step) - first) * 4 // max(1, length)), first, length
+
+    most = 2 if tempo > FILL_SIXTEENTHS_UP_TO else 3
+    free_hand = keeps_time and rng.random() < 0.5       # (drawn for every fill, so the kinds after it stay put)
+    first_flam = rng.random() < FIRST_FLAM.get(style_key, 0.1)
+
+    if kind == "stop":
+        # a stop break: big hits with silence between them. Each beat before the last: both hands and the kick
+        # together (from Fill complexity 50 the kick again on the "and"); the last beat: a flam on the snare and the
+        # kick after it, or both hands and the kick after them, or both hands twice. The crash is the next bar's.
+        ending = rng.choice(["flam", "flam", "both and kick", "both twice"])
+        for k, (first, length) in enumerate(beats):
+            through = (first - start_step) / span
+            half = first + 2 if length >= 3 else None           # the beat's second eighth note
+            if k < len(beats) - 1:
+                both(first, TOM_FLOOR, 104 + 8 * through)
+                hit(first, KICK, 108)
+                if size >= 0.5 and half is not None:
+                    hit(half, KICK, 100)
+            elif ending == "flam":
+                flam(first, SNARE, 112)
+                if half is not None:
+                    hit(half, KICK, 110)
+            elif ending == "both and kick":
+                both(first, TOM_FLOOR, 112)
+                if half is not None:
+                    hit(half, KICK, 110)
+            else:
+                both(first, TOM_FLOOR, 108)
+                if half is not None:
+                    both(half, TOM_FLOOR, 114)
+        return hits, True
+
+    if kind == "snare roll":
+        rhythm = _fill_rhythm(bar, start_step, size, rng, lean, most, triplets)
+        for step, through, place in rhythm:
+            hit(step, SNARE, (62 + 48 * through) * (1.0 if place == 0 else 0.94))
+        if not triplets and tempo <= RUFF_UP_TO and size >= 0.6:
+            struck = {step for step, _through, _place in rhythm}
+            for step in range(max(start_step, bar.steps - (4 if size >= 0.85 else 2)), bar.steps):
+                loud = 62 + 48 * (step - start_step) / span
+                if step not in struck:
+                    hit(step, SNARE, loud * 0.94)
+                hit(step + 0.5, SNARE, loud * 0.9)
+    elif kind == "kick and snare":           # unison hits that climb
+        for step, through, _place in _fill_rhythm(bar, start_step, size, rng, lean, most, triplets):
+            hit(step, SNARE, 78 + 42 * through)
+            hit(step, KICK, 78 + 42 * through)
+    elif kind == "flams":
+        # flams on the snare, the kick after each one; from Fill complexity 75, up to FLAMS_ON_EIGHTHS_UP_TO, flams
+        # on the eighth notes with the kick between them. The last beats' flams can move to the floor tom.
+        on_eighths = size >= 0.75 and tempo <= FLAMS_ON_EIGHTHS_UP_TO
+        to_the_tom = rng.random() < 0.35
+        for step, through, place in _fill_rhythm(bar, start_step, size, rng, lean, 3 if on_eighths else 1,
+                                                 triplets):
+            if place == 0 or (place == 2 and on_eighths):
+                note = TOM_FLOOR if to_the_tom and through >= 0.6 else SNARE
+                flam(step, note, 104 * (0.92 + 0.12 * through))
+            else:
+                hit(step, KICK, 104)
+                if free_hand and place == 2:
+                    hit(step, cymbal, 100)
+    elif kind == "both hands":
+        # both hands together on the snare and a tom, the kick between: on the beats, and from Fill complexity 80 on
+        # the eighth notes too where the drummer's feet can play the sixteenths between
+        pair = rng.choice([None, None, TOM_FLOOR, TOM_LOW])     # (None: a tom further down as the fill goes on)
+        on_eighths = size >= 0.8 and doubles
+        for step, through, place in _fill_rhythm(bar, start_step, size, rng, lean, 3 if on_eighths else 1,
+                                                 triplets):
+            if place == 0 or (place == 2 and on_eighths):
+                both(step, pair or tom_at(through), 102 * (0.92 + 0.12 * through))
+            else:
+                hit(step, KICK, 104)
+                if free_hand and place == 2:
+                    hit(step, cymbal, 100)
+    elif kind == "cymbals":
+        # one hand on the snare, on the beats; the other keeps the cymbal going on the offbeats, with the kick; a
+        # drummer with two pedals plays the sixteenths between on the kick
+        for step, through, place in _fill_rhythm(bar, start_step, size, rng, lean, 3 if doubles and style_key
+                                                 == "metal" else 1, triplets):
+            if place == 0:
+                hit(step, SNARE, 104 * (0.92 + 0.12 * through))
+            elif place == 2:
+                hit(step, cymbal, 102)
+                hit(step, KICK, 106)
+            else:
+                hit(step, KICK, 98)
+    elif kind == "hand and foot":
+        # the hands and the feet in turn: two strokes of the hands and two of the kick in a beat of sixteenths (one
+        # kick with one pedal: three strokes and a kick); in a thinner beat the hands first, the kick last
+        rhythm = _fill_rhythm(bar, start_step, size, rng, lean, most, triplets)
+        by_beat = {}
+        for step, through, place in rhythm:
+            by_beat.setdefault(bar.pulse_at(step)[0], []).append((step, through, place))
+        for strokes in by_beat.values():
+            feet = 0 if len(strokes) < 2 else (2 if doubles and len(strokes) >= 3 else 1)
+            hands = len(strokes) - feet
+            for k, (step, through, place) in enumerate(strokes):
+                if k >= hands:
+                    hit(step, KICK, 104)
+                elif k == 0:
+                    hit(step, SNARE if through < 0.67 else tom_at(through), 100 * swell(through, 0))
+                else:
+                    hit(step, tom_at(through) if through >= 0.34 else SNARE, 96 * swell(through, place))
+    else:
+        # the snare and the toms together (see above); the toms alone as a short fill
+        rhythm = _fill_rhythm(bar, start_step, size, rng, lean, most, triplets)
+        up = kind == "toms" and rng.random() < 0.35
+        plan = {1: ["ST"], 2: ["S", "t"], 3: ["S", "h", "f"]}.get(len(beats), ["S"] * max(1, len(beats) - 3) +
+                                                                  ["h", "m", "f"])
+        shapes = [rng.choice(["SSTT", "STTT", "SSST", "STST", "SSSS"]) for _beat in beats]
+        shapes[-1] = rng.choice(["STTT", "TTTT", "SSTT"] if len(shapes) > 1 else ["STTT", "SSTT", "STST"])
+        #                                     (the last beat leans on the toms; a one-beat fill has both in it)
+        one_tom = rng.choice([TOM_HIGH, TOM_LOW, TOM_FLOOR, TOM_FLOOR])
+        starts = [first for first, _length in beats]
+        in_beat = {}                # how many strokes each beat of the fill has
+        for step, _through, _place in rhythm:
+            beat = max(0, len([s for s in starts if s <= step]) - 1)
+            in_beat[beat] = in_beat.get(beat, 0) + 1
+        seen = {}
+        for k, (step, through, place) in enumerate(rhythm):
+            offset, first, _length = offset_in_beat(step)
+            beat = max(0, len([s for s in starts if s <= step]) - 1)
+            # where in a shape of four this stroke falls: the beat's first stroke takes the shape's first sound and
+            # its last stroke the last, however many strokes the beat has
+            number = seen.get(beat, 0)
+            seen[beat] = number + 1
+            spot = int(round(number * 3.0 / (in_beat[beat] - 1))) if in_beat[beat] > 1 else 0
+            if kind == "toms":
+                note = tom_at(through, up)
+            elif kind == "around":
+                zone = plan[min(beat, len(plan) - 1)]
+                note = {"S": SNARE, "h": TOM_HIGH, "m": TOM_LOW, "f": TOM_FLOOR}.get(zone)
+                if zone == "ST":
+                    note = SNARE if offset < 2 else TOM_FLOOR
+                elif zone == "t":
+                    note = TOM_HIGH if offset < 2 else TOM_FLOOR
+            else:
+                shape = shapes[beat] if kind == "mixed" else FILL_SHAPES[kind]
+                # (the tom of a beat is one tom, from the high tom down to the floor tom beat by beat; a one-beat
+                # fill has one tom, chosen for the fill)
+                tom = one_tom if len(beats) == 1 else toms[int(round(beat * 3.0 / (len(beats) - 1)))]
+                note = SNARE if shape[spot] == "S" else tom
+            loud = (100 if note == SNARE and place == 0 else 96) * swell(through, place)
+            flammed = (k == 0 and first_flam and place == 0 and step == int(step)
+                       and (len(rhythm) < 2 or rhythm[1][0] - step >= 2 or tempo <= FLAMS_ON_EIGHTHS_UP_TO))
+            if flammed:
+                flam(step, note, max(loud, 100))
+            else:
+                hit(step, note, loud)
+    if kind not in FILL_OWN_FEET and style_key in ("rock", "hard_rock", "metal") and hits:
+        # the kick lands with the fill's last stroke
+        last = max(int(h[0]) for h in hits if h[0] == int(h[0]))
+        hits.append((last, KICK, _velocity(110, intensity, rng)))
+    return hits, kind in FILL_OWN_FEET
+
+
 def _graces(hits):
     """Rules 8: {(place, sound): the place of its stroke} for a fill's flam grace notes: a fill's hit between two
     sixteenths, less than half a sixteenth before a fill's hit of the same sound on the next sixteenth."""
@@ -1440,6 +1805,26 @@ class _KitPieces:
         self.wash = rules_7(settings) and (self.openness == "open" or _hat_wash(hat_rows))
         self.half_open = set()      # rules 7: the bar's half-open hi-hats, closed when it is done (closing_notes)
         self.pedal_row = {PEDAL: table[PEDAL]} if PEDAL in table else {}     # (the groove's own foot, if any)
+        # rules 9: what a piece adds as Complexity rises (pv.BUSIER, _busier_hits) when it is worked out on its own
+        # (self.custom): its variation's notes at the piece's own Complexity, and with another variation's pattern
+        # chosen for it, that variation's
+        # rules 9: the cymbal the fills' free hand plays (fill_cymbal), from what the Crash cymbals play in the groove
+        # (a Pattern of your own, else the variation's); with the Crash off, the variation's still say which cymbal
+        crash_rows = pp.piece_rows(table, pp.PIECE_BY_KEY["crash"])
+        if "crash" in self.custom and self.full["crash"]["on"]:
+            crash_rows = self.custom["crash"][0]
+        found, keeps = fill_cymbal(crash_rows)
+        self.fill_cymbal = (found, keeps and bool(self.full["crash"]["on"]) and not self.full["crash"]["steps"])
+        self.stopped = None         # rules 9: where the bar's fill takes the kick over (see _perform_drums)
+        self.busier = {}
+        if rules_9(settings):
+            for piece in pp.DRUM_PIECES:
+                pattern = self.full[piece.key]["pattern"]
+                number = settings["variation"] if pattern == "style" else (
+                    pp._number(pattern[1:]) if pattern.startswith("v") else None)
+                found = tuple(entry for entry in pv.busier(style_key, number or 0) if entry[0] in piece.voices)
+                if found and piece.key in self.custom:
+                    self.busier[piece.key] = found
 
     def _rng(self, name, bar):
         return random.Random(_piece_seed(self.settings, name, bar.index))
@@ -1550,9 +1935,15 @@ class _KitPieces:
             complexity = pp.busy_complexity(self.settings["complexity"], busy) / 100.0
             rng = self._rng(piece_key, bar)
             mine = _table_hits(bar, rows, self.settings, rng, complexity)
+            if piece_key in self.busier:        # rules 9: what its groove adds as Complexity rises
+                added = _busier_hits(bar, self.busier[piece_key], self.settings, complexity)
+                if added and _linear(self.settings):
+                    hits = _linear_gives_way(hits, added)
+                mine += added
             if busy != pp.BUSY_DEFAULT and new_rules(self.settings):
                 mine = _piece_density(bar, mine, rows, busy, rng, self.settings["intensity"],
-                                      kick=piece_key == "kick")
+                                      kick=piece_key == "kick",
+                                      soft=piece_key == "snare" and rules_9(self.settings))
             hits += mine
         snare = self.full["snare"]
         if snare["ghosts"] == "none":
@@ -1648,7 +2039,10 @@ class _KitPieces:
             if steps:
                 roll_sounds = ({h[1] for h in hits if h[1] in voices and h[3] == ROLL} if rules_4(self.settings)
                                else None)
-                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned, roll_sounds, self.fill_keeps)
+                keeps = self.fill_keeps
+                if self.stopped is not None:    # rules 9: the fill plays the kick itself, so kick steps set by hand
+                    keeps = tuple(k for k in keeps if k not in (KICK, KICK2))   # give way to it, as the groove's do
+                hits = self._hand_made(bar, hits, voices, steps, fill_start, thinned, roll_sounds, keeps)
             # a region saved before 0.9.8 whose Open hi-hat had a loudness of its own keeps it for the hi-hat's open
             # notes (pp open_level; -1: the hi-hat's own level)
             open_level = settings.get("open_level", -1) if piece.key == "hat" else -1
@@ -1921,7 +2315,8 @@ class _KitPieces:
         notes = dict(pp.WHICH).get(which, (CRASH,))
         out = []
         for h in hits:
-            if h[1] in (CRASH, CRASH2) and h[3] in (GROOVE, ACCENT, HAND):
+            # (FILL: rules 9, the crash a fill's free hand plays; no older fill had one)
+            if h[1] in (CRASH, CRASH2) and h[3] in (GROOVE, ACCENT, HAND, FILL):
                 out.append((h[0], notes[self.crash_turn % len(notes)], h[2], h[3]))
                 self.crash_turn += 1
             else:
@@ -2237,7 +2632,8 @@ def _riding_the_crash(bar, hits):
     "eighth notes" patterns play), that hand is on the crash, so the ride and the hi-hat played by hand stop for that
     bar; the hi-hat pedal (a foot) and steps you set by hand stay. A single crash on a beat already takes the ride's
     or hi-hat's place on that beat (_two_hands)."""
-    crashes = sum(1 for h in hits if h[1] in _CRASHES and h[3] != ACCENT)
+    # (a fill's own cymbals, rules 9, are not the groove keeping time; no older fill had a cymbal in it)
+    crashes = sum(1 for h in hits if h[1] in _CRASHES and h[3] not in (ACCENT, FILL))
     if crashes < len(bar.pulses):
         return hits
     return [h for h in hits if not (h[1] in _TIMEKEEPING and h[3] != HAND)]
@@ -2296,6 +2692,8 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
     kit.settings = settings
     rules3 = rules_3(settings)
     rules8 = rules_8(settings)
+    rules9 = rules_9(settings)
+    region_start = bars[0].start if bars else 0
     # rules 7: the percussion a second player plays (_SECOND_PLAYER), in the styles a real drummer plays
     second_player = _SECOND_PLAYER if rules_7(settings) and style_key in LIVE_DRUMMER_STYLES else frozenset()
     changing = _changes_only(chord_spans) if rules3 else chord_spans
@@ -2321,6 +2719,7 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
                                         else 0.0, kit.rng_named("touches", bar), settings["intensity"],
                                         _linear(settings))
         fill_start = None
+        stopped = None                  # rules 9: where a fill that plays the kick itself starts (None: it does not)
         thinned = set()
         # Fill amount (Russell, 10 Oct 2026): 0 no fills, 100 a fill in every bar; between, the ends of phrases first
         # (every 4 bars, more likely at 8 and at the region's end), then every second bar, then every bar
@@ -2346,7 +2745,19 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
             fill = _drum_fill_8 if rules8 else (_drum_fill if rules_now else _drum_fill_rules_1)
             # rules 3: the fill ends where the region does (in a region ending partway through a bar it was cut off)
             played = _played_bar(bar) if rules3 else bar
-            fill_hits = fill(played, style_key, settings, rng, start)
+            if rules9:
+                # rules 9: the fills as drummers orchestrate them (_drum_fill_9). A fill that plays the kick itself
+                # (a stop break, the hands and the feet in turn, flams with the kick after them) takes the groove's
+                # own kick out from where it starts; the others are played over it, as before.
+                ends_section = bar.last_in_region or any(bar.start < tick <= bar.end and tick > region_start
+                                                         for tick in (section_starts or ()))
+                fill_hits, own_feet = _drum_fill_9(played, style_key, settings, rng, start, ends_section,
+                                                   *kit.fill_cymbal)
+                if own_feet:
+                    filled = [h for h in filled if h[0] < start or h[1] not in (KICK, KICK2)]
+                    stopped = start
+            else:
+                fill_hits = fill(played, style_key, settings, rng, start)
             filled += [(step, note, velocity, FILL) for step, note, velocity in fill_hits]
             if not rules3 or fill_hits:
                 fill_bars.append(bar.number)
@@ -2414,7 +2825,10 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
             for kick in kicks:
                 tick = bar.start + kick[0] * STEP
                 near = any(abs(h.tick - tick) <= STEP // 2 for h in in_bar)
-                if near or rng.random() >= amount:
+                # rules 9: a fill's own kicks are part of its figure (the feet of the hands and the feet in turn,
+                # the kick after a flam, a stop break's kick) and stay whatever the Follow amount. Until 0.9.13 they
+                # were thinned out with the groove's, so at Follow amount 100 such a fill lost its feet.
+                if near or (rules9 and kick[3] == FILL) or rng.random() >= amount:
                     kept_kicks.append(kick)
             placed = []
             for accent in in_bar:
@@ -2432,6 +2846,7 @@ def _perform_drums(settings, bars, chord_spans, hits_in, follow, rng_for, sectio
                                                 and any(abs(bar.start + h[0] * STEP - a.tick) < STEP // 2
                                                         for a in in_bar))]
             hits = others + kept_kicks + placed
+        kit.stopped = None if for_steps else stopped
         hits = kit.finish(bar, hits, fill_start, fill_bars, thinned if not for_steps else ())
         if style_key in LIVE_DRUMMER_STYLES:
             hits = _hands_on_the_fill(hits)
@@ -2762,6 +3177,11 @@ def _style_rhythm(player, style, bar, settings, rng):
         elif style == "comping":
             spots = [s for s in range(steps) if place[s] in (0, 3, 6, 8, 10, 14)
                      and rng.random() < (0.35 + 0.5 * c if s else 0.6)]
+            if not spots and rules_9(settings):
+                # rules 9 (0.9.13, found looking for edge cases): no bar is left empty. At Complexity 0 one bar in
+                # twenty had no chord at all (each place is a chance), so the keys dropped out for a whole bar, a
+                # chord change with it; now such a bar gets one chord, on one of the style's own places
+                spots = [rng.choice([s for s in range(steps) if place[s] in (0, 3, 6, 8, 10, 14)] or [0])]
             for s in spots:
                 events.append((s, rng.choice([1, 2, 3]), 0.8, "shell"))
         elif style == "stabs":
@@ -2769,6 +3189,10 @@ def _style_rhythm(player, style, bar, settings, rng):
                 if place[s] % 4 == 2 or (place[s] % 4 == 3 and rng.random() < 0.3 * c):
                     if rng.random() < 0.7 + 0.3 * c:
                         events.append((s, 1, 0.9, "chord"))
+            if not events and rules_9(settings):
+                # rules 9: no bar is left empty here either (one bar in eighty was, at Complexity 0): one stab, on
+                # one of the offbeats
+                events.append((rng.choice([s for s in range(steps) if place[s] % 4 == 2] or [0]), 1, 0.9, "chord"))
     elif player == "spark":
         if style == "pad":
             events.append((0, steps, 0.8, "chord"))

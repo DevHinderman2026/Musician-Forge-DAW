@@ -3018,7 +3018,8 @@ Anvil plays drums, Bellows bass, Ember keys, Spark synth, and Hammer guitar. Cho
 where it goes (a new track or the selected one; from the New track list, always a new track) and how long it plays. It makes a rhythm player region.
 Enter on that region opens its editor: Style; Variation (each style has its own grooves or parts, numbered
 and described; Previous and Next variation step through them); Patch (the instrument or kit); Intensity
-(how hard it plays, never how many notes), Complexity (how busy), Fill amount (where fills come, counted from the
+(how hard it plays, never how many notes), Complexity (how busy; above the middle a drummer's groove adds notes of
+its own, more of them the higher it goes), Fill amount (where fills come, counted from the
 region's first bar: from 1 every 8th bar, from 40 every 4th, from 70 every 2nd, 100 every bar), Fill complexity (how big
 each fill is), Swing, Swing feel (eighth or sixteenth notes); Follow (the chord track, another track, or nothing), the track to follow, Follow
 amount, Hit sensitivity (for a recording); and the Kit pieces (the part, for bass, keys, synth and guitar).
@@ -3048,6 +3049,15 @@ turning the Hi-hat off brings the Ride back if the Hi-hat had turned it off. The
 have the other's Play check box too. The Hi-hat pedal takes no part in this. A ride with nothing of its own to play
 takes over the hi-hat's rhythm. A fill takes both hands: from its first note to the end of the bar the Ride and the
 Hi-hat stop, and the kick and the Hi-hat pedal keep going. Each is one undo step.
+The Toms take that hand too: turning the Toms on turns off whichever keeps time, the Hi-hat, the Ride, or the crash
+or china in a groove that keeps time on it ("Toms on, hi-hat off"); turning the Toms off brings it back, and turning
+it on again turns the Toms off ("Hi-hat on, toms off"). Tom hits set by hand in the Step pattern take no turn, and
+Toms that are off still play in the fills ("Toms: off, in fills only").
+The drummer's fills (rock, hard rock, metal, funk and pop) move between the snare and the toms, or use both hands
+together on the snare and a tom, the hands and the feet in turn, or flams on the snare with the kick after each. A
+stop break stops the groove, its kick too, for a few big hits with silence between them, and the crash lands on the
+next bar; it comes most in the last bar of a section. In some fills one hand keeps the china or the crash going on
+the offbeats. From Fill complexity 75 no fill is the toms alone.
 A change of variation or style puts the Hi-hat, the Ride and the Crash cymbals back to what the new groove plays, so
 the cymbal the groove keeps time on always plays, and says what changed ("Hi-hat off, crash on"). A Pattern you chose
 for one of them is kept: it waits where another cymbal keeps time, and plays again in a groove of its own cymbal.

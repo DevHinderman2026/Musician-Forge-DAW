@@ -1,8 +1,8 @@
 @echo off
 rem Offers to install Python 3.14 from python.org for this Windows user with winget, Windows' own installer tool,
 rem which needs no administrator rights (Russell, 23 Oct 2026). "Install or Update Musician Forge" calls it when
-rem find_base_python.bat found no Python that Musician Forge can use: none at all, only the Microsoft Store's, or
-rem only one too new, too old, ARM64 or 32-bit. Sets MF_BASE_PY when it worked; otherwise the caller says how to
+rem find_base_python.bat found no Python that Musician Forge can use: none at all, or only one too new, too old,
+rem ARM64 or 32-bit. The Microsoft Store's Python 3.12 or 3.13 is used as it is from 0.9.13, so it is not asked for. Sets MF_BASE_PY when it worked; otherwise the caller says how to
 rem install Python by hand. Every step goes to MF_PY_LOG, which install.py copies into logs\install_log.txt.
 rem winget's package for python.org's Python 3.14: its x64 installer, for this user only.
 set "MF_WINGET_ID=Python.Python.3.14"

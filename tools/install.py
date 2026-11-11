@@ -8,7 +8,9 @@ Steps:
 0. If the folders from before the rename (Melody Forge) exist, they are renamed first, so nothing is
    downloaded twice and no song is lost (see musicianforge\\legacy.py).
 1. Create Musician Forge's own Python environment in %LOCALAPPDATA%\\MusicianForge\\venv
-   (kept separate from your other Python projects).
+   (kept separate from your other Python projects). With the Microsoft Store's Python (0.9.13), which hides new
+   files under AppData in a folder of its own, everything goes into MusicianForge in the user's own folder
+   instead, C:\\Users\\name\\MusicianForge (tools\\check_python.py says why).
 2. Install the Python packages listed in requirements.txt into it.
 3. Download the FluidSynth instrument engine.
 4. Download the GeneralUser GS SoundFont (the instrument sounds).
@@ -32,7 +34,18 @@ import urllib.request
 import zipfile
 
 PROGRAM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "MusicianForge")
+sys.path.insert(0, PROGRAM_DIR)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_python  # noqa: E402
+
+# Musician Forge's data folder: %LOCALAPPDATA%\MusicianForge; with the Microsoft Store's Python, MusicianForge in the
+# user's own folder (0.9.13; Russell, 10 Nov 2026: "if it detects Python from the Microsoft store, it will reroute
+# those packages to a user folder on that computer ... it won't write it in the hidden data folder").
+# musicianforge\paths.py chooses the same folder when Musician Forge runs, and Start Musician Forge finds it by
+# the file mark_store writes.
+STORE_PYTHON = check_python.is_store_python()
+STORE_DIR = check_python.user_folder()
+DATA_DIR = check_python.data_folder(STORE_PYTHON)
 VENV_DIR = os.path.join(DATA_DIR, "venv")
 VENV_PY = os.path.join(VENV_DIR, "Scripts", "python.exe")
 FLUID_DIR = os.path.join(DATA_DIR, "fluidsynth")
@@ -56,9 +69,6 @@ SOUNDFONT_SIZE = 32319396
 USER_AGENT = "MusicianForge-installer/1.0"
 TOTAL_STEPS = 7
 
-sys.path.insert(0, PROGRAM_DIR)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import check_python  # noqa: E402
 from musicianforge import __version__, fluidbuild, legacy, packs  # noqa: E402  (standard library only)
 
 # FluidSynth 2.5.7, the glib download: every 2.6 Windows download (and the "cpp11" 2.5 ones) crashes as soon
@@ -187,11 +197,95 @@ def environment_problem():
     return None
 
 
+STORE_WORDS = ("  This computer's Python comes from the Microsoft Store, which hides new files under AppData. Musician "
+               "Forge keeps its files in {} instead.")
+STORE_ADVICE = ("This computer's Python comes from the Microsoft Store. If the problem stays, install Python 3.14 from "
+                "python.org, choosing Install Now, and run Install or Update Musician Forge again: python.org's "
+                "Python is then used.")
+ABOUT_WORDS = ("This folder holds Musician Forge's own files: its Python environment and packages, the instrument "
+               "engine, the instrument sounds and its settings.\n"
+               "They are here, and not in the hidden AppData folder, because Musician Forge was installed with "
+               "Python from the Microsoft Store, which hides every new file under AppData from other programs.\n"
+               "Your projects are not here: they are in Documents, Musician Forge Songs.\n"
+               "Remove Musician Forge, in the Musician Forge folder, takes this folder away.\n")
+
+
+# The data folder of an install made with the other kind of Python (the Microsoft Store's or any other). An install
+# that changes from one to the other takes its settings along (carry_settings).
+OTHER_DATA_DIR = check_python.data_folder(not STORE_PYTHON)
+CHANGED_WORDS = ("  Musician Forge was installed with the Microsoft Store's Python before. This install uses another "
+                 "Python, so Musician Forge's files are in {} now{}. The folder {} is no longer used; Remove Musician "
+                 "Forge takes it away too.")
+
+
+def carry_settings(old_dir, new_dir):
+    """An install whose data folder changed (the Microsoft Store's Python came or went) takes the settings along:
+    the audio settings, the measured delays and the recent projects. Only when the new folder has none yet, and
+    the old ones stay where they are. True when they were carried over."""
+    old, new = os.path.join(old_dir, "settings.json"), os.path.join(new_dir, "settings.json")
+    try:
+        if not os.path.isfile(old) or os.path.exists(new):
+            return False
+        os.makedirs(new_dir, exist_ok=True)
+        shutil.copyfile(old, new)
+        legacy._rewrite_file(new, [(old_dir, new_dir)])       # (a path into the old folder: into the new one)
+    except (OSError, ValueError) as exc:
+        write_log("The settings in {} could not be carried over to {}: {!r}".format(old_dir, new_dir, exc))
+        return False
+    write_log("The settings were carried over from {} to {}.".format(old_dir, new_dir))
+    return True
+
+
+def mark_store():
+    """Which install Start Musician Forge starts (0.9.13). An install with the Microsoft Store's Python keeps its
+    files in the user folder (STORE_DIR) and says so there, in check_python.IN_USE_FILE; an install with any other
+    Python takes that file away, so its own environment in %LOCALAPPDATA%\\MusicianForge is the one started.
+    check_python.ABOUT_FILE says in words what the user folder is, and stays: Remove Musician Forge takes the
+    folder away only when it is there."""
+    in_use = os.path.join(STORE_DIR, check_python.IN_USE_FILE)
+    if not STORE_PYTHON:
+        try:
+            if os.path.exists(in_use):
+                os.remove(in_use)
+                write_log("This install uses another Python than the Microsoft Store's, so {} was removed: Start "
+                          "Musician Forge starts the environment in {}.".format(in_use, DATA_DIR))
+                carried = carry_settings(STORE_DIR, DATA_DIR)
+                say(CHANGED_WORDS.format(DATA_DIR, ", and your settings came along" if carried else "", STORE_DIR))
+        except OSError as exc:
+            write_log("{} could not be removed: {!r}".format(in_use, exc))
+        return
+    # Musician Forge's own folder (this program) must not be that folder or in it: Remove Musician Forge takes the
+    # whole of it away
+    program = os.path.normcase(os.path.abspath(PROGRAM_DIR))
+    store = os.path.normcase(os.path.abspath(STORE_DIR))
+    if program == store or program.startswith(store + os.sep):
+        raise RuntimeError("With Python from the Microsoft Store, Musician Forge keeps its own files in {}, and this "
+                           "Musician Forge folder is there. Move this folder somewhere else, to Documents for "
+                           "example, then run Install or Update Musician Forge from there".format(STORE_DIR))
+    try:
+        os.makedirs(STORE_DIR, exist_ok=True)
+        with open(os.path.join(STORE_DIR, check_python.ABOUT_FILE), "w", encoding="utf-8") as fh:
+            fh.write(ABOUT_WORDS)
+        with open(in_use, "w", encoding="utf-8") as fh:
+            fh.write("Musician Forge {} was installed here with the Microsoft Store's Python {} on {}.\n".format(
+                __version__, sys.version.split()[0], datetime.datetime.now().isoformat(timespec="seconds")))
+    except OSError as exc:
+        write_log("The folder {} could not be written to: {!r}".format(STORE_DIR, exc))
+        raise RuntimeError("Musician Forge's folder {} could not be written to. {}".format(STORE_DIR, STORE_ADVICE))
+    carry_settings(OTHER_DATA_DIR, STORE_DIR)      # (an install made with python.org's Python before: its settings)
+    # (a file written under AppData by the Store's Python is in its hidden folder; this one must be where it says)
+    real = os.path.realpath(in_use)
+    write_log("Installed with the Microsoft Store's Python: Musician Forge's files are in {} (on the disk: {}).".format(
+        STORE_DIR, os.path.dirname(real)))
+
+
 def step_environment():
     say("Step 1 of 7: setting up Musician Forge's own Python environment.")
     problem = python_problem()
     if problem:
         raise RuntimeError(problem)
+    if STORE_PYTHON:
+        say(STORE_WORDS.format(DATA_DIR))
     os.makedirs(DATA_DIR, exist_ok=True)
     why = environment_problem()
     if why:
@@ -486,7 +580,7 @@ def trace_tail(path, count=3):
 
 def open_log():
     """The install log, in the Musician Forge folder's logs folder; when that folder cannot be written to (a
-    read-only folder, or one Windows protects), in %LOCALAPPDATA%\MusicianForge\logs, as Musician Forge's own log."""
+    read-only folder, or one Windows protects), in the data folder's logs folder, as Musician Forge's own log."""
     global LOG_PATH, LOGS_DIR
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -535,7 +629,9 @@ def main():
         say("The Musician Forge folder cannot be written to, so the install log is in {}.".format(LOG_PATH))
     copy_python_setup_log()
     try:
-        moved, blocked = legacy.migrate()       # Melody Forge's folders get Musician Forge's name (8 Oct 2026)
+        # Melody Forge's folders get Musician Forge's name (8 Oct 2026). With the Microsoft Store's Python the data
+        # folder is looked for beside this install's own (the Store's Python could not rename one under AppData).
+        moved, blocked = legacy.migrate(base=os.path.dirname(DATA_DIR)) if STORE_PYTHON else legacy.migrate()
     except Exception as exc:  # noqa: BLE001
         moved, blocked = ["The old folders could not be moved: {}".format(exc)], True
     for sentence in moved:
@@ -543,6 +639,11 @@ def main():
     if blocked:
         say("Problem: the old data folder could not be renamed, so the install stopped before downloading "
             "everything again. Close every Musician Forge or Melody Forge window and run this again.")
+        return 1
+    try:
+        mark_store()
+    except RuntimeError as exc:
+        say("Problem: {}".format(exc))
         return 1
     mark_finished(False)
     steps = [step_environment, step_packages, step_fluidsynth, step_soundfont,
@@ -556,6 +657,8 @@ def main():
                 mark_finished(True)
         except Exception as exc:  # noqa: BLE001
             say("Problem: {}".format(exc))
+            if STORE_PYTHON and STORE_ADVICE not in str(exc):
+                say(STORE_ADVICE)
             import traceback
             write_log(traceback.format_exc())
             return 1

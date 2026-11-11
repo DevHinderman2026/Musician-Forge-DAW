@@ -172,6 +172,16 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
+def move_old_folders():
+    """A Melody Forge folder from before the rename (8 Oct 2026) gets Musician Forge's name: (what happened in
+    words, whether the data folder could not be moved). With the Microsoft Store's Python (0.9.13) the data folder
+    is looked for beside this install's own, as tools\\install.py does: the Store's Python hides what it changes
+    under AppData, so it could not rename a folder there."""
+    if paths.on_store_python():
+        return legacy.migrate(base=os.path.dirname(paths.local_data_dir()))
+    return legacy.migrate()
+
+
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     log_folder = setup_logging()
@@ -180,7 +190,7 @@ def main(argv=None):
 
     if not (args.test_mode or args.a11y_target):
         try:
-            moved, _blocked = legacy.migrate()    # a Melody Forge folder from before the rename (8 Oct 2026)
+            moved, _blocked = move_old_folders()
             for sentence in moved:
                 log.info(sentence)
         except Exception:  # noqa: BLE001 - the program starts anyway; the songs folder falls back to the old name

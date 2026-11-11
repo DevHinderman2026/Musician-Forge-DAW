@@ -4,18 +4,42 @@
 - Large downloads (Python environment, instrument engine, SoundFonts) live in
   %LOCALAPPDATA%\\MusicianForge, outside OneDrive, so they never sync or get
   turned into online-only files.
+- With the Microsoft Store's Python (0.9.13) they live in MusicianForge in the
+  user's own folder instead (C:\\Users\\name\\MusicianForge): the Store's Python
+  hides every new file under AppData in a folder only it can see, so settings,
+  sounds and the environment itself would be out of reach of everything else
+  (Russell, 10 Nov 2026; tools\\check_python.py and tools\\install.py choose the
+  same folder when installing).
 - Logs live in the program folder's "logs" folder, so they are easy to find.
 """
 
 import os
+import sys
 import time
 
 from . import legacy
 
 PROGRAM_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_NAME = "MusicianForge"
+
+
+def on_store_python():
+    """True when Musician Forge runs on the Microsoft Store's Python (its own environment made from it too): the
+    program's or its base Python's place names the Store's package or its WindowsApps folder."""
+    places = " ".join(str(place) for place in (
+        sys.executable, sys.prefix, getattr(sys, "base_prefix", ""), getattr(sys, "_base_executable", "")) if place)
+    return "WindowsApps" in places or "PythonSoftwareFoundation.Python" in places
+
+
+def store_data_dir():
+    """The data folder of an install made with the Microsoft Store's Python: MusicianForge in the user's own
+    folder (the same as tools\\check_python.py's user_folder)."""
+    return os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"), DATA_NAME)
 
 
 def local_data_dir():
+    if on_store_python():
+        return store_data_dir()
     base = os.environ.get("LOCALAPPDATA")
     if not base:
         base = os.path.join(os.path.expanduser("~"), ".local", "share")

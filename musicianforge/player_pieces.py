@@ -189,7 +189,7 @@ CHOICES = {"time": TIME, "ghosts": GHOSTS, "openness": OPENNESS, "when": WHEN,
 EXTRAS = {"kick": ("time",), "snare": ("time", "ghosts", "ghost_level", "rim"),
           "hat": ("openness", "open_offbeats", "off_for", "open_level", "open_busy", "old_off", "old_steps",
                   "old_bars"),
-          "toms": ("in_fills",),
+          "toms": ("in_fills", "off_for"),
           "crash": ("when", "which", "off_for"), "ride": ("ride_sound", "bell", "off_for")}
 # set by the ride and the hi-hat taking turns (TAKES_TURNS), not in the piece window: "off_for" is the piece that
 # turned this one off ("ride" or "hat"), so turning that one off brings this one back; "" for off by hand.
@@ -296,7 +296,21 @@ def visible_kit_levels(levels):
 # Each is one undo step. Nothing changes until a piece is turned on or off, so an older region with the ride and the
 # hi-hat both on keeps playing them both.
 TAKES_TURNS = {"ride": ("hat",), "hat": ("ride",)}
-TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "pedal": "hi-hat pedal", "crash": "crash"}
+TURN_NAMES = {"ride": "ride", "hat": "hi-hat", "pedal": "hi-hat pedal", "crash": "crash", "toms": "toms"}
+# The Toms take the hand that keeps time (0.9.13; Russell, 10 Nov 2026: "when you turn the toms on, the hi-hat should
+# turn off", and for the ride and the crash or china where it keeps time, "Yes, any timekeeping cymbal"). A drummer
+# who plays a groove on the toms (the floor tom in eighth notes) has moved the riding hand there, so on a drummer a
+# real drummer plays, the Toms turned on (Space, Play this piece, a Pattern) turn off the cymbal that keeps time,
+# marked off for the toms ("off_for"), and the Toms turned off again give it back. The other way round too, as the
+# ride and the hi-hat take turns: a cymbal that starts keeping time turns the Toms off, marked off for it, and gives
+# them back when it stops. Tom hits set by hand in the Step pattern view take no turn: a tom struck here and there
+# leaves the other hand on its cymbal. Until then the Toms turned on played the floor tom with the hi-hat still
+# playing eighth notes on top of it.
+TOMS_TAKE_TURNS_WITH = ("hat", "ride", "crash")
+# what a piece's "off_for" may say: the piece keeping time in its place
+OFF_FOR = {"hat": ("ride", "hat", "crash", "toms"), "ride": ("ride", "hat", "crash", "toms"),
+           "crash": ("ride", "hat", "toms"), "toms": ("hat", "ride", "crash")}
+KEEPS_TIME_WORDS = {"crash": "the crash cymbals keep time", "toms": "the toms keep time"}
 # The cymbals a hand keeps time on (0.9.12; Russell, 10 Nov 2026: "when you switch to the variations, the cymbals
 # should switch, or whatever needs to switch should switch"): a change of style or variation puts these three back to
 # what the new groove plays (session_music._turns_after_a_change). Until then a hi-hat turned on in metal's thrash
@@ -356,6 +370,10 @@ def others_words(piece_key, before, after):
     keys = TAKES_TURNS.get(piece_key, ()) + (("crash",) if piece_key in CRASH_GIVES_WAY_TO else ())
     if piece_key == "crash":
         keys = CRASH_GIVES_WAY_TO       # (0.9.12: the crash turned on or off by hand where it keeps time)
+    if piece_key == "toms":
+        keys = TOMS_TAKE_TURNS_WITH     # (0.9.13: the Toms take the hand that keeps time)
+    elif piece_key in TOMS_TAKE_TURNS_WITH:
+        keys += ("toms",)
     return ", ".join("{} {}".format(TURN_NAMES[key], after[key]) for key in keys
                      if key in before and before.get(key) != after.get(key))
 
@@ -448,8 +466,9 @@ def clean_value(piece, key, value, player_key=None):
     if key in ("on", "open_offbeats", "in_fills", "bell", "chords", "root_only", "passing", "auto"):
         return bool(value)
     if key == "off_for":
-        # ("crash", 0.9.12: a hi-hat or ride whose own pattern waits where the groove keeps time on the crash)
-        return value if value in ("ride", "hat") or (value == "crash" and piece.key != "crash") else ""
+        # ("crash", 0.9.12: a hi-hat or ride whose own pattern waits where the groove keeps time on the crash;
+        # "toms", 0.9.13: a cymbal waiting while the Toms keep time, and the Toms waiting for a cymbal)
+        return value if value in OFF_FOR.get(piece.key, ()) else ""
     if key == "old_off":
         return value if value in ("closed", "closed_groove", "open") else ""
     if key == "old_steps":
@@ -1174,10 +1193,23 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
     if piece.kind != "part":
         state = turn_state(settings, piece_key, has_groove)
         words.append(state)
-        if state == "off" and (piece_key in TAKES_TURNS or piece_key == "crash") and full["off_for"]:
-            # the other took its turn (the crash and the china are both the Crash cymbals piece)
-            words.append("the crash cymbals keep time" if full["off_for"] == "crash" else
-                         "the {} keeps time".format(TURN_NAMES[full["off_for"]]))
+        if piece.kind == "toms" and state == "off" and full["in_fills"] and kit_voices(piece, kit_notes):
+            # Toms that are off still play in the fills, whatever turned them off (0.9.13). Until then the words came
+            # only with the style's own pattern: Toms turned on and off again read "Toms: off" and still played in
+            # every fill, and Toms taken out of the fills read "off, in fills only, not in fills".
+            words.append("in fills only")
+        if state == "off" and piece_key in OFF_FOR and full.get("off_for"):
+            # the other took its turn (the crash and the china are both the Crash cymbals piece); where that one has
+            # given its own turn on (the hi-hat that took the crash's turn is off for the toms), the line names the
+            # piece that keeps time now
+            keeper = full["off_for"]
+            for _ in range(len(OFF_FOR)):
+                stored = (settings.get("pieces") or {}).get(keeper) or {}
+                if stored.get("on") is False and stored.get("off_for") in OFF_FOR.get(keeper, ()):
+                    keeper = stored["off_for"]
+                else:
+                    break
+            words.append(KEEPS_TIME_WORDS.get(keeper) or "the {} keeps time".format(TURN_NAMES[keeper]))
         if not kit_voices(piece, kit_notes):
             words.append("not in this kit")
     # a piece's pattern is said only while it plays (Russell, 24 Oct 2026: "Ride: off, the hi-hat keeps time", not
@@ -1193,10 +1225,10 @@ def describe_piece(settings, piece_key, has_groove=True, kit_program=None, kit_n
         if piece_key == "pedal" and state == "on":
             words.append("the foot on two and four")      # by itself (PEDAL_STYLES)
         else:
-            if piece.kind == "toms":
-                words.append("in fills only")
+            # (the Toms' "in fills only" is said above, with their state)
             # (no "not in this groove": Russell, 25 Oct 2026, "the only time something is not in the groove is if
             # it's off"; a piece turned on plays a pattern of its own, and one that is off just says off)
+            pass
     if piece_key == "pedal" and not off and not full["steps"] and kit_voices(piece, kit_notes):
         # what the foot is heard playing in the region's meter (players.pedal_heard): the beats it really plays
         # (Russell, 26 Oct 2026, "Name the real beats": "the foot on two and three" in 3/4), that it rests where it

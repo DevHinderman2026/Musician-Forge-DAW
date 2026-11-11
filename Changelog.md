@@ -1,5 +1,75 @@
 # Musician Forge release notes
 
+## 0.9.13 (11 November 2026, in testing)
+
+### New features and improvements
+
+- The Toms take the hand that keeps time. On the rock, hard rock, metal, jazz, funk and pop drummers, turning the
+  Toms on turns off whichever keeps time: the Hi-hat, the Ride, or the crash or china in a groove that keeps time on
+  it ("Toms on, hi-hat off"). Turning the Toms off brings it back ("Toms off, hi-hat on"), and turning it on again
+  turns the Toms off ("Hi-hat on, toms off"), as the Ride and the Hi-hat take turns. The Toms keep the hand through
+  a change of variation or style, and tom hits set by hand in the Step pattern take no turn. Each is one undo step.
+- Complexity makes eight more grooves busier (new and changed regions): metal's thrash, half-time breakdown and
+  blast beat, hard rock's variations 3 and 5, rock's variation 6, funk's linear groove and jazz's variation 4. Above
+  45 each adds notes of its own, more of them the higher Complexity goes, and the notes added this way stay once
+  they have come in. The breakdown keeps its half-time feel: at 100 it plays about twelve kicks and four snares a
+  bar where it played five and one, the snare on three still the loudest, with nothing on two or four.
+- The drummer's fills are built the ways drummers build them (rock, hard rock, metal, funk and pop; new and changed
+  regions). A fill moves between the snare and the toms: the snare first and then down the toms, two strokes on the
+  snare and two on a tom, a snare accent leading a tom, or the two in turn. Others use both hands together on the
+  snare and a tom with the kick between, or the hands and the feet in turn.
+- Flams in fills: on the snare with the kick after each one, and now and then on the first stroke of another fill,
+  most often in metal and hard rock.
+- Stop breaks: the groove stops, its kick too, for a few big hits with silence between them. Both hands land on the
+  snare and the floor tom with the kick; the last beat is a flam on the snare and then the kick, or both hands
+  again; and the crash lands on the next bar. A stop break is three times as likely in the last bar of a section or
+  of the region.
+- A cymbal kept going in a fill: one hand plays the snare on the beats while the other keeps the china (where the
+  groove has one, else the crash) on the offbeats with the kick. In a groove that keeps time on the crash or china,
+  the free hand does the same in half of the flam and both-hands fills.
+- Bigger fills use the snare and the toms: from Fill complexity 75 no fill is the toms alone, and below it only a
+  short one can be.
+- A fill that plays the kick itself (a stop break, the hands and the feet in turn, flams, both hands together, a
+  cymbal kept going) takes the groove's own kick out from where it starts, so the fill's kick is the one you hear.
+- Install or Update works with Python from the Microsoft Store (64-bit 3.12, 3.13 or 3.14). The Store's Python hides
+  every new file under AppData in a folder only it can see, so with it Musician Forge keeps its own files (its
+  Python environment and packages, the instrument engine, the sounds and its settings) in the MusicianForge folder
+  of your user folder, C:\Users\your name\MusicianForge, and says so. Start Musician Forge and Remove Musician
+  Forge find that folder by themselves, and a note in it, about_this_folder.txt, says what it is. python.org's
+  Python is still used first when a computer has both, and an install made with it stays where it was. When an
+  install changes from one Python to the other, your settings come along.
+- The Toms' line says "in fills only" whenever they are off and still play in the fills ("Toms: off, in fills only,
+  the hi-hat keeps time").
+
+### Bug fixes
+
+- Fixes the hi-hat playing on top of the toms when the Toms were turned on.
+- Fixes the Hi-hat reading "on" beside a Crash pattern of your own that keeps time (a crash on every beat), where
+  the drummer, riding the crash, played none of it: choosing such a pattern turns the Hi-hat off, and says so.
+- Fixes the Snare's own Complexity at 100 putting a snare as loud as the backbeat on nearly every eighth note, the
+  other beats too, so no backbeat was left to hear: the notes it adds come between the beats and softer (new and
+  changed regions).
+- Fixes a fill losing its own kicks under Follow: at Follow amount 100 the hands and the feet in turn lost their
+  feet, and the kick that lands with a fill's last stroke was gone (new and changed regions).
+- Fixes Ember's comping and stabs leaving a whole bar with no chord now and then at low Complexity (new and changed
+  regions).
+- Fixes a region made by a newer version of Musician Forge playing by the oldest rules: it plays by this version's
+  newest.
+- Fixes the Toms reading "Toms: off" after they were turned on and off again while they still played in every fill,
+  and "Toms: off, in fills only, not in fills" with In fills turned off.
+- Fixes the Follow summary counting "accents" where it counts the hits a player follows ("3 of the 5 hits it
+  follows").
+
+### Older projects
+
+- They play the same notes as before: every rhythm player region keeps the rules it was made under, its fills, its
+  grooves at every Complexity and what it follows too, until you change something in it. Toms and a hi-hat that were
+  both on in an older region both still play, until you turn one of them on or off.
+
+### New projects
+
+- New and changed rhythm player regions use this version's rules.
+
 ## 0.9.12 (10 November 2026, in testing)
 
 ### New features and improvements

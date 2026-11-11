@@ -171,6 +171,47 @@ DRUMS = {
     ],
 }
 
+# What a groove adds as Complexity rises (0.9.13, rules 9; Russell, 10 Nov 2026: "in the metal drummer, when you have
+# the variation set to 4, when you set the complexity to 100%, there's supposed to be a lot more kick drum and a lot
+# more snare ... it still keeps the halftime feel, it just needs to be more complex"; and for the other grooves found
+# to play the same at every Complexity, "All eight grooves"). A variation whose kick and snare rows are all fixed
+# steps had nothing for Complexity to change: metal's breakdown played 5 kicks and 1 snare a bar from 0 to 100.
+# Each entry: (the voice, its loudness, {step of the 4/4 bar: the Complexity, 0 to 1, where the note starts to come
+# in, or (that, how loud against the row's loudness, in the place of the step's own accent)}, "g" for ghost notes).
+# A note always plays from a fifth of the slider
+# above where it starts (players.BUSIER_RAMP), and none starts below 45, so a groove at the Complexity a new region
+# has (40) plays what it always played. They are chosen as a drummer adds them: the double kick runs into the hits
+# the groove already has, the backbeat stays where it is (the breakdown's big snare on three, with nothing new on two
+# or four, and every new snare note softer than it), and a linear groove stays linear (the new note takes the
+# hi-hat's place on its step).
+BUSIER = {
+    # the breakdown: kicks a sixteenth before the riff's own hits, then runs of them; snare notes around the big one
+    ("metal", 4): ((KICK, 120, {2: .45, 5: .5, 12: .5, 9: .55, 15: .6, 1: .7, 11: .8}, ""),
+                   (SNARE, 124, {14: (.6, .64), 7: (.7, .42), 15: (.8, .58)}, "")),
+    # thrash: the kick under every snare (double kick in eighth notes), then in sixteenths
+    ("metal", 3): ((KICK, 118, {2: .45, 10: .45, 6: .5, 14: .5, 3: .7, 11: .7, 7: .75, 15: .75,
+                                1: .8, 9: .8, 5: .8, 13: .8}, ""),),
+    # the blast beat: the double kick in sixteenths under it
+    ("metal", 5): ((KICK, 112, {3: .5, 11: .5, 7: .6, 15: .6, 1: .7, 9: .7, 5: .8, 13: .8}, ""),),
+    # pushed: kicks on the and of two and of three, then the sixteenths around them
+    ("hard_rock", 3): ((KICK, 118, {6: .45, 10: .55, 3: .7, 9: .8}, ""),),
+    # the gallop on two and four as well
+    ("hard_rock", 5): ((KICK, 116, {6: .5, 7: .5, 14: .6, 15: .6}, ""),),
+    # driving sixteenths: kicks on the and of two and of four, then the sixteenths before two and four
+    ("rock", 6): ((KICK, 112, {6: .45, 14: .6, 3: .75, 11: .8}, ""),),
+    # linear funk: two more kicks and two ghost notes, each in the hi-hat's place
+    ("funk", 2): ((KICK, 112, {3: .5, 13: .65}, ""), (SNARE, 112, {6: (.6, .32), 14: (.8, .32)}, "g")),
+    # Latin jazz: more of the bell's rhythm around the clave, and cross-stick notes on the a of two and of four
+    ("jazz", 4): ((RIDE_BELL, 80, {8: (.5, .68), 14: (.6, .68), 2: (.75, .68)}, ""),
+                  (RIM, 64, {7: .65, 15: .8}, "")),
+}
+
+
+def busier(style_key, variation):
+    """What a drum variation adds as Complexity rises (BUSIER), or ()."""
+    return BUSIER.get((style_key, int(variation)), ())
+
+
 # style -> [(description, figure or None for the 0.8 rules)]
 MELODIC = {
     "bellows": {
