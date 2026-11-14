@@ -4,6 +4,11 @@ Run through "Install or Update Musician Forge.bat". Uses only the Python
 standard library. Short progress messages go to the console so a screen reader
 can read them; full details go to logs\\install_log.txt.
 
+For screen reader users (0.9.14): no step stays silent for long (a step that takes a while says every half minute
+that it is still working), nothing the installer runs can wait for a key, and when the install has to stop, the reason
+and what to do are said and also written into the text file that "Install or Update Musician Forge" opens in Notepad
+(write_problem).
+
 Steps:
 0. If the folders from before the rename (Melody Forge) exist, they are renamed first, so nothing is
    downloaded twice and no song is lost (see musicianforge\\legacy.py).
@@ -106,20 +111,58 @@ def child_environment():
     return env
 
 
-def run_logged(cmd, timeout=1800):
+STILL_EVERY = 30        # seconds: a program that takes longer says that it is still working (0.9.14)
+
+
+def waited_words(seconds):
+    """A time in words: "30 seconds", "1 minute", "2 minutes 30 seconds"."""
+    minutes, rest = divmod(int(seconds), 60)
+    parts = []
+    if minutes:
+        parts.append("{} minute{}".format(minutes, "" if minutes == 1 else "s"))
+    if rest or not minutes:
+        parts.append("{} seconds".format(rest))
+    return " ".join(parts)
+
+
+def run_logged(cmd, timeout=1800, still=None):
     """Run a program and write everything it prints to the log. Returns its exit code; what it printed
-    stays in run_logged.output."""
+    stays in run_logged.output, and its error messages in run_logged.errors.
+
+    0.9.14: the program reads from nul, so it can never wait for a key in a window that says nothing; and with
+    still (words such as "Still installing the packages"), a program that takes a while says so every STILL_EVERY
+    seconds with the time so far: the longest steps used to be silent for minutes, and a silent window reads as
+    "blank" to a screen reader."""
     write_log("RUN: " + " ".join('"{}"'.format(c) if " " in c else c for c in cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding="utf-8", errors="replace", env=child_environment())
-    run_logged.output = proc.stdout
-    write_log(proc.stdout)
-    write_log(proc.stderr)
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", env=child_environment())
+    started = time.monotonic()
+    while True:
+        waited = time.monotonic() - started
+        try:
+            out, err = proc.communicate(timeout=max(0.05, min(STILL_EVERY, timeout - waited)))
+            break
+        except subprocess.TimeoutExpired:
+            waited = time.monotonic() - started
+            if waited >= timeout:
+                proc.kill()
+                out, err = proc.communicate()
+                run_logged.output, run_logged.errors = out or "", err or ""
+                write_log(out or "")
+                write_log(err or "")
+                write_log("STOPPED: no end after {} seconds".format(int(waited)))
+                raise subprocess.TimeoutExpired(cmd, timeout, out, err) from None
+            if still:
+                say("  {}: {} so far. Please wait.".format(still, waited_words(waited // STILL_EVERY * STILL_EVERY)))
+    run_logged.output, run_logged.errors = out or "", err or ""
+    write_log(run_logged.output)
+    write_log(run_logged.errors)
     write_log("EXIT CODE: {}".format(proc.returncode))
     return proc.returncode
 
 
 run_logged.output = ""
+run_logged.errors = ""
 
 
 def download(url, dest, expected_size=None, label="file"):
@@ -296,16 +339,17 @@ def step_environment():
             if os.path.isdir(VENV_DIR):
                 raise RuntimeError("The old Python environment could not be removed; Musician Forge may still be "
                                    "open. Close it, then run Install or Update Musician Forge again")
-        if run_logged([sys.executable, "-m", "venv", VENV_DIR]) != 0:
+        if run_logged([sys.executable, "-m", "venv", VENV_DIR], still="Still setting up the environment") != 0:
             raise RuntimeError("Could not create the Python environment")
     say("  Environment ready.")
 
 
 def step_packages():
     say("Step 2 of 7: installing Python packages. This is the longest step, about 1 to 3 minutes.")
-    run_logged([VENV_PY, "-m", "pip", "install", "--upgrade", "pip"])
+    still = "Still installing the packages"
+    run_logged([VENV_PY, "-m", "pip", "install", "--upgrade", "pip"], still=still)
     req = os.path.join(PROGRAM_DIR, "requirements.txt")
-    code = run_logged([VENV_PY, "-m", "pip", "install", "--upgrade", "--only-binary=:all:", "-r", req])
+    code = run_logged([VENV_PY, "-m", "pip", "install", "--upgrade", "--only-binary=:all:", "-r", req], still=still)
     if code != 0:
         raise RuntimeError("Installing packages failed; see install_log.txt")
     say("  Packages installed.")
@@ -508,7 +552,8 @@ def step_selfcheck():
     for stale in (report, trace):       # 8 Oct: an old report was shown as if it were this run's result
         if os.path.exists(stale):
             os.remove(stale)
-    code = run_logged([VENV_PY, os.path.join(PROGRAM_DIR, "tools", "selfcheck.py")], timeout=300)
+    code = run_logged([VENV_PY, os.path.join(PROGRAM_DIR, "tools", "selfcheck.py")], timeout=300,
+                      still="Still checking")
     if os.path.exists(report):
         with open(report, encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -603,6 +648,47 @@ def copy_python_setup_log():
         write_log("Finding Python:\n" + text)
 
 
+HELP_EMAIL = "russellhinderman425@gmail.com"
+# Windows' own words when Smart App Control, or an organization's application control, refuses to load a program part
+# that has no signature Windows trusts: Python's packages and the instrument engine have none. (Smart App Control is
+# on for many new Windows 11 computers; the words are Windows', in English Windows.)
+BLOCKED_WORDS = ("Application Control policy has blocked this file", "blocked by an application control policy",
+                 "Application Control policy blocked this file")
+BLOCKED_ADVICE = ("Windows itself blocked a part Musician Forge needs: its application control, which on a home "
+                  "computer is Smart App Control, does not let Python's packages or the instrument engine load. "
+                  "Windows Security, App and browser control, Smart App Control settings shows whether it is on. "
+                  "Musician Forge cannot run while it blocks these parts. Please write to {} before changing that "
+                  "setting: on many versions of Windows, once it is turned off it cannot be turned on again "
+                  "without resetting Windows.".format(HELP_EMAIL))
+
+
+def blocked_by_windows(*texts):
+    """True when what a program printed says that Windows' application control refused to load a file."""
+    joined = " ".join(str(text or "") for text in texts).lower()
+    return any(words.lower() in joined for words in BLOCKED_WORDS)
+
+
+def write_problem(problems):
+    """The install stopped: where the details are and where to send them is said, and everything (the reason, what
+    to do, the log's place) goes into the text file "Install or Update Musician Forge" opens in Notepad, named in
+    MF_PROBLEM_FILE (0.9.14; Russell, 13 Nov 2026). A tester's screen reader had read only the window's title, and
+    the window closed at the first key: in Notepad the reason stays, can be read line by line, and copied."""
+    closing = ["The details are in the log file {}".format(LOG_PATH),
+               "To get help, send that file and this message to {}".format(HELP_EMAIL)]
+    for line in closing:
+        say(line)
+    path = os.environ.get("MF_PROBLEM_FILE")
+    if not path:
+        return
+    lines = ["Musician Forge {} was not installed completely.".format(__version__), ""]
+    lines += list(problems) + [""] + closing
+    try:
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            fh.write("\r\n".join(lines) + "\r\n")
+    except OSError as exc:
+        write_log("The message file {} could not be written: {!r}".format(path, exc))
+
+
 def mark_finished(done):
     """done False: an install is under way, so Start waits for it (the marker is written); True: everything Musician
     Forge needs to start is in place (the marker goes)."""
@@ -621,6 +707,10 @@ def mark_finished(done):
 
 def main():
     global _log_file
+    try:        # (a letter the window cannot show must never stop the install: it becomes a question mark)
+        sys.stdout.reconfigure(errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass
     _log_file, moved_log = open_log()
     write_log("Musician Forge installer, Python {}".format(sys.version))
     write_log("Program folder: {}".format(PROGRAM_DIR))
@@ -637,13 +727,16 @@ def main():
     for sentence in moved:
         say(sentence)
     if blocked:
-        say("Problem: the old data folder could not be renamed, so the install stopped before downloading "
-            "everything again. Close every Musician Forge or Melody Forge window and run this again.")
+        problem = ("Problem: the old data folder could not be renamed, so the install stopped before downloading "
+                   "everything again. Close every Musician Forge or Melody Forge window and run this again.")
+        say(problem)
+        write_problem(list(moved) + [problem])
         return 1
     try:
         mark_store()
     except RuntimeError as exc:
         say("Problem: {}".format(exc))
+        write_problem(["Problem: {}".format(exc)])
         return 1
     mark_finished(False)
     steps = [step_environment, step_packages, step_fluidsynth, step_soundfont,
@@ -656,11 +749,19 @@ def main():
                 # and the self check only reports), so Start can start it
                 mark_finished(True)
         except Exception as exc:  # noqa: BLE001
-            say("Problem: {}".format(exc))
-            if STORE_PYTHON and STORE_ADVICE not in str(exc):
-                say(STORE_ADVICE)
+            problems = ["Problem: {}".format(exc)]
+            if blocked_by_windows(exc, run_logged.output, run_logged.errors):
+                problems.append(BLOCKED_ADVICE)
+            elif STORE_PYTHON and STORE_ADVICE not in str(exc):
+                problems.append(STORE_ADVICE)
+            for sentence in problems:
+                say(sentence)
             import traceback
             write_log(traceback.format_exc())
+            problems.append("What to do: unless the words above say otherwise, run Install or Update Musician Forge "
+                            "again; it goes on where it stopped.")
+            say(problems[-1])
+            write_problem(problems)
             return 1
     say("All steps finished.")
     return 0

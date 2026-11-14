@@ -1,6 +1,6 @@
 # Musician Forge Guide for Testers
 
-For people trying Musician Forge 0.9.13 before its first release.
+For people trying Musician Forge 0.9.14 before its first release.
 
 Thank you for testing. Musician Forge is a music program for Windows made to work fully with screen readers (NVDA, JAWS and Narrator). This test version needs Python (see [Before you start: Python](#before-you-start-python)); the 1.0 release will have a normal installer and will not. This guide says how to install it, what to try in about an hour and a half, and how to send back what you found. Nothing here changes your Windows settings.
 
@@ -13,9 +13,20 @@ Every test is a step with its own heading, so with a screen reader you can move 
 
 Take the parts in order. The optional parts can be skipped.
 
+## Important for 0.9.14: remove older versions first
+
+The installer of 0.9.13 and earlier could fail without a word: a screen reader read only the window's name, "Musician Forge installer", and the window closed at the first key. Version 0.9.14 repairs that. If any earlier version of Musician Forge is on your computer, please remove it now and install 0.9.14 afresh:
+
+1. Close Musician Forge.
+2. In your old Musician Forge folder, run "Remove Musician Forge". Your projects are kept: they are in Documents, Musician Forge Songs. An older copy's window may say only its name, "Remove Musician Forge", and nothing more. It is waiting for you: press Y to remove, then Y to keep your settings (or N to remove them too), then any key to close the window.
+3. Delete the old Musician Forge folder, and the old zip file in your Downloads folder.
+4. Download and install 0.9.14, following Which copy to download and Installing below.
+
 ## Which copy to download
 
 On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the main branch) has everything you need: the program, Install or Update Musician Forge, Start Musician Forge, the Read Me and this guide. You do not need the development branch: it adds the automated tests and the tools the people building Musician Forge use.
+
+The zip file arrives in your Downloads folder, named Musician-Forge-DAW-main. There is no other file to download: download the whole zip file, not single files from the page.
 
 ## Before you start: Python
 
@@ -33,14 +44,30 @@ On Musician Forge's GitHub page, choose Code, then Download ZIP. That copy (the 
 
 ## Installing
 
-1. Unzip the Musician Forge folder wherever you like, for example in Documents.
-2. Open the folder in File Explorer, select "Install or Update Musician Forge" and press Enter (or double-click it). If it says to choose Extract All, the files are still inside the zip: extract them first. If Windows asks whether to run it, choose Run (or More info, then Run anyway).
-3. A console window reads out each step, "Step 1 of 7" to "Step 7 of 7". It ends with a self check that plays a test note silently and says whether everything works. Press any key to close the window.
-4. The two guitar packs (steps 5 and 6) are the biggest downloads and take a few minutes. If they are very slow, let them run; or close the window and run Install or Update again later, which picks up where it stopped. Without them Musician Forge still works: a stand-in guitar plays, and the packs download by themselves the next time Musician Forge starts with the internet, saying when each is ready.
-5. Run "Start Musician Forge" the same way (if it says the last Install or Update did not finish, run Install or Update again). It opens on the start screen: choose New project. A new project starts with no tracks, and the New track list opens by itself: press Enter on Instrument, choose Grand Piano and press Enter, so the steps below have a piano track to play.
-6. In a project, press F1 for every keyboard shortcut (on the start screen, use the Help menu button).
+If an earlier version is on your computer, remove it first (see Important for 0.9.14, above).
 
-To update to a newer test version, put its files in the same folder and run "Install or Update Musician Forge" again. Your projects are kept (they are in Documents, Musician Forge Songs). Update Musician Forge before you open a project someone else made, so it plays exactly as they heard it.
+1. In File Explorer, go to your Downloads folder and select the zip file, Musician-Forge-DAW-main. Do not press Enter on it: Enter opens the zip file without extracting it, and the installer cannot work from inside a zip file.
+2. Tell Windows the download is trusted: press Alt+Enter for the zip file's Properties. If the General tab has an Unblock check box (it is near the end of the tab, before the OK button, and is only there for a file from the internet), check it and press Enter on OK. If there is no Unblock check box, press Escape. Without this step, Windows 11's Smart App Control can refuse to run the installer.
+3. Extract the zip file: with the zip file selected, press Shift+F10 for its context menu, choose Extract All, and press Enter on the Extract button. Windows makes a folder named Musician-Forge-DAW-main beside the zip file and opens it.
+4. In that folder, open the Musician-Forge-DAW-main folder inside it. You are now in the Musician Forge folder: it has Install or Update Musician Forge, Start Musician Forge, Remove Musician Forge and the tools folder. You can move this folder wherever you like, for example to Documents, before you go on.
+5. Select "Install or Update Musician Forge" and press Enter. If Windows asks whether to run it, choose Run (or More info, then Run anyway).
+6. A window named "Musician Forge installer" opens. After two seconds it says "Installing Musician Forge. This takes a few minutes. Please wait." and "Looking for Python on this computer." Then it reads out each step, "Step 1 of 7" to "Step 7 of 7". A step that takes a while says every half minute that it is still working, for example "Still installing the packages: 30 seconds so far. Please wait."
+7. The two guitar packs (steps 5 and 6) are the biggest downloads and take a few minutes. If they are very slow, let them run; or close the window and run Install or Update again later, which picks up where it stopped. Without them Musician Forge still works: a stand-in guitar plays, and the packs download by themselves the next time Musician Forge starts with the internet, saying when each is ready.
+8. It ends with a self check that plays a test note silently and says whether everything works, then "All steps finished." and "Musician Forge is installed and ready. To open it, run Start Musician Forge in this folder." Press Enter to close the window. Only Enter closes it, so you can read the window with your screen reader's review keys or the arrow keys first.
+9. Run "Start Musician Forge" the same way (if it says the last Install or Update did not finish, run Install or Update again). It opens on the start screen: choose New project. A new project starts with no tracks, and the New track list opens by itself: press Enter on Instrument, choose Grand Piano and press Enter, so the steps below have a piano track to play.
+10. In a project, press F1 for every keyboard shortcut (on the start screen, use the Help menu button).
+
+To update to a later test version, delete the old Musician Forge folder, extract the new download the same way, and run Install or Update Musician Forge from it. Your projects are kept (they are in Documents, Musician Forge Songs). Update Musician Forge before you open a project someone else made, so it plays exactly as they heard it.
+
+## If the installer stops, or says nothing
+
+- When the installer cannot go on, it says why, and the same message opens in Notepad, where it stays: read it line by line, and copy it into an email if you need help. The message is also kept in the logs folder, as installer_message.txt. The installer window stays open until you press Enter.
+- The window's title says how things stand: "Musician Forge installer: looking for Python", "installing, please wait", "finished, Musician Forge is ready", or "not installed, the reason is in this window and in Notepad". Your screen reader reads the title with NVDA+T (NVDA), Insert+T (JAWS) or Narrator+T (Narrator).
+- "Musician Forge was not installed: its other files were not found beside this installer." The installer was started from inside the zip file, or only that one file was downloaded. Do steps 1 to 5 above again: Extract All first, then run it from the extracted folder.
+- "Musician Forge was not installed: it needs Python, and this computer has no Python it can use." See Before you start: Python, install Python 3.14 from python.org, and run Install or Update Musician Forge again.
+- Windows says Smart App Control blocked the file, or nothing opens at all: the files still carry Windows' mark for a download. Delete the extracted folder, then do steps 2 and 3 again, with the Unblock check box checked before Extract All.
+- On some HP computers, HP Wolf Security (also called HP Sure Click) marks downloads as untrusted. If the zip file's context menu (Shift+F10) has Remove protection, choose it, then extract the zip file again. HP Sure Start, which protects the computer's firmware, does not affect Musician Forge.
+- If none of this helps, send the files in the logs folder to Russell (see Sending back what you found), with what your screen reader said.
 
 ## Part 1: Getting around (5 minutes)
 
@@ -302,15 +329,53 @@ To update to a newer test version, put its files in the same folder and run "Ins
 
 ### Step 9.1: Remove Musician Forge
 
-**What to check:** Close Musician Forge and run Remove Musician Forge. Answer Y, then Y to keep your settings.
+**What to check:** Close Musician Forge and run Remove Musician Forge. After two seconds it says what it removes and asks. Answer Y, then Y to keep your settings.
 
-**What to expect:** It says Musician Forge is removed and your projects are still in Documents, Musician Forge Songs.
+**What to expect:** It says Musician Forge is removed and your projects are still in Documents, Musician Forge Songs. Press Enter to close the window; no other key closes it.
 
 ### Step 9.2: Install again
 
 **What to check:** Run Install or Update Musician Forge again, then Start Musician Forge and open one of your projects.
 
 **What to expect:** It opens and plays as before.
+
+## New in 0.9.14
+
+### Step AC.1: The installer is heard from its first words
+
+**What to check:** Install 0.9.14 as Installing says: remove any earlier version, check Unblock in the zip file's Properties, choose Extract All, and run Install or Update Musician Forge from the extracted folder.
+
+**What to expect:** Your screen reader reads the window's name, and about two seconds later "Installing Musician Forge. This takes a few minutes. Please wait." and "Looking for Python on this computer.", then every step up to "All steps finished." and "Musician Forge is installed and ready. To open it, run Start Musician Forge in this folder." Before 0.9.14 the first words could be written before your screen reader was listening, so only the window's name was read.
+
+### Step AC.2: No long silence
+
+**What to check:** During step 2, the packages, just listen.
+
+**What to expect:** When the step takes longer than half a minute, it says "Still installing the packages: 30 seconds so far. Please wait.", and again every half minute with the time so far. Before 0.9.14 this step was silent for one to three minutes.
+
+### Step AC.3: Only Enter closes the window
+
+**What to check:** When the installer says "Press Enter to close this window.", press the arrow keys, Space and a letter, and read the window with your screen reader's review keys. Then press Enter.
+
+**What to expect:** The window stays open until Enter. Before 0.9.14 it closed at the first key, an arrow key pressed to read it too.
+
+### Step AC.4: The window's title says how it ended
+
+**What to check:** While the installer runs, and again when it has finished, have your screen reader read the window's title (NVDA+T, Insert+T in JAWS, Narrator+T).
+
+**What to expect:** "Musician Forge installer: installing, please wait" while it works, and "Musician Forge installer: finished, Musician Forge is ready" at the end.
+
+### Step AC.5: A problem opens in Notepad (optional)
+
+**What to check:** In your Downloads folder, press Enter on the zip file itself to open it without extracting, go into the Musician-Forge-DAW-main folder inside it, and press Enter on Install or Update Musician Forge. If Windows asks, choose Run.
+
+**What to expect:** The installer says "Musician Forge was not installed: its other files were not found beside this installer.", how to extract the zip file, and "This message is also opening in Notepad, where you can read it line by line and copy it." Notepad opens with the same message. The installer's title is "Musician Forge installer: not installed, the reason is in this window and in Notepad", and its window waits for Enter. Before 0.9.14 this message could go unread, and the window closed at the first key.
+
+### Step AC.6: Start Musician Forge before installing (optional)
+
+**What to check:** Before installing, or after Remove Musician Forge, run Start Musician Forge.
+
+**What to expect:** After two seconds it says "Musician Forge is not installed yet. Please run "Install or Update Musician Forge" first." and "Press Enter to close this window." Only Enter closes it.
 
 ## New in 0.9.13
 
@@ -946,12 +1011,12 @@ Then add a metal drummer, choose variation 3, and press Space on its Hi-hat, the
 2. Open the "logs" folder in the Musician Forge folder.
 3. Attach these files to an email (or put them in a zip file first):
    - musicianforge.log: what happened while you used Musician Forge.
-   - install_log.txt and selfcheck_log.txt, if installing had a problem.
+   - install_log.txt, installer_message.txt and selfcheck_log.txt, if installing had a problem.
 4. Send it to Russell at russellhinderman425@gmail.com, with your notes: the step (for example "Step 4.5"), what you tried, what you expected, what happened, which screen reader you use (and its version), and which version of Windows.
 
 The logs hold no recordings and no songs, only what Musician Forge did, the names of your sound devices, and the folders it used.
 
-## Known limits in 0.9.13
+## Known limits in 0.9.14
 
 - Musician Forge needs Python until the 1.0 installer.
 - The guitar packs play from B0 to D5 (key 35 to 86, with middle C as C3): drop D, drop C and B standard work; lower notes are silent.

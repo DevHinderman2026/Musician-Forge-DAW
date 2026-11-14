@@ -1,5 +1,59 @@
 # Musician Forge release notes
 
+## 0.9.14 (13 November 2026, in testing)
+
+Important for testers: the installer of 0.9.13 and earlier could fail without a word. If any earlier version of
+Musician Forge is on your computer, remove it and install this version afresh, with the steps under Installing this
+version, below.
+
+### New features and improvements
+
+- The installer is heard from its first words. A screen reader reads only what is written after it has started
+  listening to a new window, so Install or Update Musician Forge now waits two seconds before it says "Installing
+  Musician Forge. This takes a few minutes. Please wait."
+- A problem opens in Notepad. When the installer cannot go on, it says why and what to do, and the same message
+  opens in Notepad, where it stays, can be read line by line and copied into an email. The message is also kept in
+  the logs folder, as installer_message.txt.
+- The window's title says how things stand: "Musician Forge installer: looking for Python", "installing, please
+  wait", "finished, Musician Forge is ready", or "not installed, the reason is in this window and in Notepad".
+- Only Enter closes the windows of Install or Update Musician Forge, Start Musician Forge and Remove Musician Forge,
+  so they can be read with the arrow keys or a screen reader's review keys first. Start Musician Forge and Remove
+  Musician Forge wait two seconds before their first words too.
+- No long silence: the installer says "Looking for Python on this computer.", and a step that takes a while says
+  every half minute that it is still working, with the time so far.
+- A clearer message when the installer is started from inside the zip file, or when only that one file was
+  downloaded: it gives the steps to extract the zip file, and the folder it was started from.
+- When Windows' Smart App Control blocks a part Musician Forge needs, the installer says so in plain words.
+- The install log says which Pythons were found on the computer, and why one could not be used.
+
+### Bug fixes
+
+- The installer's message could go unread: it was written in the first instant, before a screen reader was
+  listening, so only the window's name, "Musician Forge installer", was read.
+- The installer's window closed at the first key, an arrow key pressed to read it too, and its message was gone.
+  The same happened in Start Musician Forge and Remove Musician Forge.
+- The search for Python could wait for ever, without a word, when a Python on the computer stopped to ask a
+  question: every program the installer runs now reads no keys.
+- The packages step was silent for one to three minutes.
+- A letter the installer's window cannot show can no longer stop the install.
+
+### Installing this version
+
+1. If an earlier version is on your computer: close Musician Forge, run Remove Musician Forge in the old Musician
+   Forge folder (your projects in Documents, Musician Forge Songs, are kept), then delete the old folder and the old
+   zip file. An older Remove window may say only its name: press Y to remove, Y to keep your settings, then any key.
+2. On Musician Forge's GitHub page, choose Code, then Download ZIP.
+3. In File Explorer, select the zip file in your Downloads folder. Do not press Enter on it.
+4. Press Alt+Enter for its Properties. If there is an Unblock check box, check it and press Enter on OK.
+5. Press Shift+F10, choose Extract All, and press Enter on Extract.
+6. Open the Musician-Forge-DAW-main folder inside the folder Windows made.
+7. Select Install or Update Musician Forge and press Enter. If Windows asks whether to run it, choose Run.
+8. Listen to the steps, up to "Musician Forge is installed and ready." Press Enter to close the window.
+9. Run Start Musician Forge.
+
+If the installer stops, it says why, and its message opens in Notepad. The Guide for Testers has more, under
+Installing.
+
 ## 0.9.13 (11 November 2026, in testing)
 
 ### New features and improvements

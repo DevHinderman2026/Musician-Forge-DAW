@@ -1,6 +1,6 @@
 # Musician Forge
 
-An accessible digital audio workstation for Windows, version 0.9.13
+An accessible digital audio workstation for Windows, version 0.9.14
 
 Musician Forge records what you play on the laptop keyboard into tracks of realistic instruments, and records your voice or any instrument through a microphone into audio tracks. It handles tempo changes, time signature changes and key changes, and it can export WAV or M4A audio, or standard MIDI files that other music programs can open. It imports audio files (WAV, MP3, M4A and more) and MIDI files too. Every control is a standard Windows control, so NVDA, JAWS and Narrator read it, and Musician Forge announces what happens (stop, octave, layout and so on; starting playback and recording stay quiet unless Options, Preferences turns them on) through whichever screen reader is running.
 
@@ -12,7 +12,7 @@ This is a test version (a beta). If you are testing it, [Guide for Testers.md](G
 
 Tip: wired headphones work best with Musician Forge, as with any music program on a computer. Bluetooth headphones add a delay you can hear when you play. Plug headphones in or out at any time: when Windows switches between the speakers and the headphones, Musician Forge's sound follows within a second and says where it went (while recording, it waits until you stop). This is when Audio settings say Windows default; an output chosen there by name stays chosen.
 
-1. Run "Install or Update Musician Forge" once (and again any time you want to repair or update it). It sets up everything and finishes with a self check. (Remove Musician Forge takes it off again; see Removing Musician Forge.)
+1. Run "Install or Update Musician Forge" once (and again any time you want to repair or update it), from the extracted folder: in File Explorer, choose Extract All on the downloaded zip file first, because the installer cannot work from inside a zip file. It sets up everything, says each step, and finishes with a self check; press Enter to close its window. If it cannot go on, it says why, and the same message opens in Notepad. If an earlier version of Musician Forge is on the computer, run its Remove Musician Forge first and delete its folder. (Remove Musician Forge takes it off again; see Removing Musician Forge.) [Guide for Testers.md](Guide%20for%20Testers.md) has every step of installing, under Installing.
 2. Run "Start Musician Forge" to open the program. It opens on the start screen: New project, Browse projects, and the Recent projects list, followed by its Open and Remove from list buttons. Enter (or a double-click, or Open) on a recent project opens it. Browse projects lists your recent projects first, then every other project in Musician Forge Songs, newest first. Delete (or Remove from list) removes a project from the recent list (the file itself is kept). Quit, or Escape, closes Musician Forge.
 3. Press F1 inside a project for the full list of keyboard shortcuts.
 4. Control+W (or File menu, Close project) closes the project, asks to save any changes, and goes back to the start screen.
@@ -249,6 +249,9 @@ Recordings in a project you never save are deleted when you choose not to save i
 - The microphone records silence: Options, Audio settings, Test the microphone. It says when Windows privacy settings are blocking it.
 - Recordings lose their background sound or held notes: keep Raw microphone sound on in Options, Audio settings, and turn Windows' Audio enhancements off for the microphone (Settings, System, Sound, the microphone, Audio enhancements).
 - The guitar packs say "not downloaded yet": Musician Forge downloads them by itself when it starts with the internet available, and says when each is ready.
+- The installer says "Musician Forge was not installed: its other files were not found beside this installer.": it was started from inside the zip file. Choose Extract All on the zip file, and run it from the extracted folder.
+- The installer stops: its message is in its window, in Notepad, and in the logs folder as installer_message.txt. The window stays open until you press Enter.
+- Windows will not run the installer (Smart App Control blocked it): before Extract All, open the zip file's Properties with Alt+Enter and check Unblock.
 - Anything else: the logs folder has musicianforge.log with the details. [Guide for Testers.md](Guide%20for%20Testers.md) says how to send it to Russell.
 
 ## Where things are
@@ -257,7 +260,7 @@ Program: this folder. Instrument engine, sounds and Python environment: %LOCALAP
 
 ## Removing Musician Forge
 
-Close Musician Forge, then run "Remove Musician Forge" in this folder. It asks first, then removes what Install or Update Musician Forge put on the computer: Musician Forge's Python environment, instrument engine and sounds, in %LOCALAPPDATA%\MusicianForge (and in the MusicianForge folder of your user folder, when an install was made with Python from the Microsoft Store). It also asks whether to keep your settings (audio settings, measured delays and recent projects) for a reinstall. Your projects are never removed: everything in Documents, Musician Forge Songs, stays, with each project's recordings and exports. If you install Musician Forge again, they open as before (project files still end in .mforge). Two things are removed with it: recordings in a project that was never saved, and the crash-recovery copy of unsaved work (Remove Musician Forge warns you when there is one, so you can recover and save it first). Afterwards you can delete this Musician Forge folder too.
+Close Musician Forge, then run "Remove Musician Forge" in this folder. It asks first, then removes what Install or Update Musician Forge put on the computer: Musician Forge's Python environment, instrument engine and sounds, in %LOCALAPPDATA%\MusicianForge (and in the MusicianForge folder of your user folder, when an install was made with Python from the Microsoft Store). It also asks whether to keep your settings (audio settings, measured delays and recent projects) for a reinstall. Your projects are never removed: everything in Documents, Musician Forge Songs, stays, with each project's recordings and exports. If you install Musician Forge again, they open as before (project files still end in .mforge). Two things are removed with it: recordings in a project that was never saved, and the crash-recovery copy of unsaved work (Remove Musician Forge warns you when there is one, so you can recover and save it first). Afterwards you can delete this Musician Forge folder too. The window waits two seconds before its first words, so a screen reader hears them, and closes on Enter only.
 
 ## Credits
 

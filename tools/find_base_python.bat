@@ -6,6 +6,9 @@ rem the py launcher come first, then "python" and the Store's own names for each
 rem Musician Forge's files in the user folder, where the Store's Python does not hide them.
 rem When none is found, MF_BASE_PY stays empty, MF_ANY_PY is the first other Python found (Diagnose uses it) and
 rem MF_PY_REASON says in words why it cannot be used, and which Python to install.
+rem From 0.9.14 every Python that is asked reads from nul: one that stops to ask something (a first-run question,
+rem a sign-in) cannot wait for a key in a window that says nothing. And each Python tried is written to MF_PY_LOG,
+rem when the installer has set it, with why it could not be used: logs\install_log.txt then says what was found.
 set "MF_BASE_PY="
 set "MF_ANY_PY="
 set "MF_PY_REASON="
@@ -29,7 +32,7 @@ goto :eof
 rem A Python started by name: where it is, as it says itself.
 if defined MF_BASE_PY goto :eof
 set "MF_FOUND="
-for /f "delims=" %%P in ('%* -c "import sys; print(sys.executable)" 2^>nul') do set "MF_FOUND=%%P"
+for /f "delims=" %%P in ('%* -c "import sys; print(sys.executable)" 2^>nul ^<nul') do set "MF_FOUND=%%P"
 if not defined MF_FOUND goto :eof
 if not exist "%MF_FOUND%" set "MF_FOUND="
 if not defined MF_FOUND goto :eof
@@ -41,10 +44,13 @@ rem One python.exe: used when check_python.py says it can be.
 if defined MF_BASE_PY goto :eof
 if not exist "%~1" goto :eof
 if not defined MF_ANY_PY set "MF_ANY_PY=%~1"
-"%~1" "%MF_TOOLS%check_python.py" > "%MF_CHECK_OUT%" 2> nul
+"%~1" "%MF_TOOLS%check_python.py" > "%MF_CHECK_OUT%" 2> nul < nul
 if not "%errorlevel%"=="0" goto :rejected
 set "MF_BASE_PY=%~1"
+if defined MF_PY_LOG >> "%MF_PY_LOG%" echo Python that Musician Forge can use: "%~1"
 goto :eof
 :rejected
 if not defined MF_PY_REASON set /p MF_PY_REASON=<"%MF_CHECK_OUT%"
+if defined MF_PY_LOG >> "%MF_PY_LOG%" echo Python that cannot be used: "%~1"
+if defined MF_PY_LOG >> "%MF_PY_LOG%" type "%MF_CHECK_OUT%" 2> nul
 goto :eof

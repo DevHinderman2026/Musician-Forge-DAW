@@ -11,6 +11,9 @@ rem exist, inside Musician Forge's own data folder, so nothing else can ever be 
 setlocal EnableExtensions
 title Remove Musician Forge
 cd /d "%~dp0"
+rem A screen reader reads only what is written after it has started listening to a new window, so the first words
+rem wait two seconds, and the window closes on Enter only: an arrow key pressed to read it used to close it (0.9.14).
+timeout /t 2 /nobreak > nul 2>&1
 if "%LOCALAPPDATA%"=="" (
   echo Windows did not say where programs keep their files, so nothing was removed.
   goto :done
@@ -96,6 +99,5 @@ echo Your projects are still in Documents, Musician Forge Songs.
 echo You can now delete this Musician Forge folder too. To install again, download Musician Forge and run
 echo Install or Update Musician Forge.
 :done
-echo Press any key to close this window.
-pause > nul
+set /p "MF_ENTER=Press Enter to close this window. "
 endlocal
